@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using UnityEngine;
 
 
 namespace Models.Gameplay.Campaign
@@ -14,6 +16,10 @@ namespace Models.Gameplay.Campaign
         public DateTime CampaignStartTime = DefaultCampaignStartTime;
         public SimulationSettings SimulationSettings = new SimulationSettings();
         public string ContentHash = string.Empty;
+        public List<CountryAllianceAssignment> CountryAllianceAssignments = new List<CountryAllianceAssignment>();
+        public List<Tile> Tiles = new List<Tile>();
+        [SerializeReference] public List<TileData> StartingTileData = new List<TileData>();
+        public List<BuildingStartingCondition> BuildingStartingConditions = new List<BuildingStartingCondition>();
         
         public CampaignTemplate()
         {

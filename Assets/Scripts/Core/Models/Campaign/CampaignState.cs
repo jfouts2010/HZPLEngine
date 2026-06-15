@@ -1,0 +1,126 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using UnityEngine;
+
+namespace Models.Gameplay.Campaign
+{
+    [Serializable]
+    public class CampaignState
+    {
+        public string TemplateName;
+        public string ModuleId;
+        public DateTime CurrentTime;
+        public SimulationSettings SimulationSettings = new SimulationSettings();
+        [SerializeReference] public List<TileData> Tiles = new List<TileData>();
+        public BuildingCollection Buildings = new BuildingCollection();
+
+        public static CampaignState FromTemplate(CampaignTemplate template)
+        {
+            if (template == null)
+                throw new ArgumentNullException(nameof(template));
+
+            var state = new CampaignState
+            {
+                TemplateName = template.Name,
+                ModuleId = template.ModuleId,
+                CurrentTime = template.CampaignStartTime,
+                SimulationSettings = CopySimulationSettings(template.SimulationSettings),
+                Tiles = CopyTileData(template.StartingTileData),
+                Buildings = new BuildingCollection
+                {
+                    Buildings = CreateRuntimeBuildings(template.BuildingStartingConditions)
+                }
+            };
+
+            state.Buildings.RebuildIndex();
+            return state;
+        }
+
+        private static List<TileData> CopyTileData(List<TileData> startingTileData)
+        {
+            return (startingTileData ?? new List<TileData>())
+                .Select(CopyTileData)
+                .Where(tileData => tileData != null)
+                .ToList();
+        }
+
+        private static TileData CopyTileData(TileData data)
+        {
+            if (data is LandTileData landData)
+            {
+                return new LandTileData
+                {
+                    TileId = landData.TileId,
+                    Controller = landData.Controller,
+                    Infrastructure = CopyBuildingLevel(landData.Infrastructure)
+                };
+            }
+
+            if (data is OceanTileData oceanData)
+            {
+                return new OceanTileData
+                {
+                    TileId = oceanData.TileId
+                };
+            }
+
+            return null;
+        }
+
+        private static List<Building> CreateRuntimeBuildings(List<BuildingStartingCondition> startingConditions)
+        {
+            return (startingConditions ?? new List<BuildingStartingCondition>())
+                .Where(startingCondition => startingCondition != null)
+                .Select(CreateRuntimeBuilding)
+                .ToList();
+        }
+
+        private static Building CreateRuntimeBuilding(BuildingStartingCondition startingCondition)
+        {
+            switch (startingCondition.Type)
+            {
+                case BuildingType.Airport:
+                    return new Airport(startingCondition);
+                case BuildingType.Factory:
+                    return new Factory(startingCondition);
+                case BuildingType.SupplyHub:
+                    return new SupplyHub(startingCondition);
+                case BuildingType.Fort:
+                    return new Fort(startingCondition);
+                case BuildingType.Port:
+                    return new Port(startingCondition);
+                case BuildingType.Railroad:
+                    return new Railroad(startingCondition);
+                case BuildingType.Refinery:
+                    return new Refinery(startingCondition);
+                case BuildingType.PowerPlant:
+                    return new PowerPlant(startingCondition);
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(startingCondition.Type), startingCondition.Type, "Unknown building type.");
+            }
+        }
+
+        private static BuildingLevel CopyBuildingLevel(BuildingLevel level)
+        {
+            return level == null
+                ? new BuildingLevel()
+                : new BuildingLevel(level.BuildLevel, level.Damage);
+        }
+
+        private static SimulationSettings CopySimulationSettings(SimulationSettings settings)
+        {
+            if (settings == null)
+                return new SimulationSettings();
+
+            var copy = new SimulationSettings
+            {
+                SimulationTickMinutes = settings.SimulationTickMinutes,
+                OperationalCadenceHours = settings.OperationalCadenceHours
+            };
+
+            copy.Normalize();
+            return copy;
+        }
+    }
+}

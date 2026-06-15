@@ -94,23 +94,115 @@ Core engine rules stay the same across Modules. A less-capable SAM in one Module
 
 What an author creates in the campaign editor after choosing a Module. A campaign template defines the starting premise for play under that Module. The Module is fixed for the lifetime of an edit session; it cannot be changed while editing an open template.
 
-**Static premise** — fixed across every play from this template: map layout and extent, **template tile** geography (terrain, rivers, land/water), sides, Module-scoped unit availability, airport and static SAM site definitions, and other geography that should not change because the story shifted.
+**Static premise** — fixed across every play from this template: map layout and extent, **template tile** geography (terrain, surface, urbanization, forest cover, edge properties, hex neighbors), sides, Module-scoped unit availability, authored building placement, and other geography that should not change because the story shifted.
 
-**Starting conditions** — fixed every time a player starts from this template: **starting tile** data (initial tile control and per-tile infrastructure as authored at day zero), initial unit locations and strengths, starting air wings and squadrons, **campaign start calendar** (`CampaignStartTime` — in-world date and time at turn zero, authored on the template not the Module), and other day-zero force dispositions.
+**Starting conditions** — fixed every time a player starts from this template: **starting tile** data (initial tile control and tile infrastructure build/damage values), starting building build/damage values, initial unit locations and strengths, starting air wings and squadrons, **campaign start calendar** (`CampaignStartTime` — in-world date and time at turn zero, authored on the template not the Module), and other day-zero force dispositions.
 
-Infrastructure, airports, and SAM sites are **undamaged at day zero** in v1. Authoring initial damage on the template may be added later.
+A v1 campaign template directly contains tile definitions for static tile geography, starting tile state for day-zero tile control and tile infrastructure values, and authored building data for building placement and starting building values. Additional map aggregate models should be introduced only when a real rule needs them.
+
+Building categories are core-engine concepts, not Module-specific template classes. A Korean War campaign template and a Gulf War campaign template use the same building options; the template records which building types are placed where and their starting build/damage values. V1 building types are airport, factory, supply hub, fort, port, railroad, refinery, and power plant. Static SAM sites are not buildings; they belong to a separate future IADS implementation. Any future third-party export mapping for buildings belongs to the sim adapter/export process, not to the tile implementation.
+
+The v1 tile/building implementation includes both template authoring data and runtime campaign state. Starting tile and building data are copied or instantiated into runtime state when play begins; runtime systems mutate the runtime state rather than the campaign template.
 
 Once play begins, the starting order of battle is historical context only. Runtime simulation cares about current unit locations, strength, destruction, tile control, airport operational status, and the rest of the live war state — not re-reading the template’s starting conditions each tick.
 
-### Infrastructure property
+### Tile
 
-A leveled tile asset (roads, supply lines, ports, factories, and similar) or airport runtime state tracked with two persisted integers:
+A cell on the operational hex map. Each tile has a stable GUID identity within a campaign template’s grid. Geography on a tile is immutable during play; control and assets on the tile evolve.
 
-- **Build level** — authored capacity at day zero (campaign editor / airport editor) and the current built capacity during play. Build level never decreases; it may increase during play when construction is implemented. Capped at 0–10.
-- **Damage** — runtime-only wear from bombing and similar effects. Damage is per asset (a port can be damaged while a fort on the same tile is untouched). Damage is capped at build level and never goes negative.
-- **Functional level** — derived, not persisted: `max(0, buildLevel - damage)`. Used for supply throughput, movement, combat modifiers, production, and strike targeting health.
+**Tile ID** — a GUID-based stable identifier for a tile. Tile ID is the source of identity for references, neighbor lists, building placement, and runtime state. Coordinates, when present, are layout data rather than identity.
 
-`cityType` and `isSupplyHub` are not leveled properties in v1. Supply hubs are not damaged directly; supply-line damage is the mechanism for degrading hub effectiveness.
+**Template tile** — static geography authored on the campaign template (terrain, tile surface, urbanization, forest cover, hex neighbors, river crossings). Same every play from that template.
+
+Template tile definitions use one class for both land and ocean tiles. Land/ocean differences are represented by tile surface and by polymorphic runtime tile state, not by polymorphic tile definitions.
+
+**Tile neighbors** — the static adjacent hexes for a tile. Neighbor IDs are stored on the template tile definition as part of hex-grid geography and do not change during play. Runtime systems read these authored neighbor IDs rather than recalculating adjacency.
+
+**River neighbors** — neighboring tile IDs that have a river crossing between them and this tile. River data is stored on the template tile definition next to the neighbor list so systems can answer “does this move cross a river?” without a separate edge-property collection. River neighbor IDs should reference existing tile neighbors.
+
+**Terrain** — the tile's base static geography subtype. Terrain is a simple enum with land values such as plains, hills, mountain, desert, tundra, and coast, plus ocean values such as ocean, shallow ocean, or deep ocean. Coast is a land terrain type where land transitions to ocean within the tile. It is treated as a land tile for control, movement, infrastructure, and building placement, but may unlock coastal capabilities such as ports.
+
+**Tile surface** — the tile's broad land/water classification used for simple pathfinding gates. Land units can path through land tiles and cannot path through ocean tiles unless a future rule explicitly allows it. Tile surface is stored separately from terrain so land/water checks do not need to infer from every terrain subtype. Land tiles have tile control; ocean tiles do not. Validation should ensure land surface uses land terrain values and ocean surface uses ocean terrain values.
+
+**Urbanization** — a land tile's static settlement pattern layered on top of terrain. Urbanization is a simple enum such as rural, suburban, or urban. It is separate from tile infrastructure: an urban tile usually has high infrastructure, but urbanization describes settlement character while infrastructure describes built-up travel and logistics capability. Ocean tiles do not have meaningful urbanization values.
+
+**Forest cover** — a land tile's static tree cover layered on top of terrain. Forest cover is a simple level such as none, light forest, or heavy forest. Ocean tiles do not have meaningful forest cover values.
+
+**Starting tile** — day-zero political and asset state authored on the campaign template (initial tile control, tile infrastructure level, per-building starting state, and similar). Copied into runtime state when a campaign begins; the template is not re-read each tick during play.
+
+**Tile state** — runtime mutable state for a tile. Tile state is polymorphic so land and ocean rules are explicit in the model.
+
+**Land tile state** — runtime tile state for a land tile. Land tile state carries tile control and tile infrastructure values.
+
+**Ocean tile state** — runtime tile state for an ocean tile. Ocean tiles may still have tile state records so runtime arrays and save/load can align with tile definitions, but ocean tile state is explicitly non-territorial. Ocean tile state does not carry controller, tile infrastructure, or building-use values.
+
+**Movement cost** — the derived cost or difficulty of moving across or within tiles. Movement cost may use terrain, tile infrastructure functional level, buildings, rivers, and future modifiers, but it does not add or remove tile neighbors.
+
+### Alliance
+
+The gameplay faction that controls territory and participates in the war at the operational level. Alliance is a fixed enum with exactly three values: Bluefor, Redfor, and Neutral. These values are not authored per template and do not change.
+
+Countries may exist as lightweight political or content metadata. A campaign template assigns countries to alliances, but tile control belongs to alliances in v1.
+
+Neutral can control tiles the same way Bluefor and Redfor can. Neutral is not an active war participant by default, and Bluefor/Redfor cannot use neutral-controlled tiles or buildings unless future access rules explicitly allow it.
+
+### Tile control
+
+The alliance that militarily holds a land tile — movement, combat, and occupation rights derive from tile control. Every land tile has a controller. Ocean tiles never have a controller.
+
+In v1, tile control is the only political field on a tile. It stands in for ownership: supply, production, and scoring benefits apply to the controlling faction as if they owned the tile.
+
+In a later phase, **tile owner** (original or legal affiliation, fixed at campaign start) may diverge from tile control. A faction that controls a tile it does not own is **occupying** it and does not receive the normal supply or production benefits of that tile. A faction that owns a tile it does not control does not receive those benefits either.
+
+_Avoid_: using “owner” in v1 data or rules when tile control is the sole authority.
+
+### Tile infrastructure
+
+The abstract built-up travel and logistics capability **within** a land tile — road density, urban development, ease of movement inside the hex. Not a list of named structures.
+
+High tile infrastructure represents cities and developed areas where forces move easily. Low tile infrastructure represents rural or backcountry terrain with poor internal travel even if the hex is passable at the map level.
+
+Tile infrastructure is land-only. It is authored on the campaign template as part of starting land tile data and tracked on land tile state with the same value model as buildings:
+
+- **Build level** — authored capacity at day zero and the current built capacity during play. Build level never decreases; it may increase during play when infrastructure construction is implemented. Capped at 0-10.
+- **Damage** — runtime wear to the tile's general travel and logistics capability. Capped at build level and never goes negative.
+- **Functional level** — derived, not persisted: `max(0, buildLevel - damage)`. Used for movement, supply throughput, combat modifiers, and similar rules.
+
+Runtime infrastructure construction is planned for a later phase; v1 may author build level and apply damage before construction rules exist.
+
+_Avoid_: treating tile infrastructure as a synonym for **building** or as a catch-all for ports, factories, and airports.
+
+### Building
+
+A discrete, placed asset on a tile with its own type and identity. V1 building types are airport, factory, supply hub, fort, port, railroad, refinery, and power plant.
+
+Railroad is represented as a building in v1. Future supply and pathfinding work may introduce rail connectivity as tile edge properties or a transport network when rules need connected rail lines rather than tile-local rail presence.
+
+Buildings are authored on the campaign template (which building types exist on which tiles). Runtime state tracks each building instance separately so one asset on a tile can be damaged while another on the same tile is untouched.
+
+Buildings may only be placed on land tiles. Ports cannot be placed on ocean tiles. Specific coastal placement validation for ports is not enforced in v1.
+
+**Building ID** — a stable GUID-based identifier for a building instance. A building also records its `TileId` placement and building type. Systems may index buildings by tile for efficient lookup, but building identity belongs to the building instance rather than to tile data.
+
+Multiple building instances may exist on the same tile, including multiple buildings of the same type. Rules that need buildings on a tile query by `TileId` and then filter by building type or capabilities.
+
+Buildings inherit control from their tile. In v1, buildings do not carry separate owner or controller state; a building's usable faction is determined by the current tile controller and the building's functional level. When tile control changes, building control changes immediately with no separate capture delay or automatic damage.
+
+Building categories and their runtime classes belong to the core engine. Runtime buildings share an abstract building concept for common identity, placement, build level, damage, and functional level. Specific building categories may have their own runtime classes when their behavior or state differs meaningfully. Airports are expected to be specialized and relatively complex; forts may remain simple specialized buildings.
+
+Buildings are owned by a building collection or building system rather than stored inside tile data. Tile data may reference or query buildings by `TileId`, but tiles are not the aggregate root for building state.
+
+Each building is tracked with two persisted integers:
+
+- **Build level** — authored capacity at day zero and the current built capacity during play. Build level never decreases; it may increase during play when construction is implemented. Capped at 0–10.
+- **Damage** — runtime wear from bombing and similar effects. Damage is per building. Capped at build level and never goes negative.
+- **Functional level** — derived, not persisted: `max(0, buildLevel - damage)`. Used for supply throughput, production, combat modifiers, strike targeting, and export when the building is a **mappable entity**.
+
+`cityType` is not a leveled property in v1. Whether a tile reads as urban is inferred from tile infrastructure level and building mix, not a separate persisted flag.
+
+Supply hubs are a **building type** when explicitly placed on a tile. Hub effectiveness may still degrade through supply-line damage rather than direct hub bombing in v1 — specific rules TBD.
+
+_Avoid_: using “infrastructure” alone when you mean either tile infrastructure or a specific building.
 
 ### Dynamic campaign
 
