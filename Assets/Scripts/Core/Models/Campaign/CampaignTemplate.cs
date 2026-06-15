@@ -1,0 +1,23 @@
+using System;
+
+
+namespace Models.Gameplay.Campaign
+{
+    [Serializable]
+    public class CampaignTemplate
+    {
+        public const string DefaultModuleId = "standalone";
+        public static readonly DateTime DefaultCampaignStartTime = new DateTime(1990, 1, 1, 6, 0, 0);
+
+        public string Name { get; private set; }
+        public string ModuleId = DefaultModuleId;
+        public DateTime CampaignStartTime = DefaultCampaignStartTime;
+        public SimulationSettings SimulationSettings = new SimulationSettings();
+        public string ContentHash = string.Empty;
+        
+        public CampaignTemplate()
+        {
+            Name = "NewCampaign";
+        }
+    }
+}
