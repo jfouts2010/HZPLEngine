@@ -16,11 +16,19 @@ namespace Engine.Monobehaviours.Managers
         public DateTime CurrentTime { get; private set; }
         public DateTime GameTime => CurrentTime;
         public SimulationSettings SimulationSettings { get; private set; } = new SimulationSettings();
+        public bool AutoStartTestCampaign = true;
+        public List<Tile> CampaignTiles = new List<Tile>();
         [SerializeReference] public List<TileData> Tiles = new List<TileData>();
         public BuildingCollection Buildings = new BuildingCollection();
 
         private Coroutine GameTurnCoroutine = null;
         private bool _campaignStarted;
+
+        private void Start()
+        {
+            if (AutoStartTestCampaign && !_campaignStarted)
+                StartCampaign(TestCampaign.Create());
+        }
 
         public void StartCampaign(CampaignTemplate template)
         {
@@ -31,6 +39,7 @@ namespace Engine.Monobehaviours.Managers
             ModuleId = template.ModuleId;
             CurrentTime = template.CampaignStartTime;
             SimulationSettings = CopySimulationSettings(template.SimulationSettings);
+            CampaignTiles = CopyTiles(template.Tiles);
             Tiles = CopyTileData(template.StartingTileData);
             Buildings = new BuildingCollection
             {
@@ -85,6 +94,29 @@ namespace Engine.Monobehaviours.Managers
                 .Select(CopyTileData)
                 .Where(tileData => tileData != null)
                 .ToList();
+        }
+
+        private static List<Tile> CopyTiles(List<Tile> tiles)
+        {
+            return (tiles ?? new List<Tile>())
+                .Where(tile => tile != null)
+                .Select(CopyTile)
+                .ToList();
+        }
+
+        private static Tile CopyTile(Tile tile)
+        {
+            return new Tile
+            {
+                TileId = tile.TileId,
+                Coordinates = tile.Coordinates,
+                NeighborTileIds = new List<Guid>(tile.NeighborTileIds ?? new List<Guid>()),
+                RiverNeighborTileIds = new List<Guid>(tile.RiverNeighborTileIds ?? new List<Guid>()),
+                Surface = tile.Surface,
+                Terrain = tile.Terrain,
+                Urbanization = tile.Urbanization,
+                ForestCover = tile.ForestCover
+            };
         }
 
         private static TileData CopyTileData(TileData data)

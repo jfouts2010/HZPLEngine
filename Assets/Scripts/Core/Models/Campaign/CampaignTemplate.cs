@@ -25,5 +25,10 @@ namespace Models.Gameplay.Campaign
         {
             Name = "NewCampaign";
         }
+
+        public CampaignTemplate(string name)
+        {
+            Name = string.IsNullOrWhiteSpace(name) ? "NewCampaign" : name.Trim();
+        }
     }
 }
