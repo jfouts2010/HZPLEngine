@@ -1,40 +1,82 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
+using Models.Gameplay.Campaign;
 using UnityEngine;
 
-namespace Models.Gameplay.Campaign
+namespace Engine.Monobehaviours.Managers
 {
-    [Serializable]
-    public class CampaignState
+    public class GameManager : MonoBehaviour
     {
-        public string TemplateName;
-        public string ModuleId;
-        public DateTime CurrentTime;
-        public SimulationSettings SimulationSettings = new SimulationSettings();
+        public bool IsGamePaused { get; private set; }
+        public bool IsCampaignStarted => _campaignStarted;
+        public string TemplateName { get; private set; }
+        public Guid ModuleId { get; private set; }
+        public DateTime CurrentTime { get; private set; }
+        public DateTime GameTime => CurrentTime;
+        public SimulationSettings SimulationSettings { get; private set; } = new SimulationSettings();
         [SerializeReference] public List<TileData> Tiles = new List<TileData>();
         public BuildingCollection Buildings = new BuildingCollection();
 
-        public static CampaignState FromTemplate(CampaignTemplate template)
+        private Coroutine GameTurnCoroutine = null;
+        private bool _campaignStarted;
+
+        public void StartCampaign(CampaignTemplate template)
         {
             if (template == null)
                 throw new ArgumentNullException(nameof(template));
 
-            var state = new CampaignState
+            TemplateName = template.Name;
+            ModuleId = template.ModuleId;
+            CurrentTime = template.CampaignStartTime;
+            SimulationSettings = CopySimulationSettings(template.SimulationSettings);
+            Tiles = CopyTileData(template.StartingTileData);
+            Buildings = new BuildingCollection
             {
-                TemplateName = template.Name,
-                ModuleId = template.ModuleId,
-                CurrentTime = template.CampaignStartTime,
-                SimulationSettings = CopySimulationSettings(template.SimulationSettings),
-                Tiles = CopyTileData(template.StartingTileData),
-                Buildings = new BuildingCollection
-                {
-                    Buildings = CreateRuntimeBuildings(template.BuildingStartingConditions)
-                }
+                Buildings = CreateRuntimeBuildings(template.BuildingStartingConditions)
             };
+            Buildings.RebuildIndex();
 
-            state.Buildings.RebuildIndex();
-            return state;
+            IsGamePaused = false;
+            _campaignStarted = true;
+        }
+
+        public void PauseCampaign()
+        {
+            IsGamePaused = true;
+        }
+
+        public void ResumeCampaign()
+        {
+            if (!_campaignStarted)
+                return;
+
+            IsGamePaused = false;
+        }
+
+        public void Update()
+        {
+            if (!_campaignStarted)
+                return;
+
+            if (IsGamePaused)
+                return;
+
+            if (GameTurnCoroutine == null)
+                GameTurnCoroutine = StartCoroutine(SlowGameTurn());
+        }
+
+        private IEnumerator SlowGameTurn()
+        {
+            yield return new WaitForSeconds(0.16f);
+            GameTurn();
+            GameTurnCoroutine = null;
+        }
+
+        private void GameTurn()
+        {
+            CurrentTime = CurrentTime.AddMinutes(SimulationSettings.SimulationTickMinutes);
         }
 
         private static List<TileData> CopyTileData(List<TileData> startingTileData)

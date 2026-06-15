@@ -7,7 +7,7 @@ namespace Monobehaviours.Singletons
 {
     public class ModuleSingleton: Singleton<ModuleSingleton>
     {
-        public const string StandaloneModuleId = "standalone";
+        public static readonly Guid StandaloneModuleId = Guid.Parse("92f96fd1-d2f1-4e28-a047-30b0940dc45f");
 
         private static IReadOnlyList<ModuleDefinition> _modules;
         private static IReadOnlyList<ModuleDefinition> Modules => _modules ??= BuildModules();
@@ -23,14 +23,13 @@ namespace Monobehaviours.Singletons
             return Modules;
         }
 
-        public bool TryGetById(string moduleId, out ModuleDefinition module)
+        public bool TryGetById(Guid moduleId, out ModuleDefinition module)
         {
             module = null;
-            if (string.IsNullOrWhiteSpace(moduleId))
+            if (moduleId == Guid.Empty)
                 return false;
 
-            module = Modules.FirstOrDefault(candidate =>
-                string.Equals(candidate.Id, moduleId.Trim(), StringComparison.OrdinalIgnoreCase));
+            module = Modules.FirstOrDefault(candidate => candidate.Id == moduleId);
             return module != null;
         }
 
@@ -40,7 +39,7 @@ namespace Monobehaviours.Singletons
             _hasActiveModuleSelection = true;
         }
 
-        public bool TrySetActive(string moduleId)
+        public bool TrySetActive(Guid moduleId)
         {
             if (!TryGetById(moduleId, out var module))
                 return false;

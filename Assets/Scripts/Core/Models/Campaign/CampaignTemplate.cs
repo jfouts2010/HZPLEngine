@@ -8,11 +8,11 @@ namespace Models.Gameplay.Campaign
     [Serializable]
     public class CampaignTemplate
     {
-        public const string DefaultModuleId = "standalone";
+        public static readonly Guid DefaultModuleId = Guid.Parse("92f96fd1-d2f1-4e28-a047-30b0940dc45f");
         public static readonly DateTime DefaultCampaignStartTime = new DateTime(1990, 1, 1, 6, 0, 0);
 
         public string Name { get; private set; }
-        public string ModuleId = DefaultModuleId;
+        public Guid ModuleId = DefaultModuleId;
         public DateTime CampaignStartTime = DefaultCampaignStartTime;
         public SimulationSettings SimulationSettings = new SimulationSettings();
         public string ContentHash = string.Empty;
