@@ -9,9 +9,11 @@ namespace Models.Gameplay.Campaign
     {
         public const string Name = "Mechanics Test Campaign";
 
-        private static readonly Guid BlueCountryId = Guid.Parse("64bfb064-0136-44d3-9983-620cf38d8245");
-        private static readonly Guid RedCountryId = Guid.Parse("f6610c73-4f7b-4a71-9695-2f085dc43a7f");
-        private static readonly Guid NeutralCountryId = Guid.Parse("ba8ec50b-b305-46ce-b2f6-82a28113f1b5");
+        private static readonly Guid BlueCountryId = TestModule.BlueCountryId;
+        private static readonly Guid RedCountryId = TestModule.RedCountryId;
+        private static readonly Guid NeutralCountryId = TestModule.NeutralCountryId;
+        private static readonly Guid BlueDivisionId = Guid.Parse("2fa9789e-af9a-489f-8ec0-7a2f8d7c0039");
+        private static readonly Guid RedDivisionId = Guid.Parse("713f4192-5ed1-4cb5-b399-8d5c5786dc0a");
 
         private static readonly Guid BlueCapitalTileId = Guid.Parse("714bf6db-21df-464f-81b2-7381064b1d07");
         private static readonly Guid BluePortTileId = Guid.Parse("25a3b8d7-bc29-4458-b786-c44d7c15b745");
@@ -35,7 +37,8 @@ namespace Models.Gameplay.Campaign
                 CountryAllianceAssignments = CreateCountryAllianceAssignments(),
                 Tiles = CreateTiles(),
                 StartingTileData = CreateStartingTileData(),
-                BuildingStartingConditions = CreateBuildingStartingConditions()
+                BuildingStartingConditions = CreateBuildingStartingConditions(),
+                DivisionStartingConditions = CreateDivisionStartingConditions()
             };
 
             template.RebuildDerivedData();
@@ -168,6 +171,29 @@ namespace Models.Gameplay.Campaign
                 CreateBuilding("873f8560-bf69-47ae-b82f-e1f8b3e989c4", RedBorderTileId, BuildingType.Fort, 3, 1),
                 CreateBuilding("31ab8776-4af7-4533-b19f-fc0d4eaf060f", RedBorderTileId, BuildingType.Railroad, 4),
                 CreateBuilding("d30ad13b-82a8-4f4c-a990-08614182716d", RedMountainTileId, BuildingType.PowerPlant, 2)
+            };
+        }
+
+        private static List<DivisionStartingCondition> CreateDivisionStartingConditions()
+        {
+            return new List<DivisionStartingCondition>
+            {
+                new DivisionStartingCondition
+                {
+                    DivisionId = BlueDivisionId,
+                    DivisionTemplateId = TestModule.BlueArmoredDivisionTemplateId,
+                    CountryId = BlueCountryId,
+                    TileId = BlueCapitalTileId,
+                    Name = "1st Blue Armored Division"
+                },
+                new DivisionStartingCondition
+                {
+                    DivisionId = RedDivisionId,
+                    DivisionTemplateId = TestModule.RedTankDivisionTemplateId,
+                    CountryId = RedCountryId,
+                    TileId = RedMountainTileId,
+                    Name = "1st Red Tank Division"
+                }
             };
         }
 

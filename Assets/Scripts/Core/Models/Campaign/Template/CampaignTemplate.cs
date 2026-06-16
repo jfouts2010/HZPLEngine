@@ -20,6 +20,7 @@ namespace Models.Gameplay.Campaign
         public List<Tile> Tiles = new List<Tile>();
         [SerializeReference] public List<TileData> StartingTileData = new List<TileData>();
         public List<BuildingStartingCondition> BuildingStartingConditions = new List<BuildingStartingCondition>();
+        public List<DivisionStartingCondition> DivisionStartingConditions = new List<DivisionStartingCondition>();
         
         public CampaignTemplate()
         {
