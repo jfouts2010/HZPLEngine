@@ -8,7 +8,8 @@ namespace Models.Gameplay.Campaign
     public class Tile
     {
         public Guid TileId = Guid.NewGuid();
-        public Vector2Int Coordinates;
+        public Vector3Int Coordinates;
+        [NonSerialized]
         public List<Guid> NeighborTileIds = new List<Guid>();
         public List<Guid> RiverNeighborTileIds = new List<Guid>();
         public TileSurface Surface = TileSurface.Land;

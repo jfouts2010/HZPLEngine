@@ -30,5 +30,17 @@ namespace Models.Gameplay.Campaign
         {
             Name = string.IsNullOrWhiteSpace(name) ? "NewCampaign" : name.Trim();
         }
+
+        public CampaignTemplate(string name, List<Tile> tiles)
+            : this(name)
+        {
+            Tiles = tiles ?? new List<Tile>();
+            RebuildDerivedData();
+        }
+
+        public void RebuildDerivedData()
+        {
+            HexGridTopology.AssignNeighbors(Tiles);
+        }
     }
 }

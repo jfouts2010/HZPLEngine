@@ -5,6 +5,9 @@
             <ui:Label name="campaign-title" text="Campaign" class="campaign-hud-title" style="color: white; font-size: 18px; -unity-font-style: bold; margin-bottom: 6px;" />
             <ui:Label name="campaign-time" text="Time" class="campaign-hud-text" style="color: white; font-size: 13px; margin-bottom: 6px;" />
             <ui:Label name="selected-tile" text="Select a hex" class="campaign-hud-text campaign-hud-selection" style="color: white; font-size: 13px; margin-bottom: 6px; white-space: normal;" />
+            <ui:Foldout name="neighbors-foldout" text="Neighbors" class="campaign-hud-foldout" style="margin-top: 4px; margin-bottom: 4px;">
+                <ui:VisualElement name="neighbors-list" class="campaign-hud-neighbors-list" />
+            </ui:Foldout>
             <ui:Button name="pause-button" text="Pause" class="campaign-hud-button" style="height: 28px; margin-top: 10px; background-color: rgb(54, 86, 142); color: white; border-width: 0;" />
         </ui:VisualElement>
     </ui:VisualElement>

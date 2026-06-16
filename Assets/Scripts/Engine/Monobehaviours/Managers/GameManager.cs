@@ -35,6 +35,8 @@ namespace Engine.Monobehaviours.Managers
             if (template == null)
                 throw new ArgumentNullException(nameof(template));
 
+            template.RebuildDerivedData();
+
             TemplateName = template.Name;
             ModuleId = template.ModuleId;
             CurrentTime = template.CampaignStartTime;

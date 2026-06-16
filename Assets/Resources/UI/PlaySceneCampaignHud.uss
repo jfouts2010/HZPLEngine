@@ -52,3 +52,42 @@
 .campaign-hud-button:active {
     background-color: rgb(38, 63, 109);
 }
+
+.campaign-hud-foldout {
+    color: white;
+    font-size: 13px;
+}
+
+.campaign-hud-foldout > .unity-foldout__toggle {
+    color: white;
+}
+
+.campaign-hud-neighbors-list {
+    flex-direction: column;
+    margin-left: 8px;
+    margin-top: 4px;
+}
+
+.campaign-hud-neighbor-item {
+    height: 24px;
+    margin-bottom: 2px;
+    padding-left: 6px;
+    padding-right: 6px;
+    background-color: rgba(255, 255, 255, 0.06);
+    color: white;
+    font-size: 12px;
+    border-width: 0;
+    -unity-text-align: middle-left;
+    white-space: normal;
+}
+
+.campaign-hud-neighbor-item:hover {
+    background-color: rgba(255, 255, 255, 0.14);
+}
+
+.campaign-hud-neighbor-label {
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 12px;
+    margin-bottom: 2px;
+    white-space: normal;
+}

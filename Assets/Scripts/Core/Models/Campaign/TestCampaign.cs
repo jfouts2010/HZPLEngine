@@ -22,7 +22,7 @@ namespace Models.Gameplay.Campaign
 
         public static CampaignTemplate Create()
         {
-            return new CampaignTemplate(Name)
+            var template = new CampaignTemplate(Name)
             {
                 ModuleId = TestModule.Id,
                 CampaignStartTime = new DateTime(1990, 1, 1, 6, 0, 0),
@@ -31,12 +31,15 @@ namespace Models.Gameplay.Campaign
                     SimulationTickMinutes = 5,
                     OperationalCadenceHours = 6
                 },
-                ContentHash = "mechanics-test-campaign-v1",
+                ContentHash = "mechanics-test-campaign-v3",
                 CountryAllianceAssignments = CreateCountryAllianceAssignments(),
                 Tiles = CreateTiles(),
                 StartingTileData = CreateStartingTileData(),
                 BuildingStartingConditions = CreateBuildingStartingConditions()
             };
+
+            template.RebuildDerivedData();
+            return template;
         }
 
         private static List<CountryAllianceAssignment> CreateCountryAllianceAssignments()
@@ -53,66 +56,50 @@ namespace Models.Gameplay.Campaign
         {
             var blueCapital = CreateLandTile(
                 BlueCapitalTileId,
-                new Vector2Int(0, 0),
+                new Vector3Int(0, 0, 0),
                 TileTerrain.Plains,
                 Urbanization.Urban,
-                ForestCover.None,
-                BluePortTileId,
-                NeutralHubTileId);
+                ForestCover.None);
 
             var bluePort = CreateLandTile(
                 BluePortTileId,
-                new Vector2Int(1, 0),
+                new Vector3Int(1, -1, 0),
                 TileTerrain.Coast,
                 Urbanization.Suburban,
-                ForestCover.Light,
-                BlueCapitalTileId,
-                RedBorderTileId,
-                OceanTileId);
+                ForestCover.Light);
 
             var redBorder = CreateLandTile(
                 RedBorderTileId,
-                new Vector2Int(2, 0),
+                new Vector3Int(2, -2, 0),
                 TileTerrain.Hills,
                 Urbanization.Rural,
-                ForestCover.Light,
-                BluePortTileId,
-                RedMountainTileId);
+                ForestCover.Light);
 
             var redMountain = CreateLandTile(
                 RedMountainTileId,
-                new Vector2Int(2, 1),
+                new Vector3Int(1, -2, 1),
                 TileTerrain.Mountain,
                 Urbanization.Rural,
-                ForestCover.Heavy,
-                RedBorderTileId,
-                NeutralHubTileId);
+                ForestCover.Heavy);
 
             var neutralHub = CreateLandTile(
                 NeutralHubTileId,
-                new Vector2Int(1, 1),
+                new Vector3Int(0, -1, 1),
                 TileTerrain.Plains,
                 Urbanization.Rural,
-                ForestCover.None,
-                BlueCapitalTileId,
-                RedMountainTileId,
-                OceanTileId);
+                ForestCover.None);
 
             var ocean = new Tile
             {
                 TileId = OceanTileId,
-                Coordinates = new Vector2Int(1, -1),
+                Coordinates = new Vector3Int(2, -1, -1),
                 Surface = TileSurface.Ocean,
                 Terrain = TileTerrain.ShallowOcean,
                 Urbanization = Urbanization.None,
-                ForestCover = ForestCover.None,
-                NeighborTileIds = new List<Guid> { BluePortTileId, NeutralHubTileId }
+                ForestCover = ForestCover.None
             };
 
-            neutralHub.RiverNeighborTileIds.Add(RedMountainTileId);
-            redMountain.RiverNeighborTileIds.Add(NeutralHubTileId);
-
-            return new List<Tile>
+            var tiles = new List<Tile>
             {
                 blueCapital,
                 bluePort,
@@ -121,6 +108,11 @@ namespace Models.Gameplay.Campaign
                 neutralHub,
                 ocean
             };
+
+            neutralHub.RiverNeighborTileIds.Add(RedMountainTileId);
+            redMountain.RiverNeighborTileIds.Add(NeutralHubTileId);
+
+            return tiles;
         }
 
         private static List<TileData> CreateStartingTileData()
@@ -181,11 +173,10 @@ namespace Models.Gameplay.Campaign
 
         private static Tile CreateLandTile(
             Guid tileId,
-            Vector2Int coordinates,
+            Vector3Int coordinates,
             TileTerrain terrain,
             Urbanization urbanization,
-            ForestCover forestCover,
-            params Guid[] neighborTileIds)
+            ForestCover forestCover)
         {
             return new Tile
             {
@@ -194,8 +185,7 @@ namespace Models.Gameplay.Campaign
                 Surface = TileSurface.Land,
                 Terrain = terrain,
                 Urbanization = urbanization,
-                ForestCover = forestCover,
-                NeighborTileIds = new List<Guid>(neighborTileIds)
+                ForestCover = forestCover
             };
         }
 

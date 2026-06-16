@@ -1,3 +1,4 @@
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
@@ -29,6 +30,7 @@ namespace Engine.Monobehaviours.Managers
 
         private readonly Dictionary<Vector3Int, CampaignTile> tilesByCell = new Dictionary<Vector3Int, CampaignTile>();
         private readonly Dictionary<Vector3Int, Vector3> hexCentersByCell = new Dictionary<Vector3Int, Vector3>();
+        private readonly Dictionary<Guid, CampaignTile> tilesById = new Dictionary<Guid, CampaignTile>();
         private readonly Dictionary<System.Guid, TileData> tileDataById = new Dictionary<System.Guid, TileData>();
         private readonly Dictionary<string, UnityEngine.Tilemaps.Tile> renderTilesByKey = new Dictionary<string, UnityEngine.Tilemaps.Tile>();
         private readonly Dictionary<string, Sprite> spritesByKey = new Dictionary<string, Sprite>();
@@ -43,6 +45,8 @@ namespace Engine.Monobehaviours.Managers
         private Label titleLabel;
         private Label timeLabel;
         private Label selectedTileLabel;
+        private Foldout neighborsFoldout;
+        private VisualElement neighborsList;
         private Button pauseButton;
         private VisualElement hudRoot;
         private VisualElement hudPanel;
@@ -81,6 +85,7 @@ namespace Engine.Monobehaviours.Managers
             tilemap.ClearAllTiles();
             tilesByCell.Clear();
             hexCentersByCell.Clear();
+            tilesById.Clear();
             tileDataById.Clear();
 
             foreach (var tileData in gameManager.Tiles.Where(tileData => tileData != null))
@@ -90,7 +95,8 @@ namespace Engine.Monobehaviours.Managers
 
             foreach (var campaignTile in gameManager.CampaignTiles.Where(tile => tile != null))
             {
-                var cell = new Vector3Int(campaignTile.Coordinates.x, campaignTile.Coordinates.y, 0);
+                tilesById[campaignTile.TileId] = campaignTile;
+                var cell = GetCell(campaignTile.Coordinates);
                 var hexCenter = GetHexCenter(campaignTile.Coordinates);
                 tilesByCell[cell] = campaignTile;
                 hexCentersByCell[cell] = hexCenter;
@@ -195,6 +201,8 @@ namespace Engine.Monobehaviours.Managers
             titleLabel = root.Q<Label>("campaign-title");
             timeLabel = root.Q<Label>("campaign-time");
             selectedTileLabel = root.Q<Label>("selected-tile");
+            neighborsFoldout = root.Q<Foldout>("neighbors-foldout");
+            neighborsList = root.Q<VisualElement>("neighbors-list");
             pauseButton = root.Q<Button>("pause-button");
             hudRoot = root.Q<VisualElement>("campaign-hud-root");
             hudPanel = root.Q<VisualElement>("campaign-hud-panel");
@@ -209,6 +217,12 @@ namespace Engine.Monobehaviours.Managers
 
             if (hudPanel != null)
                 hudPanel.pickingMode = PickingMode.Position;
+
+            if (neighborsFoldout != null)
+            {
+                neighborsFoldout.pickingMode = PickingMode.Position;
+                neighborsFoldout.RegisterValueChangedCallback(_ => UpdateNeighborsList());
+            }
 
             if (pauseButton != null)
             {
@@ -270,6 +284,7 @@ namespace Engine.Monobehaviours.Managers
             if (!selectedCell.HasValue || !tilesByCell.TryGetValue(selectedCell.Value, out var selectedTile))
             {
                 selectedTileLabel.text = "Select a hex";
+                UpdateNeighborsUi();
                 return;
             }
 
@@ -283,12 +298,94 @@ namespace Engine.Monobehaviours.Managers
                 : string.Join(", ", buildings.Select(building => $"{building.Type} {building.FunctionalLevel}"));
 
             selectedTileLabel.text =
-                $"Hex {selectedTile.Coordinates.x}, {selectedTile.Coordinates.y}\n" +
+                $"Hex {selectedTile.Coordinates.x}, {selectedTile.Coordinates.y}, {selectedTile.Coordinates.z}\n" +
                 $"{selectedTile.Surface} | {selectedTile.Terrain}\n" +
                 $"Settlement: {selectedTile.Urbanization} | Forest: {selectedTile.ForestCover}\n" +
                 $"Control: {controller}\n" +
                 $"Infrastructure: {infrastructure}\n" +
                 buildingText;
+
+            UpdateNeighborsUi();
+        }
+
+        private void UpdateNeighborsUi()
+        {
+            if (neighborsFoldout == null)
+                return;
+
+            var neighborCount = 0;
+            if (selectedCell.HasValue && tilesByCell.TryGetValue(selectedCell.Value, out var selectedTile))
+                neighborCount = selectedTile.NeighborTileIds?.Count ?? 0;
+
+            neighborsFoldout.text = neighborCount == 0 ? "Neighbors" : $"Neighbors ({neighborCount})";
+
+            if (neighborsFoldout.value)
+                UpdateNeighborsList();
+        }
+
+        private void UpdateNeighborsList()
+        {
+            if (neighborsList == null || neighborsFoldout == null || !neighborsFoldout.value)
+                return;
+
+            neighborsList.Clear();
+
+            if (!selectedCell.HasValue || !tilesByCell.TryGetValue(selectedCell.Value, out var selectedTile))
+            {
+                neighborsList.Add(CreateNeighborMessage("Select a hex to view neighbors."));
+                return;
+            }
+
+            var neighborIds = selectedTile.NeighborTileIds ?? new List<Guid>();
+            if (neighborIds.Count == 0)
+            {
+                neighborsList.Add(CreateNeighborMessage("No neighbors."));
+                return;
+            }
+
+            var riverNeighbors = new HashSet<Guid>(selectedTile.RiverNeighborTileIds ?? new List<Guid>());
+
+            foreach (var neighborId in neighborIds)
+            {
+                if (!tilesById.TryGetValue(neighborId, out var neighbor))
+                {
+                    neighborsList.Add(CreateNeighborMessage($"Unknown tile {neighborId}"));
+                    continue;
+                }
+
+                var riverSuffix = riverNeighbors.Contains(neighborId) ? " | River" : string.Empty;
+                var coords = neighbor.Coordinates;
+                var summary =
+                    $"({coords.x}, {coords.y}, {coords.z}) {neighbor.Surface} | {neighbor.Terrain}{riverSuffix}";
+                neighborsList.Add(CreateNeighborSelectButton(neighbor, summary));
+            }
+        }
+
+        private Label CreateNeighborMessage(string message)
+        {
+            var label = new Label(message);
+            label.AddToClassList("campaign-hud-neighbor-label");
+            ApplyRuntimeFont(label);
+            return label;
+        }
+
+        private Button CreateNeighborSelectButton(CampaignTile neighbor, string summary)
+        {
+            var button = new Button(() => SelectTile(neighbor)) { text = summary };
+            button.AddToClassList("campaign-hud-neighbor-item");
+            button.pickingMode = PickingMode.Position;
+            ApplyRuntimeFont(button);
+            return button;
+        }
+
+        private void SelectTile(CampaignTile tile)
+        {
+            var cell = GetCell(tile.Coordinates);
+            if (!tilesByCell.ContainsKey(cell))
+                return;
+
+            selectedCell = cell;
+            UpdateSelectedTileUi();
         }
 
         private void HandleTileSelection()
@@ -665,7 +762,7 @@ namespace Engine.Monobehaviours.Managers
 
         private void CreateTileLabel(CampaignTile campaignTile, Vector3 hexCenter)
         {
-            var labelObject = new GameObject($"Hex Label {campaignTile.Coordinates.x},{campaignTile.Coordinates.y}");
+            var labelObject = new GameObject($"Hex Label {campaignTile.Coordinates.x},{campaignTile.Coordinates.y},{campaignTile.Coordinates.z}");
             labelObject.transform.SetParent(labelRoot, false);
             labelObject.transform.position = grid.transform.TransformPoint(hexCenter) + new Vector3(0f, 0f, -0.1f);
 
@@ -737,10 +834,15 @@ namespace Engine.Monobehaviours.Managers
             sceneCamera.transform.position = center;
         }
 
-        private static Vector3 GetHexCenter(Vector2Int coordinates)
+        private static Vector3Int GetCell(Vector3Int coordinates)
+        {
+            return new Vector3Int(coordinates.x, coordinates.z, 0);
+        }
+
+        private static Vector3 GetHexCenter(Vector3Int coordinates)
         {
             var x = coordinates.x * HexHorizontalSpacing;
-            var y = (coordinates.y + coordinates.x * 0.5f) * HexHeight;
+            var y = (coordinates.z + coordinates.x * 0.5f) * HexHeight;
             return new Vector3(x, y, 0f);
         }
 
@@ -771,7 +873,11 @@ namespace Engine.Monobehaviours.Managers
                 return;
             }
 
-            selectedCell = tilesByCell.Keys.OrderBy(cell => cell.y).ThenBy(cell => cell.x).First();
+            selectedCell = hexCentersByCell
+                .OrderBy(entry => entry.Value.y)
+                .ThenBy(entry => entry.Value.x)
+                .Select(entry => entry.Key)
+                .First();
             UpdateSelectedTileUi();
         }
     }
