@@ -30,8 +30,8 @@ namespace Engine.Monobehaviours.Managers
 
         private readonly Dictionary<Vector3Int, CampaignTile> tilesByCell = new Dictionary<Vector3Int, CampaignTile>();
         private readonly Dictionary<Vector3Int, Vector3> hexCentersByCell = new Dictionary<Vector3Int, Vector3>();
-        private readonly Dictionary<Guid, CampaignTile> tilesById = new Dictionary<Guid, CampaignTile>();
-        private readonly Dictionary<System.Guid, TileData> tileDataById = new Dictionary<System.Guid, TileData>();
+        private readonly Dictionary<Vector3Int, CampaignTile> tilesById = new Dictionary<Vector3Int, CampaignTile>();
+        private readonly Dictionary<Vector3Int, TileData> tileDataById = new Dictionary<Vector3Int, TileData>();
         private readonly Dictionary<string, UnityEngine.Tilemaps.Tile> renderTilesByKey = new Dictionary<string, UnityEngine.Tilemaps.Tile>();
         private readonly Dictionary<string, Sprite> spritesByKey = new Dictionary<string, Sprite>();
 
@@ -96,7 +96,7 @@ namespace Engine.Monobehaviours.Managers
 
             foreach (var campaignTile in gameManager.CampaignTiles.Where(tile => tile != null))
             {
-                tilesById[campaignTile.TileId] = campaignTile;
+                tilesById[campaignTile.Coordinates] = campaignTile;
                 var cell = GetCell(campaignTile.Coordinates);
                 var hexCenter = GetHexCenter(campaignTile.Coordinates);
                 tilesByCell[cell] = campaignTile;
@@ -289,11 +289,11 @@ namespace Engine.Monobehaviours.Managers
                 return;
             }
 
-            tileDataById.TryGetValue(selectedTile.TileId, out var tileData);
+            tileDataById.TryGetValue(selectedTile.Coordinates, out var tileData);
             var landData = tileData as LandTileData;
             var controller = landData == null ? "None" : landData.Controller.ToString();
             var infrastructure = landData == null ? "N/A" : landData.Infrastructure.FunctionalLevel.ToString();
-            var buildings = gameManager.Buildings.GetBuildingsOnTile(selectedTile.TileId);
+            var buildings = gameManager.Buildings.GetBuildingsOnTile(selectedTile.Coordinates);
             var buildingText = buildings.Count == 0
                 ? "No buildings"
                 : string.Join(", ", buildings.Select(building => $"{building.Type} {building.FunctionalLevel}"));
@@ -337,14 +337,14 @@ namespace Engine.Monobehaviours.Managers
                 return;
             }
 
-            var neighborIds = selectedTile.NeighborTileIds ?? new List<Guid>();
+            var neighborIds = selectedTile.NeighborTileIds ?? new List<Vector3Int>();
             if (neighborIds.Count == 0)
             {
                 neighborsList.Add(CreateNeighborMessage("No neighbors."));
                 return;
             }
 
-            var riverNeighbors = new HashSet<Guid>(selectedTile.RiverNeighborTileIds ?? new List<Guid>());
+            var riverNeighbors = new HashSet<Vector3Int>(selectedTile.RiverNeighborTileIds ?? new List<Vector3Int>());
 
             foreach (var neighborId in neighborIds)
             {
@@ -434,7 +434,7 @@ namespace Engine.Monobehaviours.Managers
 
         private string GetTileVisualKey(CampaignTile campaignTile)
         {
-            tileDataById.TryGetValue(campaignTile.TileId, out var tileData);
+            tileDataById.TryGetValue(campaignTile.Coordinates, out var tileData);
             var controller = tileData is LandTileData landData ? landData.Controller : Alliance.Neutral;
 
             if (campaignTile.Surface == TileSurface.Ocean)
@@ -448,7 +448,7 @@ namespace Engine.Monobehaviours.Managers
             if (spritesByKey.TryGetValue(key, out var sprite))
                 return sprite;
 
-            tileDataById.TryGetValue(campaignTile.TileId, out var tileData);
+            tileDataById.TryGetValue(campaignTile.Coordinates, out var tileData);
             var controller = tileData is LandTileData landData ? landData.Controller : Alliance.Neutral;
 
             var texture = CreateTileTexture(campaignTile, controller);
@@ -782,8 +782,8 @@ namespace Engine.Monobehaviours.Managers
 
         private string GetTileLabel(CampaignTile campaignTile)
         {
-            tileDataById.TryGetValue(campaignTile.TileId, out var tileData);
-            var buildingCount = gameManager.Buildings.GetBuildingsOnTile(campaignTile.TileId).Count;
+            tileDataById.TryGetValue(campaignTile.Coordinates, out var tileData);
+            var buildingCount = gameManager.Buildings.GetBuildingsOnTile(campaignTile.Coordinates).Count;
             var coords = campaignTile.Coordinates;
             var hexLine = $"Hex {coords.x},{coords.y},{coords.z}";
 

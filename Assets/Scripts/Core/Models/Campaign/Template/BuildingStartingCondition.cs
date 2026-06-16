@@ -1,4 +1,5 @@
 using System;
+using UnityEngine;
 
 namespace Models.Gameplay.Campaign
 {
@@ -6,7 +7,7 @@ namespace Models.Gameplay.Campaign
     public class BuildingStartingCondition
     {
         public Guid BuildingId = Guid.NewGuid();
-        public Guid TileId;
+        public Vector3Int TileId;
         public BuildingType Type;
         public BuildingLevel Level = new BuildingLevel();
     }

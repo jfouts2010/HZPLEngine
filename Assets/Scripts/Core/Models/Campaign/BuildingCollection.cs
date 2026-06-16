@@ -11,9 +11,9 @@ namespace Models.Gameplay.Campaign
         [SerializeReference]
         public List<Building> Buildings = new List<Building>();
 
-        private Dictionary<Guid, List<Building>> buildingsByTileId;
+        private Dictionary<Vector3Int, List<Building>> buildingsByTileId;
 
-        public List<Building> GetBuildingsOnTile(Guid tileId)
+        public List<Building> GetBuildingsOnTile(Vector3Int tileId)
         {
             EnsureIndex();
             return buildingsByTileId.TryGetValue(tileId, out var buildings)
@@ -21,7 +21,7 @@ namespace Models.Gameplay.Campaign
                 : new List<Building>();
         }
 
-        public List<Building> GetBuildingsOnTile(Guid tileId, BuildingType type)
+        public List<Building> GetBuildingsOnTile(Vector3Int tileId, BuildingType type)
         {
             return GetBuildingsOnTile(tileId)
                 .Where(building => building.Type == type)

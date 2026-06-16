@@ -1,4 +1,5 @@
 using System;
+using UnityEngine;
 
 namespace Models.Gameplay.Campaign
 {
@@ -6,7 +7,7 @@ namespace Models.Gameplay.Campaign
     public abstract class Building
     {
         public Guid BuildingId;
-        public Guid TileId;
+        public Vector3Int TileId;
         public BuildingLevel Level = new BuildingLevel();
 
         public abstract BuildingType Type { get; }

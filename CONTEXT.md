@@ -102,6 +102,8 @@ Core engine rules stay the same across Modules. A less-capable SAM in one Module
 
 At full strength, a division's additive combat stats are derived from the sum of its battalion definitions multiplied by their counts. Division speed is the minimum speed among its battalion definitions, and division softness is a strength-weighted average of battalion softness values.
 
+Division speed is a stable movement capability derived when the division enters runtime play. Other combat stats can be derived from the division template and current battalion state when combat rules need them.
+
 **Division starting condition** — a campaign-template entry that places one starting division instance on a tile at turn zero. It references a module division template, a module country, and a starting tile; it does not duplicate the division's derived combat stats.
 
 ### Campaign template
@@ -122,17 +124,17 @@ Once play begins, the starting order of battle is historical context only. Runti
 
 ### Tile
 
-A hexagonal cell on the operational hex map. Tiles are hexagons in the model, visuals, and code; they should not be represented as square grid cells. Each tile has a stable GUID identity within a campaign template’s grid. Geography on a tile is immutable during play; control and assets on the tile evolve.
+A hexagonal cell on the operational hex map. Tiles are hexagons in the model, visuals, and code; they should not be represented as square grid cells. Each tile's cube coordinate is its stable identity within a campaign template's grid. Geography on a tile is immutable during play; control and assets on the tile evolve.
 
-**Tile ID** — a GUID-based stable identifier for a tile. Tile ID is the source of identity for references, neighbor lists, building placement, and runtime state. Coordinates, when present, are layout data rather than identity.
+**Tile ID** — the tile's `Vector3Int` cube coordinate. Tile ID is the source of identity for references, neighbor lists, building placement, and runtime state. Campaign templates are authored with stable coordinates; changing a tile's coordinate is an identity change.
 
 **Template tile** — static geography authored on the campaign template (terrain, tile surface, urbanization, forest cover, hex neighbors, river crossings). Same every play from that template.
 
 Template tile definitions use one class for both land and ocean tiles. Land/ocean differences are represented by tile surface and by polymorphic runtime tile state, not by polymorphic tile definitions.
 
-**Tile neighbors** — the static adjacent hexes for a tile. Neighbor IDs are stored on the template tile definition as part of hex-grid geography and do not change during play. Runtime systems read these authored neighbor IDs rather than recalculating adjacency.
+**Tile neighbors** — the static adjacent hexes for a tile. Neighbor coordinate IDs are stored on the template tile definition as part of hex-grid geography and do not change during play. Runtime systems read these authored neighbor IDs rather than recalculating adjacency.
 
-**River neighbors** — neighboring tile IDs that have a river crossing between them and this tile. River data is stored on the template tile definition next to the neighbor list so systems can answer “does this move cross a river?” without a separate edge-property collection. River neighbor IDs should reference existing tile neighbors.
+**River neighbors** — neighboring tile coordinate IDs that have a river crossing between them and this tile. River data is stored on the template tile definition next to the neighbor list so systems can answer “does this move cross a river?” without a separate edge-property collection. River neighbor IDs should reference existing tile neighbors.
 
 **Terrain** — the tile's base static geography subtype. Terrain is a simple enum with land values such as plains, hills, mountain, desert, tundra, and coast, plus ocean values such as ocean, shallow ocean, or deep ocean. Coast is a land terrain type where land transitions to ocean within the tile. It is treated as a land tile for control, movement, infrastructure, and building placement, but may unlock coastal capabilities such as ports.
 
@@ -196,7 +198,7 @@ Buildings are authored on the campaign template (which building types exist on w
 
 Buildings may only be placed on land tiles. Ports cannot be placed on ocean tiles. Specific coastal placement validation for ports is not enforced in v1.
 
-**Building ID** — a stable GUID-based identifier for a building instance. A building also records its `TileId` placement and building type. Systems may index buildings by tile for efficient lookup, but building identity belongs to the building instance rather than to tile data.
+**Building ID** — a stable GUID-based identifier for a building instance. A building also records its `Vector3Int` `TileId` placement and building type. Systems may index buildings by tile for efficient lookup, but building identity belongs to the building instance rather than to tile data.
 
 Multiple building instances may exist on the same tile, including multiple buildings of the same type. Rules that need buildings on a tile query by `TileId` and then filter by building type or capabilities.
 
@@ -204,7 +206,7 @@ Buildings inherit control from their tile. In v1, buildings do not carry separat
 
 Building categories and their runtime classes belong to the core engine. Runtime buildings share an abstract building concept for common identity, placement, build level, damage, and functional level. Specific building categories may have their own runtime classes when their behavior or state differs meaningfully. Airports are expected to be specialized and relatively complex; forts may remain simple specialized buildings.
 
-Buildings are owned by a building collection or building system rather than stored inside tile data. Tile data may reference or query buildings by `TileId`, but tiles are not the aggregate root for building state.
+Buildings are owned by a building collection or building system rather than stored inside tile data. Tile data may reference or query buildings by coordinate `TileId`, but tiles are not the aggregate root for building state.
 
 Each building is tracked with two persisted integers:
 

@@ -15,12 +15,12 @@ namespace Models.Gameplay.Campaign
         private static readonly Guid BlueDivisionId = Guid.Parse("2fa9789e-af9a-489f-8ec0-7a2f8d7c0039");
         private static readonly Guid RedDivisionId = Guid.Parse("713f4192-5ed1-4cb5-b399-8d5c5786dc0a");
 
-        private static readonly Guid BlueCapitalTileId = Guid.Parse("714bf6db-21df-464f-81b2-7381064b1d07");
-        private static readonly Guid BluePortTileId = Guid.Parse("25a3b8d7-bc29-4458-b786-c44d7c15b745");
-        private static readonly Guid RedBorderTileId = Guid.Parse("452a96a3-b3df-43df-b6e3-f264898d5f1b");
-        private static readonly Guid RedMountainTileId = Guid.Parse("aee314d8-44fc-4035-b77d-65248bded801");
-        private static readonly Guid NeutralHubTileId = Guid.Parse("8a4b2ab1-5795-4a2f-9866-65be04ff91e4");
-        private static readonly Guid OceanTileId = Guid.Parse("df7b7ffc-5e5e-4400-a878-497e34d1b9bb");
+        private static readonly Vector3Int BlueCapitalTileId = new Vector3Int(0, 0, 0);
+        private static readonly Vector3Int BluePortTileId = new Vector3Int(1, -1, 0);
+        private static readonly Vector3Int RedBorderTileId = new Vector3Int(2, -2, 0);
+        private static readonly Vector3Int RedMountainTileId = new Vector3Int(1, -2, 1);
+        private static readonly Vector3Int NeutralHubTileId = new Vector3Int(0, -1, 1);
+        private static readonly Vector3Int OceanTileId = new Vector3Int(2, -1, -1);
 
         public static CampaignTemplate Create()
         {
@@ -59,43 +59,37 @@ namespace Models.Gameplay.Campaign
         {
             var blueCapital = CreateLandTile(
                 BlueCapitalTileId,
-                new Vector3Int(0, 0, 0),
                 TileTerrain.Plains,
                 Urbanization.Urban,
                 ForestCover.None);
 
             var bluePort = CreateLandTile(
                 BluePortTileId,
-                new Vector3Int(1, -1, 0),
                 TileTerrain.Coast,
                 Urbanization.Suburban,
                 ForestCover.Light);
 
             var redBorder = CreateLandTile(
                 RedBorderTileId,
-                new Vector3Int(2, -2, 0),
                 TileTerrain.Hills,
                 Urbanization.Rural,
                 ForestCover.Light);
 
             var redMountain = CreateLandTile(
                 RedMountainTileId,
-                new Vector3Int(1, -2, 1),
                 TileTerrain.Mountain,
                 Urbanization.Rural,
                 ForestCover.Heavy);
 
             var neutralHub = CreateLandTile(
                 NeutralHubTileId,
-                new Vector3Int(0, -1, 1),
                 TileTerrain.Plains,
                 Urbanization.Rural,
                 ForestCover.None);
 
             var ocean = new Tile
             {
-                TileId = OceanTileId,
-                Coordinates = new Vector3Int(2, -1, -1),
+                Coordinates = OceanTileId,
                 Surface = TileSurface.Ocean,
                 Terrain = TileTerrain.ShallowOcean,
                 Urbanization = Urbanization.None,
@@ -198,16 +192,14 @@ namespace Models.Gameplay.Campaign
         }
 
         private static Tile CreateLandTile(
-            Guid tileId,
-            Vector3Int coordinates,
+            Vector3Int tileId,
             TileTerrain terrain,
             Urbanization urbanization,
             ForestCover forestCover)
         {
             return new Tile
             {
-                TileId = tileId,
-                Coordinates = coordinates,
+                Coordinates = tileId,
                 Surface = TileSurface.Land,
                 Terrain = terrain,
                 Urbanization = urbanization,
@@ -217,7 +209,7 @@ namespace Models.Gameplay.Campaign
 
         private static BuildingStartingCondition CreateBuilding(
             string buildingId,
-            Guid tileId,
+            Vector3Int tileId,
             BuildingType type,
             int level,
             int damage = 0)

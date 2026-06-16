@@ -3,6 +3,8 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using Models.Gameplay.Campaign;
+using Models.Module;
+using Monobehaviours.Singletons;
 using UnityEngine;
 
 namespace Engine.Monobehaviours.Managers
@@ -20,6 +22,7 @@ namespace Engine.Monobehaviours.Managers
         public List<Tile> CampaignTiles = new List<Tile>();
         [SerializeReference] public List<TileData> Tiles = new List<TileData>();
         public BuildingCollection Buildings = new BuildingCollection();
+        public DivisionCollection Divisions = new DivisionCollection();
 
         private Coroutine GameTurnCoroutine = null;
         private bool _campaignStarted;
@@ -39,6 +42,13 @@ namespace Engine.Monobehaviours.Managers
 
             TemplateName = template.Name;
             ModuleId = template.ModuleId;
+            var activeModule = ModuleSingleton.Instance.ActiveModule;
+            if (activeModule.Id != template.ModuleId)
+            {
+                throw new InvalidOperationException(
+                    $"Campaign template module {template.ModuleId} does not match active module {activeModule.Id}.");
+            }
+
             CurrentTime = template.CampaignStartTime;
             SimulationSettings = CopySimulationSettings(template.SimulationSettings);
             CampaignTiles = CopyTiles(template.Tiles);
@@ -48,6 +58,11 @@ namespace Engine.Monobehaviours.Managers
                 Buildings = CreateRuntimeBuildings(template.BuildingStartingConditions)
             };
             Buildings.RebuildIndex();
+            Divisions = new DivisionCollection
+            {
+                Divisions = CreateRuntimeDivisions(template.DivisionStartingConditions, activeModule)
+            };
+            Divisions.RebuildIndex();
 
             IsGamePaused = false;
             _campaignStarted = true;
@@ -110,10 +125,9 @@ namespace Engine.Monobehaviours.Managers
         {
             return new Tile
             {
-                TileId = tile.TileId,
                 Coordinates = tile.Coordinates,
-                NeighborTileIds = new List<Guid>(tile.NeighborTileIds ?? new List<Guid>()),
-                RiverNeighborTileIds = new List<Guid>(tile.RiverNeighborTileIds ?? new List<Guid>()),
+                NeighborTileIds = new List<Vector3Int>(tile.NeighborTileIds ?? new List<Vector3Int>()),
+                RiverNeighborTileIds = new List<Vector3Int>(tile.RiverNeighborTileIds ?? new List<Vector3Int>()),
                 Surface = tile.Surface,
                 Terrain = tile.Terrain,
                 Urbanization = tile.Urbanization,
@@ -175,6 +189,51 @@ namespace Engine.Monobehaviours.Managers
                 default:
                     throw new ArgumentOutOfRangeException(nameof(startingCondition.Type), startingCondition.Type, "Unknown building type.");
             }
+        }
+
+        private static List<Division> CreateRuntimeDivisions(
+            List<DivisionStartingCondition> startingConditions,
+            ModuleDefinition module)
+        {
+            if (module == null)
+                throw new ArgumentNullException(nameof(module));
+
+            var battalionDefinitions = module.BattalionDefinitions
+                .Where(battalion => battalion != null)
+                .ToDictionary(battalion => battalion.BattalionDefinitionId);
+
+            var divisionTemplates = module.DivisionTemplates
+                .Where(template => template != null)
+                .ToDictionary(template => template.DivisionTemplateId);
+
+            return (startingConditions ?? new List<DivisionStartingCondition>())
+                .Where(startingCondition => startingCondition != null)
+                .Select(startingCondition => CreateRuntimeDivision(
+                    startingCondition,
+                    divisionTemplates,
+                    battalionDefinitions))
+                .ToList();
+        }
+
+        private static Division CreateRuntimeDivision(
+            DivisionStartingCondition startingCondition,
+            IReadOnlyDictionary<Guid, DivisionTemplate> divisionTemplates,
+            IReadOnlyDictionary<Guid, BattalionDefinition> battalionDefinitions)
+        {
+            if (!divisionTemplates.TryGetValue(startingCondition.DivisionTemplateId, out var divisionTemplate))
+            {
+                throw new KeyNotFoundException(
+                    $"Division template {startingCondition.DivisionTemplateId} was not found in the active module.");
+            }
+
+            if (divisionTemplate.CountryId != startingCondition.CountryId)
+            {
+                throw new InvalidOperationException(
+                    $"Division starting condition {startingCondition.DivisionId} country does not match its division template country.");
+            }
+
+            var speed = divisionTemplate.CalculateFullStrengthSpeed(battalionDefinitions);
+            return new Division(startingCondition, speed);
         }
 
         private static BuildingLevel CopyBuildingLevel(BuildingLevel level)

@@ -34,7 +34,7 @@ namespace Models.Gameplay.Campaign
                 tile.NeighborTileIds = CubeNeighborOffsets
                     .Select(offset => tile.Coordinates + offset)
                     .Where(coordinates => tilesByCoordinate.ContainsKey(coordinates))
-                    .Select(coordinates => tilesByCoordinate[coordinates].TileId)
+                    .Select(coordinates => tilesByCoordinate[coordinates].Coordinates)
                     .ToList();
             }
         }
@@ -52,7 +52,7 @@ namespace Models.Gameplay.Campaign
 
             var concreteTiles = tiles.Where(tile => tile != null).ToList();
             foreach (var tile in concreteTiles.Where(tile => !IsValidCubeCoordinate(tile.Coordinates)))
-                errors.Add($"Tile {tile.TileId} has invalid cube coordinates {tile.Coordinates}.");
+                errors.Add($"Tile {tile.Coordinates} has invalid cube coordinates {tile.Coordinates}.");
 
             var duplicateCoordinates = concreteTiles
                 .GroupBy(tile => tile.Coordinates)
@@ -60,15 +60,15 @@ namespace Models.Gameplay.Campaign
             foreach (var group in duplicateCoordinates)
                 errors.Add($"Multiple tiles use cube coordinates {group.Key}.");
 
-            var tileIds = new HashSet<Guid>(concreteTiles.Select(tile => tile.TileId));
+            var tileIds = new HashSet<Vector3Int>(concreteTiles.Select(tile => tile.Coordinates));
             foreach (var tile in concreteTiles)
             {
-                foreach (var riverNeighborId in tile.RiverNeighborTileIds ?? new List<Guid>())
+                foreach (var riverNeighborId in tile.RiverNeighborTileIds ?? new List<Vector3Int>())
                 {
                     if (!tileIds.Contains(riverNeighborId))
-                        errors.Add($"Tile {tile.TileId} has unknown river neighbor {riverNeighborId}.");
+                        errors.Add($"Tile {tile.Coordinates} has unknown river neighbor {riverNeighborId}.");
                     else if (tile.NeighborTileIds == null || !tile.NeighborTileIds.Contains(riverNeighborId))
-                        errors.Add($"Tile {tile.TileId} has river neighbor {riverNeighborId} that is not adjacent.");
+                        errors.Add($"Tile {tile.Coordinates} has river neighbor {riverNeighborId} that is not adjacent.");
                 }
             }
 
