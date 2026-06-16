@@ -8,6 +8,9 @@
             <ui:Foldout name="neighbors-foldout" text="Neighbors" class="campaign-hud-foldout" style="margin-top: 4px; margin-bottom: 4px;">
                 <ui:VisualElement name="neighbors-list" class="campaign-hud-neighbors-list" />
             </ui:Foldout>
+            <ui:Foldout name="units-foldout" text="Units" class="campaign-hud-foldout" style="margin-top: 4px; margin-bottom: 4px;" value="true">
+                <ui:VisualElement name="units-list" class="campaign-hud-units-list" />
+            </ui:Foldout>
             <ui:Button name="pause-button" text="Pause" class="campaign-hud-button" style="height: 28px; margin-top: 10px; background-color: rgb(54, 86, 142); color: white; border-width: 0;" />
         </ui:VisualElement>
     </ui:VisualElement>

@@ -91,3 +91,34 @@
     margin-bottom: 2px;
     white-space: normal;
 }
+
+.campaign-hud-units-list {
+    flex-direction: column;
+    margin-left: 8px;
+    margin-top: 4px;
+}
+
+.campaign-hud-unit-card {
+    flex-direction: column;
+    margin-bottom: 4px;
+    padding-left: 6px;
+    padding-right: 6px;
+    padding-top: 5px;
+    padding-bottom: 5px;
+    background-color: rgba(255, 255, 255, 0.08);
+    border-left-width: 3px;
+    border-left-color: rgb(160, 170, 185);
+}
+
+.campaign-hud-unit-name {
+    color: white;
+    font-size: 12px;
+    -unity-font-style: bold;
+    white-space: normal;
+}
+
+.campaign-hud-unit-stat {
+    color: rgba(255, 255, 255, 0.78);
+    font-size: 11px;
+    margin-top: 2px;
+}

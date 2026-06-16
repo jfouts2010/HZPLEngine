@@ -34,6 +34,7 @@ namespace Engine.Monobehaviours.Managers
         private readonly Dictionary<Vector3Int, TileData> tileDataById = new Dictionary<Vector3Int, TileData>();
         private readonly Dictionary<string, UnityEngine.Tilemaps.Tile> renderTilesByKey = new Dictionary<string, UnityEngine.Tilemaps.Tile>();
         private readonly Dictionary<string, Sprite> spritesByKey = new Dictionary<string, Sprite>();
+        private readonly Dictionary<string, Sprite> unitCounterSpritesByKey = new Dictionary<string, Sprite>();
 
         private const int TilePixelSize = 32;
         private const int HexFlatInsetPixels = 8;
@@ -41,13 +42,20 @@ namespace Engine.Monobehaviours.Managers
         private const float HexHeight = 0.8660254f;
         private const float HexHorizontalSpacing = HexWidth * 0.75f;
         private const float TileLabelCharacterSize = 0.027f;
+        private const float UnitCounterWorldWidth = 0.45f;
+        private const float UnitCounterLabelCharacterSize = 0.018f;
+        private const int UnitCounterPixelWidth = 30;
+        private const int UnitCounterPixelHeight = 20;
 
         private Transform labelRoot;
+        private Transform unitCounterRoot;
         private Label titleLabel;
         private Label timeLabel;
         private Label selectedTileLabel;
         private Foldout neighborsFoldout;
         private VisualElement neighborsList;
+        private Foldout unitsFoldout;
+        private VisualElement unitsList;
         private Button pauseButton;
         private VisualElement hudRoot;
         private VisualElement hudPanel;
@@ -93,6 +101,7 @@ namespace Engine.Monobehaviours.Managers
                 tileDataById[tileData.TileId] = tileData;
 
             ClearLabels();
+            ClearUnitCounters();
 
             foreach (var campaignTile in gameManager.CampaignTiles.Where(tile => tile != null))
             {
@@ -112,6 +121,8 @@ namespace Engine.Monobehaviours.Managers
                 tilemap.SetColor(cell, Color.white);
                 CreateTileLabel(campaignTile, hexCenter);
             }
+
+            CreateUnitCounters();
 
             tilemap.RefreshAllTiles();
             FrameCamera();
@@ -145,6 +156,13 @@ namespace Engine.Monobehaviours.Managers
                 var labelObject = new GameObject("Campaign Hex Labels");
                 labelObject.transform.SetParent(grid.transform, false);
                 labelRoot = labelObject.transform;
+            }
+
+            if (unitCounterRoot == null)
+            {
+                var counterObject = new GameObject("Campaign Unit Counters");
+                counterObject.transform.SetParent(grid.transform, false);
+                unitCounterRoot = counterObject.transform;
             }
         }
 
@@ -204,6 +222,8 @@ namespace Engine.Monobehaviours.Managers
             selectedTileLabel = root.Q<Label>("selected-tile");
             neighborsFoldout = root.Q<Foldout>("neighbors-foldout");
             neighborsList = root.Q<VisualElement>("neighbors-list");
+            unitsFoldout = root.Q<Foldout>("units-foldout");
+            unitsList = root.Q<VisualElement>("units-list");
             pauseButton = root.Q<Button>("pause-button");
             hudRoot = root.Q<VisualElement>("campaign-hud-root");
             hudPanel = root.Q<VisualElement>("campaign-hud-panel");
@@ -223,6 +243,12 @@ namespace Engine.Monobehaviours.Managers
             {
                 neighborsFoldout.pickingMode = PickingMode.Position;
                 neighborsFoldout.RegisterValueChangedCallback(_ => UpdateNeighborsList());
+            }
+
+            if (unitsFoldout != null)
+            {
+                unitsFoldout.pickingMode = PickingMode.Position;
+                unitsFoldout.RegisterValueChangedCallback(_ => UpdateUnitsList());
             }
 
             if (pauseButton != null)
@@ -286,6 +312,7 @@ namespace Engine.Monobehaviours.Managers
             {
                 selectedTileLabel.text = "Select a hex";
                 UpdateNeighborsUi();
+                UpdateUnitsUi();
                 return;
             }
 
@@ -307,6 +334,7 @@ namespace Engine.Monobehaviours.Managers
                 buildingText;
 
             UpdateNeighborsUi();
+            UpdateUnitsUi();
         }
 
         private void UpdateNeighborsUi()
@@ -322,6 +350,18 @@ namespace Engine.Monobehaviours.Managers
 
             if (neighborsFoldout.value)
                 UpdateNeighborsList();
+        }
+
+        private void UpdateUnitsUi()
+        {
+            if (unitsFoldout == null)
+                return;
+
+            var unitCount = GetSelectedTileDivisions().Count;
+            unitsFoldout.text = unitCount == 0 ? "Units" : $"Units ({unitCount})";
+
+            if (unitsFoldout.value)
+                UpdateUnitsList();
         }
 
         private void UpdateNeighborsList()
@@ -362,6 +402,52 @@ namespace Engine.Monobehaviours.Managers
             }
         }
 
+        private void UpdateUnitsList()
+        {
+            if (unitsList == null || unitsFoldout == null || !unitsFoldout.value)
+                return;
+
+            unitsList.Clear();
+
+            var divisions = GetSelectedTileDivisions();
+            if (divisions.Count == 0)
+            {
+                unitsList.Add(CreateNeighborMessage("No units on this hex."));
+                return;
+            }
+
+            foreach (var division in divisions.OrderBy(division => division.Name))
+                unitsList.Add(CreateUnitCard(division));
+        }
+
+        private List<Division> GetSelectedTileDivisions()
+        {
+            if (!selectedCell.HasValue || !tilesByCell.TryGetValue(selectedCell.Value, out var selectedTile))
+                return new List<Division>();
+
+            return gameManager?.Divisions?.GetDivisionsOnTile(selectedTile.Coordinates) ?? new List<Division>();
+        }
+
+        private VisualElement CreateUnitCard(Division division)
+        {
+            var card = new VisualElement();
+            card.AddToClassList("campaign-hud-unit-card");
+            card.style.borderLeftColor = GetControlColor(GetDivisionAlliance(division));
+
+            var name = new Label(string.IsNullOrWhiteSpace(division.Name) ? "Unnamed Division" : division.Name);
+            name.AddToClassList("campaign-hud-unit-name");
+            ApplyRuntimeFont(name);
+
+            var stats = new Label(
+                $"Org {Mathf.RoundToInt(100)}% | Strength {Mathf.RoundToInt(100)}% | Speed {division.Speed:0.#}");
+            stats.AddToClassList("campaign-hud-unit-stat");
+            ApplyRuntimeFont(stats);
+
+            card.Add(name);
+            card.Add(stats);
+            return card;
+        }
+
         private Label CreateNeighborMessage(string message)
         {
             var label = new Label(message);
@@ -387,6 +473,103 @@ namespace Engine.Monobehaviours.Managers
 
             selectedCell = cell;
             UpdateSelectedTileUi();
+        }
+
+        private void CreateUnitCounters()
+        {
+            if (unitCounterRoot == null || gameManager?.Divisions == null)
+                return;
+
+            foreach (var group in gameManager.Divisions.Divisions
+                         .Where(division => division != null)
+                         .GroupBy(division => division.TileId))
+            {
+                var cell = GetCell(group.Key);
+                if (!hexCentersByCell.TryGetValue(cell, out var hexCenter))
+                    continue;
+
+                var divisions = group.ToList();
+                var firstDivision = divisions[0];
+                var alliance = GetDivisionAlliance(firstDivision);
+                CreateUnitCounter(group.Key, hexCenter, divisions.Count, alliance);
+            }
+        }
+
+        private void CreateUnitCounter(Vector3Int tileId, Vector3 hexCenter, int divisionCount, Alliance alliance)
+        {
+            var counterObject = new GameObject($"Unit Counter {tileId.x},{tileId.y},{tileId.z}");
+            counterObject.transform.SetParent(unitCounterRoot, false);
+            counterObject.transform.position = grid.transform.TransformPoint(hexCenter) + new Vector3(0f, -0.1f, -0.2f);
+
+            var renderer = counterObject.AddComponent<SpriteRenderer>();
+            renderer.sprite = GetUnitCounterSprite(alliance);
+            renderer.sortingOrder = 20;
+
+            var textObject = new GameObject("Counter Label");
+            textObject.transform.SetParent(counterObject.transform, false);
+            textObject.transform.localPosition = new Vector3(0f, 0f, -0.05f);
+
+            var textMesh = textObject.AddComponent<TextMesh>();
+            textMesh.anchor = TextAnchor.MiddleCenter;
+            textMesh.alignment = TextAlignment.Center;
+            textMesh.characterSize = UnitCounterLabelCharacterSize;
+            textMesh.fontSize = 28;
+            textMesh.color = Color.white;
+            textMesh.text = divisionCount.ToString();
+
+            var textRenderer = textObject.GetComponent<MeshRenderer>();
+            textRenderer.sortingOrder = 21;
+        }
+
+        private Sprite GetUnitCounterSprite(Alliance alliance)
+        {
+            var key = alliance.ToString();
+            if (unitCounterSpritesByKey.TryGetValue(key, out var sprite))
+                return sprite;
+
+            var texture = CreateUnitCounterTexture(alliance);
+            sprite = Sprite.Create(
+                texture,
+                new Rect(0, 0, UnitCounterPixelWidth, UnitCounterPixelHeight),
+                new Vector2(0.5f, 0.5f),
+                UnitCounterPixelWidth / UnitCounterWorldWidth);
+            unitCounterSpritesByKey[key] = sprite;
+            return sprite;
+        }
+
+        private Texture2D CreateUnitCounterTexture(Alliance alliance)
+        {
+            var pixels = new Color[UnitCounterPixelWidth * UnitCounterPixelHeight];
+            var fill = Blend(GetControlColor(alliance), new Color(0.12f, 0.13f, 0.15f), 0.34f);
+            var trim = GetControlColor(alliance);
+            var dark = new Color(0.04f, 0.05f, 0.06f);
+
+            for (var y = 0; y < UnitCounterPixelHeight; y++)
+            {
+                for (var x = 0; x < UnitCounterPixelWidth; x++)
+                {
+                    var border = x == 0 || y == 0 || x == UnitCounterPixelWidth - 1 || y == UnitCounterPixelHeight - 1;
+                    var header = y >= UnitCounterPixelHeight - 4;
+                    pixels[y * UnitCounterPixelWidth + x] = border ? dark : header ? trim : fill;
+                }
+            }
+
+            var texture = new Texture2D(UnitCounterPixelWidth, UnitCounterPixelHeight);
+            texture.filterMode = FilterMode.Point;
+            texture.wrapMode = TextureWrapMode.Clamp;
+            texture.SetPixels(pixels);
+            texture.Apply();
+            return texture;
+        }
+
+        private Alliance GetDivisionAlliance(Division division)
+        {
+            if (division == null || gameManager?.CampaignTemplate.CountryAllianceAssignments == null)
+                return Alliance.Neutral;
+
+            var assignment = gameManager.CampaignTemplate.CountryAllianceAssignments
+                .FirstOrDefault(candidate => candidate != null && candidate.CountryId == division.CountryId);
+            return assignment?.Alliance ?? Alliance.Neutral;
         }
 
         private void HandleTileSelection()
@@ -862,6 +1045,15 @@ namespace Engine.Monobehaviours.Managers
 
             for (var i = labelRoot.childCount - 1; i >= 0; i--)
                 Destroy(labelRoot.GetChild(i).gameObject);
+        }
+
+        private void ClearUnitCounters()
+        {
+            if (unitCounterRoot == null)
+                return;
+
+            for (var i = unitCounterRoot.childCount - 1; i >= 0; i--)
+                Destroy(unitCounterRoot.GetChild(i).gameObject);
         }
 
         private void FrameCamera()

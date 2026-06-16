@@ -13,6 +13,7 @@ namespace Models.Gameplay.Campaign
         private static readonly Guid RedCountryId = TestModule.RedCountryId;
         private static readonly Guid NeutralCountryId = TestModule.NeutralCountryId;
         private static readonly Guid BlueDivisionId = Guid.Parse("2fa9789e-af9a-489f-8ec0-7a2f8d7c0039");
+        private static readonly Guid BlueReserveDivisionId = Guid.Parse("f1e7e0ac-0e8d-4d1a-a6c1-00c8a883bb42");
         private static readonly Guid RedDivisionId = Guid.Parse("713f4192-5ed1-4cb5-b399-8d5c5786dc0a");
 
         private static readonly Vector3Int BlueCapitalTileId = new Vector3Int(0, 0, 0);
@@ -179,6 +180,14 @@ namespace Models.Gameplay.Campaign
                     CountryId = BlueCountryId,
                     TileId = BlueCapitalTileId,
                     Name = "1st Blue Armored Division"
+                },
+                new DivisionStartingCondition
+                {
+                    DivisionId = BlueReserveDivisionId,
+                    DivisionTemplateId = TestModule.BlueArmoredDivisionTemplateId,
+                    CountryId = BlueCountryId,
+                    TileId = BlueCapitalTileId,
+                    Name = "2nd Blue Reserve Division"
                 },
                 new DivisionStartingCondition
                 {

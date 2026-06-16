@@ -19,6 +19,7 @@ namespace Engine.Monobehaviours.Managers
         public DateTime GameTime => CurrentTime;
         public SimulationSettings SimulationSettings { get; private set; } = new SimulationSettings();
         public bool AutoStartTestCampaign = true;
+        public CampaignTemplate CampaignTemplate { get; private set; }
         public List<Tile> CampaignTiles = new List<Tile>();
         [SerializeReference] public List<TileData> Tiles = new List<TileData>();
         public BuildingCollection Buildings = new BuildingCollection();
@@ -49,6 +50,7 @@ namespace Engine.Monobehaviours.Managers
                     $"Campaign template module {template.ModuleId} does not match active module {activeModule.Id}.");
             }
 
+            CampaignTemplate = template;
             CurrentTime = template.CampaignStartTime;
             SimulationSettings = CopySimulationSettings(template.SimulationSettings);
             CampaignTiles = CopyTiles(template.Tiles);
@@ -110,6 +112,19 @@ namespace Engine.Monobehaviours.Managers
             return (startingTileData ?? new List<TileData>())
                 .Select(CopyTileData)
                 .Where(tileData => tileData != null)
+                .ToList();
+        }
+
+        private static List<CountryAllianceAssignment> CopyCountryAllianceAssignments(
+            List<CountryAllianceAssignment> assignments)
+        {
+            return (assignments ?? new List<CountryAllianceAssignment>())
+                .Where(assignment => assignment != null)
+                .Select(assignment => new CountryAllianceAssignment
+                {
+                    CountryId = assignment.CountryId,
+                    Alliance = assignment.Alliance
+                })
                 .ToList();
         }
 
@@ -187,7 +202,8 @@ namespace Engine.Monobehaviours.Managers
                 case BuildingType.PowerPlant:
                     return new PowerPlant(startingCondition);
                 default:
-                    throw new ArgumentOutOfRangeException(nameof(startingCondition.Type), startingCondition.Type, "Unknown building type.");
+                    throw new ArgumentOutOfRangeException(nameof(startingCondition.Type), startingCondition.Type,
+                        "Unknown building type.");
             }
         }
 
