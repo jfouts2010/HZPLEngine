@@ -40,6 +40,7 @@ namespace Engine.Monobehaviours.Managers
         private const float HexWidth = 1f;
         private const float HexHeight = 0.8660254f;
         private const float HexHorizontalSpacing = HexWidth * 0.75f;
+        private const float TileLabelCharacterSize = 0.027f;
 
         private Transform labelRoot;
         private Label titleLabel;
@@ -769,8 +770,9 @@ namespace Engine.Monobehaviours.Managers
             var textMesh = labelObject.AddComponent<TextMesh>();
             textMesh.anchor = TextAnchor.MiddleCenter;
             textMesh.alignment = TextAlignment.Center;
-            textMesh.characterSize = 0.08f;
-            textMesh.fontSize = 42;
+            textMesh.characterSize = TileLabelCharacterSize;
+            textMesh.fontSize = 26;
+            textMesh.lineSpacing = 0.75f;
             textMesh.color = Color.white;
             textMesh.text = GetTileLabel(campaignTile);
 
@@ -781,29 +783,76 @@ namespace Engine.Monobehaviours.Managers
         private string GetTileLabel(CampaignTile campaignTile)
         {
             tileDataById.TryGetValue(campaignTile.TileId, out var tileData);
-            var controller = tileData is LandTileData landData ? landData.Controller.ToString()[0].ToString() : "O";
             var buildingCount = gameManager.Buildings.GetBuildingsOnTile(campaignTile.TileId).Count;
-            var settlement = campaignTile.Surface == TileSurface.Land
-                ? campaignTile.Urbanization switch
-                {
-                    Urbanization.Urban => "C",
-                    Urbanization.Suburban => "S",
-                    Urbanization.Rural => "R",
-                    _ => string.Empty
-                }
-                : string.Empty;
-            var forest = campaignTile.ForestCover switch
+            var coords = campaignTile.Coordinates;
+            var hexLine = $"Hex {coords.x},{coords.y},{coords.z}";
+
+            if (campaignTile.Surface == TileSurface.Ocean)
+                return $"{GetTerrainLabel(campaignTile.Terrain)}\n{hexLine}";
+
+            var controller = tileData is LandTileData landData
+                ? GetControllerLabel(landData.Controller)
+                : "Neutral";
+            var terrain = GetTerrainLabel(campaignTile.Terrain);
+            var settlement = GetSettlementLabel(campaignTile.Urbanization);
+            var forest = GetForestLabel(campaignTile.ForestCover);
+            var buildings = buildingCount == 0
+                ? "No buildings"
+                : buildingCount == 1
+                    ? "1 building"
+                    : $"{buildingCount} buildings";
+
+            var detailLine = string.IsNullOrWhiteSpace(settlement)
+                ? forest
+                : string.IsNullOrWhiteSpace(forest)
+                    ? settlement
+                    : $"{settlement} woods";
+            if (string.IsNullOrWhiteSpace(detailLine))
+                detailLine = "Open land";
+
+            return $"{controller} {terrain}\n{detailLine}\n{buildings}\n{hexLine}";
+        }
+
+        private static string GetControllerLabel(Alliance controller)
+        {
+            return controller switch
             {
-                ForestCover.Heavy => "F",
-                ForestCover.Light => "f",
+                Alliance.Bluefor => "Blue",
+                Alliance.Redfor => "Red",
+                _ => "Neutral"
+            };
+        }
+
+        private static string GetTerrainLabel(TileTerrain terrain)
+        {
+            return terrain switch
+            {
+                TileTerrain.DeepOcean => "Deep ocean",
+                TileTerrain.ShallowOcean => "Shallow sea",
+                TileTerrain.Ocean => "Ocean",
+                _ => terrain.ToString()
+            };
+        }
+
+        private static string GetSettlementLabel(Urbanization urbanization)
+        {
+            return urbanization switch
+            {
+                Urbanization.Urban => "City",
+                Urbanization.Suburban => "Suburb",
+                Urbanization.Rural => "Rural",
                 _ => string.Empty
             };
+        }
 
-            var details = string.Concat(settlement, forest);
-            if (buildingCount > 0)
-                return string.IsNullOrEmpty(details) ? $"{controller}\n{buildingCount}" : $"{controller}\n{details}\n{buildingCount}";
-
-            return string.IsNullOrEmpty(details) ? controller : $"{controller}\n{details}";
+        private static string GetForestLabel(ForestCover forestCover)
+        {
+            return forestCover switch
+            {
+                ForestCover.Heavy => "Woods",
+                ForestCover.Light => "Woods",
+                _ => string.Empty
+            };
         }
 
         private void ClearLabels()
