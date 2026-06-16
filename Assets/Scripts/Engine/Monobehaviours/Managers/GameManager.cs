@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
+using Engine.Models;
 using Models.Gameplay.Campaign;
 using Models.Module;
 using Monobehaviours.Singletons;
@@ -22,6 +23,7 @@ namespace Engine.Monobehaviours.Managers
         public CampaignTemplate CampaignTemplate { get; private set; }
         public List<Tile> CampaignTiles = new List<Tile>();
         [SerializeReference] public List<TileData> Tiles = new List<TileData>();
+        private AISystem _AISystem;
         public BuildingCollection Buildings = new BuildingCollection();
         public DivisionCollection Divisions = new DivisionCollection();
 
@@ -65,9 +67,17 @@ namespace Engine.Monobehaviours.Managers
                 Divisions = CreateRuntimeDivisions(template.DivisionStartingConditions, activeModule)
             };
             Divisions.RebuildIndex();
-
+            _AISystem = new AISystem(this);
             IsGamePaused = false;
             _campaignStarted = true;
+        }
+
+        public AllianceAI GetAllianceAI(Alliance alliance)
+        {
+            if (!_campaignStarted || _AISystem == null)
+                return null;
+
+            return _AISystem.GetAllianceAI(alliance);
         }
 
         public void PauseCampaign()
@@ -105,6 +115,7 @@ namespace Engine.Monobehaviours.Managers
         private void GameTurn()
         {
             CurrentTime = CurrentTime.AddMinutes(SimulationSettings.SimulationTickMinutes);
+            _AISystem.GameTurn();
         }
 
         private static List<TileData> CopyTileData(List<TileData> startingTileData)

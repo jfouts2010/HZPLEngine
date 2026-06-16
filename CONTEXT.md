@@ -172,6 +172,16 @@ In a later phase, **tile owner** (original or legal affiliation, fixed at campai
 
 _Avoid_: using “owner” in v1 data or rules when tile control is the sole authority.
 
+### Front
+
+For a given alliance, the **front** is the set of land tiles **controlled by that alliance** that share a hex edge with at least one land tile controlled by a **hostile** alliance. Front membership is derived from current tile control and static tile neighbors; it is not authored on the campaign template.
+
+In v1, only Bluefor and Redfor are hostile to each other. Neutral is hostile to no alliance, so Neutral has no front tiles, and a Bluefor- or Redfor-controlled tile that borders only Neutral-controlled land is not a front tile.
+
+Ocean tiles never appear on a front: they have no tile control.
+
+_Avoid_: putting enemy-controlled tiles in an alliance's front set, treating both sides of a contact line as that alliance's front, or counting neutral-adjacent tiles as front tiles unless explicit hostility rules are added later.
+
 ### Tile infrastructure
 
 The abstract built-up travel and logistics capability **within** a land tile — road density, urban development, ease of movement inside the hex. Not a list of named structures.
