@@ -1,0 +1,54 @@
+.campaign-hud-root {
+    flex-grow: 1;
+    flex-direction: row;
+    justify-content: flex-end;
+    align-items: flex-start;
+    padding-top: 16px;
+    padding-right: 16px;
+}
+
+.campaign-hud-panel {
+    width: 320px;
+    padding-left: 14px;
+    padding-right: 14px;
+    padding-top: 12px;
+    padding-bottom: 12px;
+    background-color: rgba(18, 20, 23, 0.86);
+    border-top-left-radius: 6px;
+    border-top-right-radius: 6px;
+    border-bottom-left-radius: 6px;
+    border-bottom-right-radius: 6px;
+}
+
+.campaign-hud-title {
+    color: white;
+    font-size: 18px;
+    -unity-font-style: bold;
+    margin-bottom: 6px;
+}
+
+.campaign-hud-text {
+    color: white;
+    font-size: 13px;
+    margin-bottom: 6px;
+}
+
+.campaign-hud-selection {
+    white-space: normal;
+}
+
+.campaign-hud-button {
+    height: 28px;
+    margin-top: 10px;
+    background-color: rgb(54, 86, 142);
+    color: white;
+    border-width: 0;
+}
+
+.campaign-hud-button:hover {
+    background-color: rgb(70, 108, 174);
+}
+
+.campaign-hud-button:active {
+    background-color: rgb(38, 63, 109);
+}

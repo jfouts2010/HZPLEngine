@@ -108,7 +108,7 @@ Once play begins, the starting order of battle is historical context only. Runti
 
 ### Tile
 
-A cell on the operational hex map. Each tile has a stable GUID identity within a campaign template’s grid. Geography on a tile is immutable during play; control and assets on the tile evolve.
+A hexagonal cell on the operational hex map. Tiles are hexagons in the model, visuals, and code; they should not be represented as square grid cells. Each tile has a stable GUID identity within a campaign template’s grid. Geography on a tile is immutable during play; control and assets on the tile evolve.
 
 **Tile ID** — a GUID-based stable identifier for a tile. Tile ID is the source of identity for references, neighbor lists, building placement, and runtime state. Coordinates, when present, are layout data rather than identity.
 
