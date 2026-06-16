@@ -90,6 +90,20 @@ The module-independent rule system that governs runtime campaign play: air opera
 
 Core engine rules stay the same across Modules. A less-capable SAM in one Module and a modern SAM in another interact through the same engagement, track-quality, and launch-authorization rules; only their stats and catalog identity differ.
 
+### Ground formations
+
+**Module country** — a country supplied by a Module content catalog. Campaign templates reference module country IDs for alliance assignment, national unit availability, and authored force structures; they do not define countries themselves.
+
+**Battalion definition** — reusable authored combat stats for one battalion type available to a specific module country. In v1, battalion definitions are Module catalog items; future campaign templates may allow custom battalion definitions when a campaign needs units missing from the selected Module.
+
+**Division template** — the authored full-strength structure of a division: a module-country-scoped collection of battalion definition references and counts. In v1, division templates are Module catalog items; future campaign templates may allow custom division templates for campaign-specific force structures.
+
+**Division** — the movable ground formation represented on the campaign map during play. A division follows a division template and derives its combat stats from the battalions currently present in it.
+
+At full strength, a division's additive combat stats are derived from the sum of its battalion definitions multiplied by their counts. Division speed is the minimum speed among its battalion definitions, and division softness is a strength-weighted average of battalion softness values.
+
+**Division starting condition** — a campaign-template entry that places one starting division instance on a tile at turn zero. It references a module division template, a module country, and a starting tile; it does not duplicate the division's derived combat stats.
+
 ### Campaign template
 
 What an author creates in the campaign editor after choosing a Module. A campaign template defines the starting premise for play under that Module. The Module is fixed for the lifetime of an edit session; it cannot be changed while editing an open template.
