@@ -102,7 +102,33 @@ Core engine rules stay the same across Modules. A less-capable SAM in one Module
 
 At full strength, a division's additive combat stats are derived from the sum of its battalion definitions multiplied by their counts. Division speed is the minimum speed among its battalion definitions, and division softness is a strength-weighted average of battalion softness values.
 
-Division speed is a stable movement capability derived when the division enters runtime play. Other combat stats can be derived from the division template and current battalion state when combat rules need them.
+Division speed is a stable movement capability derived when the division enters runtime play. A division's tile ID is the tile it physically occupies now; in-progress movement toward another tile belongs to its current order or movement state rather than replacing its current tile ID. Other combat stats can be derived from the division template and current battalion state when combat rules need them.
+
+**Ground order** — the persistent operational responsibility assigned to a division during runtime play, such as holding a critical tile, moving to a destination, attacking, supporting an attack, or retreating. Ground orders may carry rationale and other decision context for AI or future player-command systems, but they are resolved by core ground operation rules rather than by the division object itself.
+
+**Current order** — the one active ground order carried by a division at a given moment. Every runtime division should have exactly one current order; when an order completes, the system assigns a default hold/no-action order rather than leaving the division without order state.
+
+**Move order** — a movement ground order for a division to relocate toward a final destination tile through a current movement target tile. Combat is not the intended responsibility of a move order, though ground operation rules may still need to resolve what happens if hostile contact interrupts or blocks the move.
+
+**Hold order** — a ground order for a division to remain responsible for the tile it currently occupies. A hold order does not carry a separate target tile; the division's tile ID defines the place being held.
+
+**Attack order** — a specialized movement ground order for a division to enter and seize a target tile. A division attacking from one tile toward a hostile-held neighbor contributes to combat while still physically occupying its origin tile and may make movement progress during combat, but final arrival into the target tile is blocked while hostile defenders still hold it.
+
+**Support attack order** — a ground order for a division to engage a neighboring target tile without intending to move into or seize that tile. Support attack can initiate combat to pin or pressure defenders and can force defeated defenders to retreat, but it cannot capture the target tile or change its control by itself; its target tile must neighbor the supporting division's current tile.
+
+**Tile capture** — the change of tile control caused by a division physically arriving in a tile under a movement or attack order when no hostile divisions are present. A tile cleared by support attack remains under its existing control until AI or another assigning system orders a division to move or attack into it.
+
+**Defending tile** — the tile being attacked in a ground combat. There is at most one active ground combat per defending tile; additional attack or support attack orders against that tile join the existing combat for that tile.
+
+**Tile occupancy** — the divisions physically present on a tile. Non-retreating divisions on the same tile should belong to a single alliance that matches tile control; hostile divisions may overlap on a tile only when at least one side is retreating through or out of that tile.
+
+**Ground combat** — an active battle centered on one defending tile. There is at most one ground combat per defending tile; additional normal attacks or support attacks against that tile join the existing ground combat rather than creating separate battles.
+
+**Advancing** — the movement state of a successful attacking division that is closing the remaining distance into its attack target after defenders have lost or begun retreating. An advancing division captures the target tile only when it physically arrives there.
+
+**Retreating** — the forced movement responsibility of a defeated defending division moving from its lost tile toward a valid friendly destination. Retreating uses normal movement behavior but is system-assigned, explicitly marked as retreat movement, and cannot be changed like an ordinary move order; a retreating division cannot contribute to combat and is destroyed if no valid retreat destination exists or if its retreat destination is captured by a hostile alliance before it arrives.
+
+**Overrun** — destruction of a retreating division because its retreat destination is captured by a hostile alliance before the retreating division arrives there.
 
 **Division starting condition** — a campaign-template entry that places one starting division instance on a tile at turn zero. It references a module division template, a module country, and a starting tile; it does not duplicate the division's derived combat stats.
 
@@ -266,11 +292,11 @@ _Avoid_: separate turn clocks for air and ground unless a future ADR explicitly 
 
 ### Ground operational cadence
 
-How often expensive ground logic runs on the simulation tick clock: retreat decisions, division movement, and tile/objective selection.
+How often expensive ground decision logic runs on the simulation tick clock: objective selection, order assignment, retreat destination selection, and other planning work that does not need to be recalculated every tick.
 
 Ground operational cadence is template-configurable within engine bounds (**one to six hours** of in-game time; **default six hours**). Many simulation ticks pass between ground operational updates.
 
-Between ground operational updates, frontline tiles may still exchange abstract combat damage when opposing forces are in contact, without full movement or strategic replanning every tick.
+Between ground operational updates, active ground combat and movement progress can still resolve every simulation tick without full strategic replanning every tick.
 
 ### Ground tactical combat
 
@@ -278,7 +304,7 @@ Lightweight ground resolution that may run on most simulation ticks when opposin
 
 ### Tick resolution order
 
-Within each simulation tick, resolution order should stay deterministic. Air picture, air execution, and air-to-ground effects participate every tick. Ground tactical combat runs when contact conditions apply. Ground operational movement and planning run only on ticks that fall on a ground operational cadence boundary.
+Within each simulation tick, resolution order should stay deterministic. Air picture, air execution, air-to-ground effects, active ground combat, and ground movement progress participate every tick. Expensive ground planning and order assignment run only on ticks that fall on a ground operational cadence boundary.
 
 ### Air planning cadence
 

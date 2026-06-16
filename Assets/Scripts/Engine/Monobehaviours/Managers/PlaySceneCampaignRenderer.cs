@@ -38,6 +38,7 @@ namespace Engine.Monobehaviours.Managers
 
         private const int TilePixelSize = 32;
         private const int HexFlatInsetPixels = 8;
+        private const int TerritoryBorderSideCount = 6;
         private const float HexWidth = 1f;
         private const float HexHeight = 0.8660254f;
         private const float HexHorizontalSpacing = HexWidth * 0.75f;
@@ -46,6 +47,24 @@ namespace Engine.Monobehaviours.Managers
         private const float UnitCounterLabelCharacterSize = 0.018f;
         private const int UnitCounterPixelWidth = 30;
         private const int UnitCounterPixelHeight = 20;
+        private static readonly Vector3Int[] TerritoryBorderNeighborOffsets =
+        {
+            new Vector3Int(1, -1, 0),
+            new Vector3Int(1, 0, -1),
+            new Vector3Int(0, 1, -1),
+            new Vector3Int(-1, 1, 0),
+            new Vector3Int(-1, 0, 1),
+            new Vector3Int(0, -1, 1)
+        };
+        private static readonly float[] TerritoryBorderSideAngles =
+        {
+            30f,
+            -30f,
+            -90f,
+            -150f,
+            150f,
+            90f
+        };
 
         private Transform labelRoot;
         private Transform unitCounterRoot;
@@ -100,12 +119,14 @@ namespace Engine.Monobehaviours.Managers
             foreach (var tileData in gameManager.Tiles.Where(tileData => tileData != null))
                 tileDataById[tileData.TileId] = tileData;
 
+            foreach (var campaignTile in gameManager.CampaignTiles.Where(tile => tile != null))
+                tilesById[campaignTile.Coordinates] = campaignTile;
+
             ClearLabels();
             ClearUnitCounters();
 
             foreach (var campaignTile in gameManager.CampaignTiles.Where(tile => tile != null))
             {
-                tilesById[campaignTile.Coordinates] = campaignTile;
                 var cell = GetCell(campaignTile.Coordinates);
                 var hexCenter = GetHexCenter(campaignTile.Coordinates);
                 tilesByCell[cell] = campaignTile;
@@ -623,7 +644,8 @@ namespace Engine.Monobehaviours.Managers
             if (campaignTile.Surface == TileSurface.Ocean)
                 return $"Ocean:{campaignTile.Terrain}";
 
-            return $"Land:{campaignTile.Terrain}:{campaignTile.Urbanization}:{campaignTile.ForestCover}:{controller}";
+            var borderMask = GetTerritoryBorderMask(campaignTile, controller);
+            return $"Land:{campaignTile.Terrain}:{campaignTile.Urbanization}:{campaignTile.ForestCover}:{controller}:{borderMask}";
         }
 
         private Sprite GetTileSprite(CampaignTile campaignTile, string key)
@@ -633,8 +655,9 @@ namespace Engine.Monobehaviours.Managers
 
             tileDataById.TryGetValue(campaignTile.Coordinates, out var tileData);
             var controller = tileData is LandTileData landData ? landData.Controller : Alliance.Neutral;
+            var borderMask = GetTerritoryBorderMask(campaignTile, controller);
 
-            var texture = CreateTileTexture(campaignTile, controller);
+            var texture = CreateTileTexture(campaignTile, controller, borderMask);
             sprite = Sprite.Create(
                 texture,
                 new Rect(0, 0, TilePixelSize, TilePixelSize),
@@ -644,7 +667,7 @@ namespace Engine.Monobehaviours.Managers
             return sprite;
         }
 
-        private Texture2D CreateTileTexture(CampaignTile campaignTile, Alliance controller)
+        private Texture2D CreateTileTexture(CampaignTile campaignTile, Alliance controller, int borderMask)
         {
             var pixels = new Color[TilePixelSize * TilePixelSize];
             FillTerrainPixels(pixels, campaignTile);
@@ -653,7 +676,7 @@ namespace Engine.Monobehaviours.Managers
             {
                 ApplyForestCover(pixels, campaignTile.ForestCover);
                 ApplyUrbanization(pixels, campaignTile.Urbanization);
-                DrawControlBorder(pixels, controller);
+                DrawTerritoryBorder(pixels, controller, borderMask);
             }
 
             ApplyHexMask(pixels);
@@ -799,8 +822,47 @@ namespace Engine.Monobehaviours.Managers
             }
         }
 
-        private void DrawControlBorder(Color[] pixels, Alliance controller)
+        private int GetTerritoryBorderMask(CampaignTile campaignTile, Alliance controller)
         {
+            var borderMask = 0;
+            for (var sideIndex = 0; sideIndex < TerritoryBorderSideCount; sideIndex++)
+            {
+                var neighborId = campaignTile.Coordinates + TerritoryBorderNeighborOffsets[sideIndex];
+                if (IsTerritoryBoundary(neighborId, controller))
+                    borderMask |= 1 << sideIndex;
+            }
+
+            return borderMask;
+        }
+
+        private bool IsTerritoryBoundary(Vector3Int neighborId, Alliance controller)
+        {
+            if (!tilesById.TryGetValue(neighborId, out var neighborTile))
+                return true;
+
+            if (neighborTile.Surface != TileSurface.Land)
+                return true;
+
+            return !TryGetTileController(neighborId, out var neighborController) || neighborController != controller;
+        }
+
+        private bool TryGetTileController(Vector3Int tileId, out Alliance controller)
+        {
+            if (tileDataById.TryGetValue(tileId, out var tileData) && tileData is LandTileData landData)
+            {
+                controller = landData.Controller;
+                return true;
+            }
+
+            controller = Alliance.Neutral;
+            return false;
+        }
+
+        private void DrawTerritoryBorder(Color[] pixels, Alliance controller, int borderMask)
+        {
+            if (borderMask == 0)
+                return;
+
             var borderColor = GetControlColor(controller);
             const int borderWidth = 2;
 
@@ -808,10 +870,36 @@ namespace Engine.Monobehaviours.Managers
             {
                 for (var x = 0; x < TilePixelSize; x++)
                 {
-                    if (IsHexBorderPixel(x, y, borderWidth))
+                    if (IsHexBorderPixel(x, y, borderWidth) && ShouldDrawTerritoryBorderSide(x, y, borderMask))
                         pixels[y * TilePixelSize + x] = borderColor;
                 }
             }
+        }
+
+        private static bool ShouldDrawTerritoryBorderSide(int x, int y, int borderMask)
+        {
+            var sideIndex = GetNearestHexSideIndex(x, y);
+            return (borderMask & (1 << sideIndex)) != 0;
+        }
+
+        private static int GetNearestHexSideIndex(int x, int y)
+        {
+            var center = (TilePixelSize - 1) * 0.5f;
+            var angle = Mathf.Atan2(y - center, x - center) * Mathf.Rad2Deg;
+            var nearestSideIndex = 0;
+            var nearestDelta = float.MaxValue;
+
+            for (var sideIndex = 0; sideIndex < TerritoryBorderSideAngles.Length; sideIndex++)
+            {
+                var delta = Mathf.Abs(Mathf.DeltaAngle(angle, TerritoryBorderSideAngles[sideIndex]));
+                if (delta >= nearestDelta)
+                    continue;
+
+                nearestSideIndex = sideIndex;
+                nearestDelta = delta;
+            }
+
+            return nearestSideIndex;
         }
 
         private static void ApplyHexMask(Color[] pixels)
