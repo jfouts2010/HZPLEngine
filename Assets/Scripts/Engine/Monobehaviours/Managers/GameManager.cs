@@ -11,6 +11,12 @@ using UnityEngine;
 
 namespace Engine.Monobehaviours.Managers
 {
+    public enum TestCampaignKind
+    {
+        Basic,
+        Advanced
+    }
+
     public class GameManager : MonoBehaviour
     {
         public bool IsGamePaused { get; private set; }
@@ -21,6 +27,7 @@ namespace Engine.Monobehaviours.Managers
         public DateTime GameTime => CurrentTime;
         public SimulationSettings SimulationSettings { get; private set; } = new SimulationSettings();
         public bool AutoStartTestCampaign = true;
+        public TestCampaignKind SelectedTestCampaign = TestCampaignKind.Advanced;
         public CampaignTemplate CampaignTemplate { get; private set; }
         public List<Tile> CampaignTiles = new List<Tile>();
         [SerializeReference] public List<TileData> Tiles = new List<TileData>();
@@ -36,7 +43,17 @@ namespace Engine.Monobehaviours.Managers
         private void Start()
         {
             if (AutoStartTestCampaign && !_campaignStarted)
-                StartCampaign(TestCampaign.Create());
+                StartCampaign(CreateSelectedTestCampaign());
+        }
+
+        private CampaignTemplate CreateSelectedTestCampaign()
+        {
+            return SelectedTestCampaign switch
+            {
+                TestCampaignKind.Basic => TestCampaign.Create(),
+                TestCampaignKind.Advanced => AdvancedTestCampaign.Create(),
+                _ => AdvancedTestCampaign.Create()
+            };
         }
 
         public void StartCampaign(CampaignTemplate template)
@@ -267,8 +284,8 @@ namespace Engine.Monobehaviours.Managers
                     $"Division starting condition {startingCondition.DivisionId} country does not match its division template country.");
             }
 
-            var speed = divisionTemplate.CalculateFullStrengthSpeed(battalionDefinitions);
-            return new Division(startingCondition, speed);
+            var fullStrengthStats = divisionTemplate.CalculateFullStrengthStats(battalionDefinitions);
+            return new Division(startingCondition, fullStrengthStats);
         }
 
         private static BuildingLevel CopyBuildingLevel(BuildingLevel level)

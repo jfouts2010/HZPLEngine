@@ -5,8 +5,8 @@ namespace Models.Module
 {
     public sealed class DivisionCombatStats
     {
-        public int Strength { get; private set; }
-        public int Organization { get; private set; }
+        public int MaxStrength { get; private set; }
+        public int MaxOrganization { get; private set; }
         public float Recovery { get; private set; }
         public float SoftAttack { get; private set; }
         public float HardAttack { get; private set; }
@@ -19,8 +19,8 @@ namespace Models.Module
         public float FuelConsumption { get; private set; }
 
         public DivisionCombatStats(
-            int strength,
-            int organization,
+            int maxStrength,
+            int maxOrganization,
             float recovery,
             float softAttack,
             float hardAttack,
@@ -32,8 +32,8 @@ namespace Models.Module
             float supplyConsumption,
             float fuelConsumption)
         {
-            Strength = strength;
-            Organization = organization;
+            MaxStrength = maxStrength;
+            MaxOrganization = maxOrganization;
             Recovery = recovery;
             SoftAttack = softAttack;
             HardAttack = hardAttack;
