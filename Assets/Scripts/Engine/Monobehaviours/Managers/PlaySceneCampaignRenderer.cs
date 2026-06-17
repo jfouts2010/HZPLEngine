@@ -341,7 +341,7 @@ namespace Engine.Monobehaviours.Managers
             var landData = tileData as LandTileData;
             var controller = landData == null ? "None" : landData.Controller.ToString();
             var infrastructure = landData == null ? "N/A" : landData.Infrastructure.FunctionalLevel.ToString();
-            var buildings = gameManager.Buildings.GetBuildingsOnTile(selectedTile.Coordinates);
+            var buildings = gameManager.buildingSystem.GetBuildingsOnTile(selectedTile.Coordinates);
             var buildingText = buildings.Count == 0
                 ? "No buildings"
                 : string.Join(", ", buildings.Select(building => $"{building.Type} {building.FunctionalLevel}"));
@@ -446,7 +446,7 @@ namespace Engine.Monobehaviours.Managers
             if (!selectedCell.HasValue || !tilesByCell.TryGetValue(selectedCell.Value, out var selectedTile))
                 return new List<Division>();
 
-            return gameManager?.Divisions?.GetDivisionsOnTile(selectedTile.Coordinates) ?? new List<Division>();
+            return gameManager?.divisionSystem?.GetDivisionsOnTile(selectedTile.Coordinates) ?? new List<Division>();
         }
 
         private VisualElement CreateUnitCard(Division division)
@@ -498,10 +498,10 @@ namespace Engine.Monobehaviours.Managers
 
         private void CreateUnitCounters()
         {
-            if (unitCounterRoot == null || gameManager?.Divisions == null)
+            if (unitCounterRoot == null || gameManager?.divisionSystem == null)
                 return;
 
-            foreach (var group in gameManager.Divisions.Divisions
+            foreach (var group in gameManager.divisionSystem.Divisions
                          .Where(division => division != null)
                          .GroupBy(division => division.TileId))
             {
@@ -1054,7 +1054,7 @@ namespace Engine.Monobehaviours.Managers
         private string GetTileLabel(CampaignTile campaignTile)
         {
             tileDataById.TryGetValue(campaignTile.Coordinates, out var tileData);
-            var buildingCount = gameManager.Buildings.GetBuildingsOnTile(campaignTile.Coordinates).Count;
+            var buildingCount = gameManager.buildingSystem.GetBuildingsOnTile(campaignTile.Coordinates).Count;
             var coords = campaignTile.Coordinates;
             var hexLine = $"Hex {coords.x},{coords.y},{coords.z}";
 

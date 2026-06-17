@@ -112,9 +112,9 @@ Division speed is a stable movement capability derived when the division enters 
 
 **Hold order** — a ground order for a division to remain responsible for the tile it currently occupies. A hold order does not carry a separate target tile; the division's tile ID defines the place being held.
 
-**Attack order** — a specialized movement ground order for a division to enter and seize a target tile. A division attacking from one tile toward a hostile-held neighbor contributes to combat while still physically occupying its origin tile and may make movement progress during combat, but final arrival into the target tile is blocked while hostile defenders still hold it.
+**Attack order** — a specialized movement ground order for a division to enter and seize a target tile. A division attacking from one tile toward a hostile-held neighbor contributes to combat while still physically occupying its origin tile and may make movement progress during combat, but final arrival into the target tile is blocked while hostile defenders still hold it. A failed attacker halts on its current tile rather than retreating.
 
-**Support attack order** — a ground order for a division to engage a neighboring target tile without intending to move into or seize that tile. Support attack can initiate combat to pin or pressure defenders and can force defeated defenders to retreat, but it cannot capture the target tile or change its control by itself; its target tile must neighbor the supporting division's current tile.
+**Support attack order** — a ground order for a division to engage a neighboring target tile without intending to move into or seize that tile. Support attack divisions are full ground combat participants for frontage, firing, return fire, losses, and attack failure, but they cannot capture the target tile or change its control by themselves; the target tile must neighbor the supporting division's current tile. A failed support attacker halts on its current tile rather than retreating.
 
 **Tile capture** — the change of tile control caused by a division physically arriving in a tile under a movement or attack order when no hostile divisions are present. A tile cleared by support attack remains under its existing control until AI or another assigning system orders a division to move or attack into it.
 
@@ -124,9 +124,17 @@ Division speed is a stable movement capability derived when the division enters 
 
 **Ground combat** — an active battle centered on one defending tile. There is at most one ground combat per defending tile; additional normal attacks or support attacks against that tile join the existing ground combat rather than creating separate battles.
 
+**Combat-ready division** — a division that can currently participate in ground combat: it is not retreating, has at least 1 current strength and at least 1 current organization, belongs to the relevant combat alliance, and satisfies the role-specific position or order requirement for that combat.
+
+**Front-line division** — a combat-ready division selected to actively fire and absorb shots in a ground tactical combat round because it fits within its side's combat width for that round. Front-line assignment uses first-fit ordering: a division that does not fit goes to reserve, but later smaller divisions may still fill remaining width. If a side has combat-ready divisions but none fit, its first combat-ready division fights over-width so every combat-ready side has at least one front-line division.
+
+**Reserve division** — a combat-ready division present in a ground combat but not selected as front-line for the current ground tactical combat round because its side's combat width is already filled. Front-line and reserve assignment is recalculated each combat round.
+
+**Combat width** — the maximum division width that may fight on a side's front line during one ground tactical combat round. Combat width is derived from the defending tile terrain; when combat-ready attackers participate from more than one distinct current physical tile, the increased frontage applies to both attackers and defenders.
+
 **Advancing** — the movement state of a successful attacking division that is closing the remaining distance into its attack target after defenders have lost or begun retreating. An advancing division captures the target tile only when it physically arrives there.
 
-**Retreating** — the forced movement responsibility of a defeated defending division moving from its lost tile toward a valid friendly destination. Retreating uses normal movement behavior but is system-assigned, explicitly marked as retreat movement, and cannot be changed like an ordinary move order; a retreating division cannot contribute to combat and is destroyed if no valid retreat destination exists or if its retreat destination is captured by a hostile alliance before it arrives.
+**Retreating** — the forced movement responsibility of a non-combat-ready defending division moving from its defended tile toward a valid friendly destination. Retreating uses normal movement behavior but is system-assigned, explicitly marked as retreat movement, and cannot be changed like an ordinary move order; a retreating division cannot contribute to combat and is destroyed if no valid retreat destination exists or if its retreat destination is captured by a hostile alliance before it arrives. Combat-ready defenders on the same tile continue defending while broken defenders retreat.
 
 **Overrun** — destruction of a retreating division because its retreat destination is captured by a hostile alliance before the retreating division arrives there.
 
@@ -289,6 +297,10 @@ The single campaign clock step. The target design is one high-fidelity clock, no
 Simulation tick length is template-configurable within engine bounds (**one to ten minutes** of in-game time; **default five minutes**). Air warfare execution resolves every simulation tick. Ground warfare uses the same clock but splits work by cost: lightweight combat resolution may run every tick; expensive ground decisions run less often on a longer cadence measured in the same clock.
 
 _Avoid_: separate turn clocks for air and ground unless a future ADR explicitly chooses that trade-off again.
+
+**Game turn** — runtime synonym for one simulation tick. Use simulation tick in domain language when clarity matters; game turn may remain as code or UI wording when it means the same clock step.
+
+**Ground tactical combat round** — one execution of active ground combat resolution during a simulation tick.
 
 ### Ground operational cadence
 

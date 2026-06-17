@@ -1,34 +1,48 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Engine.Monobehaviours.Managers;
 using Models.Gameplay.Campaign;
+using Models.Module;
+using Monobehaviours.Singletons;
 using UnityEngine;
 
 namespace Engine.Models.Ground
 {
     public sealed class GroundCombatSystem
     {
+        private const float MultiOriginWidthMultiplier = 1.5f;
+        private const float ProtectedShotMissChance = 0.9f;
+        private const float ExposedShotMissChance = 0.6f;
+        private const float MinimumTargetWeight = 0.01f;
+
         [SerializeReference]
         public List<GroundCombat> Combats = new List<GroundCombat>();
 
         private Dictionary<Vector3Int, GroundCombat> combatByDefendingTileId;
         private readonly GameManager gameManager;
+        private readonly GroundOperationsSystem groundOperationsSystem;
+        private readonly System.Random random;
 
-        public GroundCombatSystem(GameManager gameManager)
+        public GroundCombatSystem(GameManager gameManager, GroundOperationsSystem groundOperationsSystem)
         {
             this.gameManager = gameManager;
+            this.groundOperationsSystem = groundOperationsSystem;
+            random = new System.Random(0);
         }
 
         public void GameTurn()
         {
             ReconcileCombatsFromOrders();
             ReconcileCombatParticipants();
+            ResolveCombatRounds();
+            ReconcileCombatParticipants();
             RemoveInactiveCombats();
         }
 
         private void ReconcileCombatsFromOrders()
         {
-            foreach (var division in gameManager.Divisions.Divisions.Where(division => division != null))
+            foreach (var division in gameManager.divisionSystem.Divisions)
             {
                 if (GroundSystemUtility.IsRetreating(division))
                     continue;
@@ -58,7 +72,7 @@ namespace Engine.Models.Ground
 
         private void ReconcileCombatParticipants()
         {
-            foreach (var combat in Combats.Where(combat => combat != null))
+            foreach (var combat in Combats)
             {
                 combat.AttackerDivisionIds = ReconcileAttackers(combat);
                 combat.DefenderDivisionIds = ReconcileDefenders(combat);
@@ -67,16 +81,16 @@ namespace Engine.Models.Ground
 
         private List<System.Guid> ReconcileAttackers(GroundCombat combat)
         {
-            return gameManager.Divisions.Divisions
-                .Where(division => IsValidAttacker(division, combat))
-                .Select(division => division.DivisionId)
+            return (combat.AttackerDivisionIds ?? new List<Guid>())
                 .Distinct()
+                .Where(divisionId => gameManager.divisionSystem.TryGetDivision(divisionId, out var division)
+                                     && IsValidAttacker(division, combat))
                 .ToList();
         }
 
         private List<System.Guid> ReconcileDefenders(GroundCombat combat)
         {
-            return gameManager.Divisions.GetDivisionsOnTile(combat.DefendingTileId)
+            return gameManager.divisionSystem.GetDivisionsOnTile(combat.DefendingTileId)
                 .Where(division => IsValidDefender(division, combat))
                 .Select(division => division.DivisionId)
                 .Distinct()
@@ -85,7 +99,7 @@ namespace Engine.Models.Ground
 
         private bool IsValidAttacker(Division division, GroundCombat combat)
         {
-            if (division == null || GroundSystemUtility.IsRetreating(division))
+            if (!IsCombatReady(division) || GroundSystemUtility.IsRetreating(division))
                 return false;
 
             if (!GroundSystemUtility.TryGetDivisionAlliance(gameManager, division, out var alliance)
@@ -98,11 +112,334 @@ namespace Engine.Models.Ground
 
         private bool IsValidDefender(Division division, GroundCombat combat)
         {
-            if (division == null || GroundSystemUtility.IsRetreating(division))
+            if (!IsCombatReady(division))
                 return false;
 
             return GroundSystemUtility.TryGetDivisionAlliance(gameManager, division, out var alliance)
                    && alliance == combat.DefendingAlliance;
+        }
+
+        private void ResolveCombatRounds()
+        {
+            foreach (var combat in Combats.ToList())
+                ResolveCombatRound(combat);
+        }
+
+        private void ResolveCombatRound(GroundCombat combat)
+        {
+            ResolveBrokenAttackers(combat);
+            ResolveBrokenDefenders(combat);
+
+            var attackers = BuildCombatants(ReconcileAttackers(combat));
+            var defenders = BuildCombatants(ReconcileDefenders(combat));
+
+            if (attackers.Count == 0 || defenders.Count == 0)
+            {
+                EndCombatIfDecided(combat, attackers, defenders);
+                return;
+            }
+
+            if (!TryGetDefendingTerrain(combat, out var terrain))
+                return;
+
+            var combatWidth = GetCombatWidth(terrain, attackers);
+            var attackerFront = AssignFrontLine(attackers, combatWidth, true);
+            var defenderFront = AssignFrontLine(defenders, combatWidth, false);
+
+            FirePhase(attackerFront, defenderFront, terrain, true);
+            FirePhase(defenderFront, attackerFront, terrain, false);
+
+            ResolveBrokenAttackers(combat);
+            ResolveBrokenDefenders(combat);
+
+            attackers = BuildCombatants(ReconcileAttackers(combat));
+            defenders = BuildCombatants(ReconcileDefenders(combat));
+            EndCombatIfDecided(combat, attackers, defenders);
+        }
+
+        private List<Combatant> BuildCombatants(IEnumerable<Guid> divisionIds)
+        {
+            return (divisionIds ?? Enumerable.Empty<Guid>())
+                .Select(TryBuildCombatant)
+                .ToList();
+        }
+
+        private Combatant TryBuildCombatant(Guid divisionId)
+        {
+            if (!gameManager.divisionSystem.TryGetDivision(divisionId, out var division))
+                return null;
+
+            if (!TryGetFullStrengthStats(division, out var stats))
+                return null;
+
+            return new Combatant(division, stats);
+        }
+
+        private bool TryGetFullStrengthStats(Division division, out DivisionCombatStats stats)
+        {
+            stats = null;
+            if (division == null)
+                return false;
+
+            var module = ModuleSingleton.Instance.ActiveModule;
+            var divisionTemplate = module?.DivisionTemplates?
+                .FirstOrDefault(template => template.DivisionTemplateId == division.DivisionTemplateId);
+            if (divisionTemplate == null)
+                return false;
+
+            var battalionDefinitions = (module.BattalionDefinitions ?? new List<BattalionDefinition>())
+                .ToDictionary(battalion => battalion.BattalionDefinitionId);
+
+            stats = divisionTemplate.CalculateFullStrengthStats(battalionDefinitions);
+            return stats != null;
+        }
+
+        private bool TryGetDefendingTerrain(GroundCombat combat, out TileTerrain terrain)
+        {
+            terrain = TileTerrain.Plains;
+            var tile = gameManager.CampaignTiles?
+                .FirstOrDefault(candidate => candidate.Coordinates == combat.DefendingTileId);
+            if (tile == null)
+                return false;
+
+            terrain = tile.Terrain;
+            return true;
+        }
+
+        private static int GetCombatWidth(TileTerrain terrain, IReadOnlyCollection<Combatant> attackers)
+        {
+            var width = GetBaseCombatWidth(terrain);
+            if (attackers.Select(attacker => attacker.Division.TileId).Distinct().Count() > 1)
+                width = Mathf.FloorToInt(width * MultiOriginWidthMultiplier);
+
+            return Mathf.Max(1, width);
+        }
+
+        private static int GetBaseCombatWidth(TileTerrain terrain)
+        {
+            return terrain switch
+            {
+                TileTerrain.Mountain => 50,
+                TileTerrain.Hills => 70,
+                TileTerrain.Tundra => 70,
+                _ => 80
+            };
+        }
+
+        private static float GetAttackerFireMultiplier(TileTerrain terrain)
+        {
+            return terrain switch
+            {
+                TileTerrain.Mountain => 0.6f,
+                TileTerrain.Hills => 0.8f,
+                _ => 1f
+            };
+        }
+
+        private static List<Combatant> AssignFrontLine(
+            IReadOnlyList<Combatant> combatants,
+            int combatWidth,
+            bool useToughness)
+        {
+            var frontLine = new List<Combatant>();
+            var usedWidth = 0;
+
+            foreach (var combatant in combatants)
+            {
+                var width = Mathf.Max(0, combatant.Stats.CombatWidth);
+                if (usedWidth + width > combatWidth)
+                    continue;
+
+                combatant.DefensePoints = useToughness
+                    ? combatant.Stats.Toughness
+                    : combatant.Stats.Defense;
+                frontLine.Add(combatant);
+                usedWidth += width;
+            }
+
+            if (frontLine.Count != 0 || combatants.Count == 0)
+                return frontLine;
+
+            var overWidthCombatant = combatants[0];
+            overWidthCombatant.DefensePoints = useToughness
+                ? overWidthCombatant.Stats.Toughness
+                : overWidthCombatant.Stats.Defense;
+            frontLine.Add(overWidthCombatant);
+            return frontLine;
+        }
+
+        private void FirePhase(
+            IReadOnlyList<Combatant> shooters,
+            IReadOnlyList<Combatant> targets,
+            TileTerrain terrain,
+            bool shootersAreAttackers)
+        {
+            if (shooters.Count == 0 || targets.Count == 0)
+                return;
+
+            foreach (var shooter in shooters)
+            {
+                var target = ChooseTarget(shooter, targets);
+                if (target == null)
+                    continue;
+
+                var shots = CalculateShotCount(shooter, target, terrain, shootersAreAttackers);
+                for (var shotIndex = 0; shotIndex < shots; shotIndex++)
+                    ResolveShot(target);
+            }
+        }
+
+        private Combatant ChooseTarget(Combatant shooter, IReadOnlyList<Combatant> targets)
+        {
+            var totalWeight = 0f;
+            var weights = new List<float>(targets.Count);
+            var preferSoftTargets = shooter.Stats.SoftAttack >= shooter.Stats.HardAttack;
+
+            foreach (var target in targets)
+            {
+                var softness = Mathf.Clamp01(target.Stats.Softness);
+                var weight = preferSoftTargets ? softness : 1f - softness;
+                weight = Mathf.Max(MinimumTargetWeight, weight);
+                weights.Add(weight);
+                totalWeight += weight;
+            }
+
+            var roll = (float)random.NextDouble() * totalWeight;
+            for (var index = 0; index < targets.Count; index++)
+            {
+                roll -= weights[index];
+                if (roll <= 0f)
+                    return targets[index];
+            }
+
+            return targets[targets.Count - 1];
+        }
+
+        private static int CalculateShotCount(
+            Combatant shooter,
+            Combatant target,
+            TileTerrain terrain,
+            bool shooterIsAttacker)
+        {
+            var targetSoftness = Mathf.Clamp01(target.Stats.Softness);
+            var shots = shooter.Stats.SoftAttack * targetSoftness
+                        + shooter.Stats.HardAttack * (1f - targetSoftness);
+            shots *= shooter.StrengthPercent;
+
+            if (shooterIsAttacker)
+                shots *= GetAttackerFireMultiplier(terrain);
+
+            return Mathf.Max(0, Mathf.FloorToInt(shots));
+        }
+
+        private void ResolveShot(Combatant target)
+        {
+            var missChance = target.DefensePoints > 0
+                ? ProtectedShotMissChance
+                : ExposedShotMissChance;
+            var hit = random.NextDouble() >= missChance;
+            target.DefensePoints = Mathf.Max(0, target.DefensePoints - 1);
+
+            if (!hit)
+                return;
+
+            var damageScale = GetCombatDamageScale();
+            var strengthDamage = RandomRange(0f, 2f) * 0.05f * damageScale;
+            var organizationDamage = RandomRange(0f, 4f) * 0.053f * damageScale;
+
+            target.Division.Strength = Mathf.Max(0f, target.Division.Strength - strengthDamage);
+            target.Division.Organization = Mathf.Max(0f, target.Division.Organization - organizationDamage);
+        }
+
+        private float GetCombatDamageScale()
+        {
+            var tickMinutes = gameManager.SimulationSettings?.SimulationTickMinutes
+                              ?? SimulationSettings.DefaultSimulationTickMinutes;
+            return tickMinutes / 60f;
+        }
+
+        private float RandomRange(float minInclusive, float maxExclusive)
+        {
+            return minInclusive + ((float)random.NextDouble() * (maxExclusive - minInclusive));
+        }
+
+        private void ResolveBrokenAttackers(GroundCombat combat)
+        {
+            foreach (var divisionId in combat.AttackerDivisionIds.ToList())
+            {
+                if (!gameManager.divisionSystem.TryGetDivision(divisionId, out var division))
+                    continue;
+
+                if (IsCombatReady(division))
+                    continue;
+
+                division.CurrentOrder = new HoldGroundOrder(
+                    GroundOrderAssignmentSource.System,
+                    "Attack halted after combat losses");
+            }
+        }
+
+        private void ResolveBrokenDefenders(GroundCombat combat)
+        {
+            foreach (var division in gameManager.divisionSystem.GetDivisionsOnTile(combat.DefendingTileId).ToList())
+            {
+                if (division == null || GroundSystemUtility.IsRetreating(division))
+                    continue;
+
+                if (!GroundSystemUtility.TryGetDivisionAlliance(gameManager, division, out var alliance)
+                    || alliance != combat.DefendingAlliance)
+                    continue;
+
+                if (IsCombatReady(division))
+                    continue;
+
+                groundOperationsSystem.TryAssignRetreat(
+                    division,
+                    combat.DefendingTileId,
+                    "Retreating after combat losses");
+            }
+        }
+
+        private void EndCombatIfDecided(
+            GroundCombat combat,
+            IReadOnlyList<Combatant> attackers,
+            IReadOnlyList<Combatant> defenders)
+        {
+            if (attackers.Count == 0)
+            {
+                RemoveCombat(combat.DefendingTileId);
+                return;
+            }
+
+            if (defenders.Count > 0)
+                return;
+
+            HaltSupportAttackers(combat);
+            RemoveCombat(combat.DefendingTileId);
+        }
+
+        private void HaltSupportAttackers(GroundCombat combat)
+        {
+            foreach (var divisionId in combat.AttackerDivisionIds.ToList())
+            {
+                if (!gameManager.divisionSystem.TryGetDivision(divisionId, out var division))
+                    continue;
+
+                if (division.CurrentOrder is not SupportAttackGroundOrder supportAttackOrder
+                    || supportAttackOrder.TargetTileId != combat.DefendingTileId)
+                    continue;
+
+                division.CurrentOrder = new HoldGroundOrder(
+                    GroundOrderAssignmentSource.System,
+                    "Support attack ended after defenders broke");
+            }
+        }
+
+        private static bool IsCombatReady(Division division)
+        {
+            return division.Strength >= 1f
+                   && division.Organization >= 1f
+                   && !GroundSystemUtility.IsRetreating(division);
         }
 
         private void RemoveInactiveCombats()
@@ -117,14 +454,19 @@ namespace Engine.Models.Ground
                 .ToList();
 
             foreach (var tileId in inactiveTileIds)
+            {
+                if (TryGetCombat(tileId, out var combat))
+                    HaltSupportAttackers(combat);
+
                 RemoveCombat(tileId);
+            }
         }
 
         private static bool TryGetOrderTargetTileId(Division division, out UnityEngine.Vector3Int targetTileId)
         {
             switch (division.CurrentOrder)
             {
-                case AttackGroundOrder attackOrder:
+                case MoveGroundOrder attackOrder:
                     targetTileId = attackOrder.CurrentDestinationTileId;
                     return true;
                 case SupportAttackGroundOrder supportAttackOrder:
@@ -169,7 +511,6 @@ namespace Engine.Models.Ground
         public void RebuildIndex()
         {
             combatByDefendingTileId = (Combats ?? new List<GroundCombat>())
-                .Where(combat => combat != null)
                 .GroupBy(combat => combat.DefendingTileId)
                 .ToDictionary(group => group.Key, group => group.First());
         }
@@ -178,6 +519,23 @@ namespace Engine.Models.Ground
         {
             if (combatByDefendingTileId == null)
                 RebuildIndex();
+        }
+
+        private sealed class Combatant
+        {
+            public readonly Division Division;
+            public readonly DivisionCombatStats Stats;
+            public int DefensePoints;
+
+            public Combatant(Division division, DivisionCombatStats stats)
+            {
+                Division = division;
+                Stats = stats;
+            }
+
+            public float StrengthPercent => Stats.MaxStrength <= 0
+                ? 0f
+                : Mathf.Clamp01(Division.Strength / Stats.MaxStrength);
         }
     }
 }

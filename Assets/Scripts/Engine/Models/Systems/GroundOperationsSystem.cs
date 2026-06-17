@@ -23,7 +23,7 @@ namespace Engine.Models.Ground
 
         private void ResolveOverruns()
         {
-            foreach (var division in gameManager.Divisions.Divisions.ToList())
+            foreach (var division in gameManager.divisionSystem.Divisions.ToList())
             {
                 if (division?.CurrentOrder is not MoveGroundOrder { Purpose: MoveGroundOrderPurpose.Retreat } retreatOrder)
                     continue;
@@ -38,12 +38,12 @@ namespace Engine.Models.Ground
                     continue;
 
                 if (GroundSystemUtility.AreHostile(divisionAlliance, destinationTileData.Controller))
-                    gameManager.Divisions.RemoveDivision(division.DivisionId);
+                    gameManager.divisionSystem.RemoveDivision(division.DivisionId);
             }
         }
          public void AdvanceMovement(float elapsedHours)
         {
-            foreach (var division in gameManager.Divisions.Divisions.ToList())
+            foreach (var division in gameManager.divisionSystem.Divisions.ToList())
             {
                 if (division?.CurrentOrder is not MoveGroundOrder moveOrder)
                     continue;
@@ -57,8 +57,7 @@ namespace Engine.Models.Ground
                 var progressPerHour = Mathf.Max(MinimumProgressPerHour, division.Speed);
                 moveOrder.MovementProgress += progressPerHour * elapsedHours;
 
-                if (moveOrder is AttackGroundOrder
-                    && IsArrivalBlockedByDefenders(moveOrder.CurrentDestinationTileId, division))
+                if (IsArrivalBlockedByDefenders(moveOrder.CurrentDestinationTileId, division))
                 {
                     moveOrder.MovementProgress = Mathf.Min(moveOrder.MovementProgress, 0.99f);
                     continue;
@@ -74,7 +73,7 @@ namespace Engine.Models.Ground
             if (!GroundSystemUtility.TryGetDivisionAlliance(gameManager, attacker, out var attackerAlliance))
                 return true;
 
-            return gameManager.Divisions.GetDivisionsOnTile(targetTileId)
+            return gameManager.divisionSystem.GetDivisionsOnTile(targetTileId)
                 .Any(division => !GroundSystemUtility.IsRetreating(division)
                                  && GroundSystemUtility.TryGetDivisionAlliance(gameManager, division, out var alliance)
                                  && GroundSystemUtility.AreHostile(attackerAlliance, alliance));
@@ -83,7 +82,7 @@ namespace Engine.Models.Ground
         private void CompleteCurrentMoveStep(Division division, MoveGroundOrder moveOrder)
         {
             var arrivedTileId = moveOrder.CurrentDestinationTileId;
-            gameManager.Divisions.MoveDivision(division.DivisionId, arrivedTileId);
+            gameManager.divisionSystem.MoveDivision(division.DivisionId, arrivedTileId);
             moveOrder.MovementProgress = 0f;
 
             ResolveCapture(division, arrivedTileId);
@@ -117,7 +116,7 @@ namespace Engine.Models.Ground
             if (!GroundSystemUtility.TryGetDivisionAlliance(gameManager, division, out var divisionAlliance))
                 return;
 
-            var hasHostileNonRetreatingDivision = gameManager.Divisions.GetDivisionsOnTile(tileId)
+            var hasHostileNonRetreatingDivision = gameManager.divisionSystem.GetDivisionsOnTile(tileId)
                 .Any(candidate => candidate != division
                                   && !GroundSystemUtility.IsRetreating(candidate)
                                   && GroundSystemUtility.TryGetDivisionAlliance(gameManager, candidate, out var alliance)
@@ -162,7 +161,7 @@ namespace Engine.Models.Ground
             if (landTileData.Controller != retreatingAlliance)
                 return false;
 
-            return !gameManager.Divisions.GetDivisionsOnTile(tileId)
+            return !gameManager.divisionSystem.GetDivisionsOnTile(tileId)
                 .Any(division => IsNonRetreatingHostileDivision(division, retreatingAlliance));
         }
 
@@ -177,7 +176,7 @@ namespace Engine.Models.Ground
 
         private bool DestroyDivision(Division division)
         {
-            return division != null && gameManager.Divisions.RemoveDivision(division.DivisionId);
+            return division != null && gameManager.divisionSystem.RemoveDivision(division.DivisionId);
         }
     }
 }

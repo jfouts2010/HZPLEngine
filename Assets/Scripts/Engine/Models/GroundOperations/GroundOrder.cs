@@ -43,15 +43,6 @@ namespace Models.Gameplay.Campaign
     }
 
     [Serializable]
-    public sealed class AttackGroundOrder : MoveGroundOrder
-    {
-        public AttackGroundOrder()
-        {
-            Purpose = MoveGroundOrderPurpose.Normal;
-        }
-    }
-
-    [Serializable]
     public sealed class SupportAttackGroundOrder : GroundOrder
     {
         public Vector3Int TargetTileId;

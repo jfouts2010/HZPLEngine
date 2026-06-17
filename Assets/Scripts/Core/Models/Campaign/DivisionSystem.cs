@@ -6,7 +6,7 @@ using UnityEngine;
 namespace Models.Gameplay.Campaign
 {
     [Serializable]
-    public class DivisionCollection
+    public class DivisionSystem
     {
         [SerializeReference]
         public List<Division> Divisions = new List<Division>();

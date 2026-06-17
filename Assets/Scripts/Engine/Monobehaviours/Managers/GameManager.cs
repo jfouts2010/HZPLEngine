@@ -34,8 +34,8 @@ namespace Engine.Monobehaviours.Managers
         private AISystem _AISystem;
         private GroundCombatSystem _groundCombatSystem;
         private GroundOperationsSystem _groundOperationsSystem;
-        public BuildingSystem Buildings = new BuildingSystem();
-        public DivisionCollection Divisions = new DivisionCollection();
+        public BuildingSystem buildingSystem = new BuildingSystem();
+        public DivisionSystem divisionSystem = new DivisionSystem();
 
         private Coroutine GameTurnCoroutine = null;
         private bool _campaignStarted;
@@ -77,19 +77,19 @@ namespace Engine.Monobehaviours.Managers
             SimulationSettings = CopySimulationSettings(template.SimulationSettings);
             CampaignTiles = CopyTiles(template.Tiles);
             Tiles = CopyTileData(template.StartingTileData);
-            Buildings = new BuildingSystem
+            buildingSystem = new BuildingSystem
             {
                 Buildings = CreateRuntimeBuildings(template.BuildingStartingConditions)
             };
-            Buildings.RebuildIndex();
-            Divisions = new DivisionCollection
+            buildingSystem.RebuildIndex();
+            divisionSystem = new DivisionSystem
             {
                 Divisions = CreateRuntimeDivisions(template.DivisionStartingConditions, activeModule)
             };
-            Divisions.RebuildIndex();
+            divisionSystem.RebuildIndex();
             _AISystem = new AISystem(this);
-            _groundCombatSystem = new GroundCombatSystem(this);
             _groundOperationsSystem = new GroundOperationsSystem(this);
+            _groundCombatSystem = new GroundCombatSystem(this, _groundOperationsSystem);
             IsGamePaused = false;
             _campaignStarted = true;
         }
