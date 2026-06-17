@@ -8,11 +8,18 @@ namespace Models.Gameplay.Campaign
     [Serializable]
     public class DivisionSystem
     {
-        [SerializeReference]
-        public List<Division> Divisions = new List<Division>();
+        [SerializeReference] public List<Division> Divisions = new List<Division>();
 
         private Dictionary<Vector3Int, List<Division>> divisionsByTileId;
         private Dictionary<Guid, Division> divisionsById;
+
+        public void GameTurn()
+        {
+            foreach (var div in Divisions)
+            {
+                
+            }
+        }
 
         public List<Division> GetDivisionsOnTile(Vector3Int tileId)
         {

@@ -12,12 +12,14 @@ namespace Models.Gameplay.Campaign
         public Guid CountryId;
         public Vector3Int TileId;
         public string Name = string.Empty;
-        public float Speed;
-        public float Organization;
-        public float Strength;
-        
-        [SerializeReference]
-        public GroundOrder CurrentOrder = new HoldGroundOrder();
+        public float Speed { get; private set; }
+        public float SupplyConsumption { get; private set; }
+        public float FuelConsumption { get; private set; }
+        public float Organization { get; set; }
+        public float Strength { get; set; }
+        public float Recovery { get; private set; }
+
+        [SerializeReference] public GroundOrder CurrentOrder = new HoldGroundOrder();
 
         public Division()
         {
@@ -39,7 +41,9 @@ namespace Models.Gameplay.Campaign
             Speed = fullStrengthStats.Speed;
             Organization = fullStrengthStats.MaxOrganization;
             Strength = fullStrengthStats.MaxStrength;
-
+            SupplyConsumption = fullStrengthStats.SupplyConsumption;
+            FuelConsumption = fullStrengthStats.FuelConsumption;
+            Recovery = fullStrengthStats.Recovery;
             CurrentOrder = new HoldGroundOrder(
                 GroundOrderAssignmentSource.System,
                 "Initial deployment");

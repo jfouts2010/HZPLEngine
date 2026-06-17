@@ -139,6 +139,7 @@ namespace Engine.Monobehaviours.Managers
             var elapsedHours = SimulationSettings.SimulationTickMinutes / 60f;
             CurrentTime = CurrentTime.AddMinutes(SimulationSettings.SimulationTickMinutes);
             _AISystem.GameTurn();
+            divisionSystem.GameTurn();
             _groundCombatSystem.GameTurn();
             _groundOperationsSystem.GameTurn(elapsedHours);
         }
