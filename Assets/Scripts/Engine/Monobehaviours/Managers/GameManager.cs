@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using Engine.Models;
+using Engine.Models.Ground;
 using Models.Gameplay.Campaign;
 using Models.Module;
 using Monobehaviours.Singletons;
@@ -24,7 +25,9 @@ namespace Engine.Monobehaviours.Managers
         public List<Tile> CampaignTiles = new List<Tile>();
         [SerializeReference] public List<TileData> Tiles = new List<TileData>();
         private AISystem _AISystem;
-        public BuildingCollection Buildings = new BuildingCollection();
+        private GroundCombatSystem _groundCombatSystem;
+        private GroundOperationsSystem _groundOperationsSystem;
+        public BuildingSystem Buildings = new BuildingSystem();
         public DivisionCollection Divisions = new DivisionCollection();
 
         private Coroutine GameTurnCoroutine = null;
@@ -57,7 +60,7 @@ namespace Engine.Monobehaviours.Managers
             SimulationSettings = CopySimulationSettings(template.SimulationSettings);
             CampaignTiles = CopyTiles(template.Tiles);
             Tiles = CopyTileData(template.StartingTileData);
-            Buildings = new BuildingCollection
+            Buildings = new BuildingSystem
             {
                 Buildings = CreateRuntimeBuildings(template.BuildingStartingConditions)
             };
@@ -68,6 +71,8 @@ namespace Engine.Monobehaviours.Managers
             };
             Divisions.RebuildIndex();
             _AISystem = new AISystem(this);
+            _groundCombatSystem = new GroundCombatSystem(this);
+            _groundOperationsSystem = new GroundOperationsSystem(this);
             IsGamePaused = false;
             _campaignStarted = true;
         }
@@ -114,8 +119,11 @@ namespace Engine.Monobehaviours.Managers
 
         private void GameTurn()
         {
+            var elapsedHours = SimulationSettings.SimulationTickMinutes / 60f;
             CurrentTime = CurrentTime.AddMinutes(SimulationSettings.SimulationTickMinutes);
             _AISystem.GameTurn();
+            _groundCombatSystem.GameTurn();
+            _groundOperationsSystem.GameTurn(elapsedHours);
         }
 
         private static List<TileData> CopyTileData(List<TileData> startingTileData)

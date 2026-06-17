@@ -12,6 +12,8 @@ namespace Models.Gameplay.Campaign
         public Vector3Int TileId;
         public string Name = string.Empty;
         public float Speed;
+        [SerializeReference]
+        public GroundOrder CurrentOrder = new HoldGroundOrder();
 
         public Division()
         {
@@ -28,6 +30,9 @@ namespace Models.Gameplay.Campaign
             TileId = startingCondition.TileId;
             Name = startingCondition.Name ?? string.Empty;
             Speed = speed;
+            CurrentOrder = new HoldGroundOrder(
+                GroundOrderAssignmentSource.System,
+                "Initial deployment");
         }
     }
 }

@@ -6,7 +6,7 @@ using UnityEngine;
 namespace Models.Gameplay.Campaign
 {
     [Serializable]
-    public class BuildingCollection
+    public class BuildingSystem
     {
         [SerializeReference]
         public List<Building> Buildings = new List<Building>();
