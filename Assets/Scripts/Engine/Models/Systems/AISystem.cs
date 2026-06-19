@@ -26,7 +26,7 @@ namespace Engine.Models
             };
         }
 
-        public void GameTurn()
+        public void OperationalCadenceTurn()
         {
             _blueForAI.RefreshFront();
             _redForAI.RefreshFront();

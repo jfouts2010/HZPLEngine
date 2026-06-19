@@ -41,6 +41,7 @@ namespace Engine.Monobehaviours.Managers
 
         private Coroutine GameTurnCoroutine = null;
         private bool _campaignStarted;
+        private DateTime _campaignStartTime;
 
         private void Start()
         {
@@ -75,6 +76,7 @@ namespace Engine.Monobehaviours.Managers
             }
 
             CampaignTemplate = template;
+            _campaignStartTime = template.CampaignStartTime;
             CurrentTime = template.CampaignStartTime;
             SimulationSettings = CopySimulationSettings(template.SimulationSettings);
             CampaignTiles = CopyTiles(template.Tiles);
@@ -92,6 +94,7 @@ namespace Engine.Monobehaviours.Managers
             _AISystem = new AISystem(this);
             _groundOperationsSystem = new GroundOperationsSystem(this);
             _groundCombatSystem = new GroundCombatSystem(this, _groundOperationsSystem);
+            _AISystem.OperationalCadenceTurn();
             IsGamePaused = false;
             _campaignStarted = true;
         }
@@ -162,8 +165,18 @@ namespace Engine.Monobehaviours.Managers
         private void GameTurn()
         {
             var elapsedHours = SimulationSettings.SimulationTickMinutes / 60f;
+            var previousTime = CurrentTime;
             CurrentTime = CurrentTime.AddMinutes(SimulationSettings.SimulationTickMinutes);
-            _AISystem.GameTurn();
+
+            if (SimulationSettings.CrossedOperationalCadenceBoundary(
+                    _campaignStartTime,
+                    previousTime,
+                    CurrentTime,
+                    SimulationSettings.OperationalCadenceHours))
+            {
+                _AISystem.OperationalCadenceTurn();
+            }
+
             _groundCombatSystem.GameTurn();
             divisionSystem.ApplyOutOfCombatRecovery(
                 elapsedHours,

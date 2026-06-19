@@ -29,5 +29,20 @@ namespace Models.Gameplay.Campaign
                 MinOperationalCadenceHours,
                 MaxOperationalCadenceHours);
         }
+
+        public static bool CrossedOperationalCadenceBoundary(
+            DateTime campaignStartTime,
+            DateTime previousTime,
+            DateTime currentTime,
+            int operationalCadenceHours)
+        {
+            if (operationalCadenceHours <= 0)
+                return false;
+
+            var cadenceTicks = TimeSpan.FromHours(operationalCadenceHours).Ticks;
+            var previousPeriod = (previousTime - campaignStartTime).Ticks / cadenceTicks;
+            var currentPeriod = (currentTime - campaignStartTime).Ticks / cadenceTicks;
+            return currentPeriod > previousPeriod;
+        }
     }
 }
