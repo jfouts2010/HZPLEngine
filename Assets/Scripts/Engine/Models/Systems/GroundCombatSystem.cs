@@ -3,8 +3,6 @@ using System.Collections.Generic;
 using System.Linq;
 using Engine.Monobehaviours.Managers;
 using Models.Gameplay.Campaign;
-using Models.Module;
-using Monobehaviours.Singletons;
 using UnityEngine;
 
 namespace Engine.Models.Ground
@@ -169,29 +167,7 @@ namespace Engine.Models.Ground
             if (!gameManager.divisionSystem.TryGetDivision(divisionId, out var division))
                 return null;
 
-            if (!TryGetFullStrengthStats(division, out var stats))
-                return null;
-
-            return new Combatant(division, stats);
-        }
-
-        private bool TryGetFullStrengthStats(Division division, out DivisionCombatStats stats)
-        {
-            stats = null;
-            if (division == null)
-                return false;
-
-            var module = ModuleSingleton.Instance.ActiveModule;
-            var divisionTemplate = module?.DivisionTemplates?
-                .FirstOrDefault(template => template.DivisionTemplateId == division.DivisionTemplateId);
-            if (divisionTemplate == null)
-                return false;
-
-            var battalionDefinitions = (module.BattalionDefinitions ?? new List<BattalionDefinition>())
-                .ToDictionary(battalion => battalion.BattalionDefinitionId);
-
-            stats = divisionTemplate.CalculateFullStrengthStats(battalionDefinitions);
-            return stats != null;
+            return new Combatant(division);
         }
 
         private bool TryGetDefendingTerrain(GroundCombat combat, out TileTerrain terrain)
@@ -246,13 +222,13 @@ namespace Engine.Models.Ground
 
             foreach (var combatant in combatants)
             {
-                var width = Mathf.Max(0, combatant.Stats.CombatWidth);
+                var width = Mathf.Max(0, combatant.Division.CombatWidth);
                 if (usedWidth + width > combatWidth)
                     continue;
 
                 combatant.DefensePoints = useToughness
-                    ? combatant.Stats.Toughness
-                    : combatant.Stats.Defense;
+                    ? combatant.Division.Toughness
+                    : combatant.Division.Defense;
                 frontLine.Add(combatant);
                 usedWidth += width;
             }
@@ -262,8 +238,8 @@ namespace Engine.Models.Ground
 
             var overWidthCombatant = combatants[0];
             overWidthCombatant.DefensePoints = useToughness
-                ? overWidthCombatant.Stats.Toughness
-                : overWidthCombatant.Stats.Defense;
+                ? overWidthCombatant.Division.Toughness
+                : overWidthCombatant.Division.Defense;
             frontLine.Add(overWidthCombatant);
             return frontLine;
         }
@@ -293,11 +269,11 @@ namespace Engine.Models.Ground
         {
             var totalWeight = 0f;
             var weights = new List<float>(targets.Count);
-            var preferSoftTargets = shooter.Stats.SoftAttack >= shooter.Stats.HardAttack;
+            var preferSoftTargets = shooter.Division.SoftAttack >= shooter.Division.HardAttack;
 
             foreach (var target in targets)
             {
-                var softness = Mathf.Clamp01(target.Stats.Softness);
+                var softness = Mathf.Clamp01(target.Division.Softness);
                 var weight = preferSoftTargets ? softness : 1f - softness;
                 weight = Mathf.Max(MinimumTargetWeight, weight);
                 weights.Add(weight);
@@ -321,9 +297,9 @@ namespace Engine.Models.Ground
             TileTerrain terrain,
             bool shooterIsAttacker)
         {
-            var targetSoftness = Mathf.Clamp01(target.Stats.Softness);
-            var shots = shooter.Stats.SoftAttack * targetSoftness
-                        + shooter.Stats.HardAttack * (1f - targetSoftness);
+            var targetSoftness = Mathf.Clamp01(target.Division.Softness);
+            var shots = shooter.Division.SoftAttack * targetSoftness
+                        + shooter.Division.HardAttack * (1f - targetSoftness);
             shots *= shooter.StrengthPercent;
 
             if (shooterIsAttacker)
@@ -524,18 +500,16 @@ namespace Engine.Models.Ground
         private sealed class Combatant
         {
             public readonly Division Division;
-            public readonly DivisionCombatStats Stats;
             public int DefensePoints;
 
-            public Combatant(Division division, DivisionCombatStats stats)
+            public Combatant(Division division)
             {
                 Division = division;
-                Stats = stats;
             }
 
-            public float StrengthPercent => Stats.MaxStrength <= 0
+            public float StrengthPercent => Division.MaxStrength <= 0
                 ? 0f
-                : Mathf.Clamp01(Division.Strength / Stats.MaxStrength);
+                : Mathf.Clamp01(Division.Strength / Division.MaxStrength);
         }
     }
 }

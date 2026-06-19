@@ -2,7 +2,7 @@
 
 Ground tactical combat resolves once per simulation tick using lightweight Hearts of Iron-inspired division combat. The combat record supplies attacker identity and join order, defenders are derived fresh from combat-ready divisions on the defending tile, and each round recalculates front-line and reserve assignment rather than persisting tactical slots.
 
-Combat stats are recalculated from the division template each round, while current strength and organization remain runtime division state. Current strength percentage is `current strength / full-strength template strength`, clamped between 0 and 1; strength and organization damage are clamped at 0.
+Full-strength combat stats are derived from the division template when each runtime division is created, then carried by the division as stable runtime capability. Current strength and organization remain mutable runtime division state. Current strength percentage is `current strength / full-strength max strength`, clamped between 0 and 1; strength and organization damage are clamped at 0.
 
 Front-line assignment uses the defending tile's terrain frontage, widened by 50% for both attackers and defenders when combat-ready attackers participate from more than one distinct current physical tile. Assignment is first-fit in deterministic order, with attacker order based on combat join order and defender order based on stable tile occupancy order; if a side has combat-ready divisions but none fit, its first combat-ready division fights over-width so every combat-ready side has a front line.
 

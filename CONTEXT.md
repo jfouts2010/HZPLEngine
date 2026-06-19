@@ -98,11 +98,11 @@ Core engine rules stay the same across Modules. A less-capable SAM in one Module
 
 **Division template** — the authored full-strength structure of a division: a module-country-scoped collection of battalion definition references and counts. In v1, division templates are Module catalog items; future campaign templates may allow custom division templates for campaign-specific force structures.
 
-**Division** — the movable ground formation represented on the campaign map during play. A division follows a division template and derives its combat stats from the battalions currently present in it.
+**Division** — the movable ground formation represented on the campaign map during play. A division follows a division template and carries its full-strength combat capability during runtime play.
 
 At full strength, a division's additive combat stats are derived from the sum of its battalion definitions multiplied by their counts. Division speed is the minimum speed among its battalion definitions, and division softness is a strength-weighted average of battalion softness values.
 
-Division speed is a stable movement capability derived when the division enters runtime play. A division's tile ID is the tile it physically occupies now; in-progress movement toward another tile belongs to its current order or movement state rather than replacing its current tile ID. Other combat stats can be derived from the division template and current battalion state when combat rules need them.
+Division speed and full-strength combat stats are stable capabilities derived when the division enters runtime play. A division's tile ID is the tile it physically occupies now; in-progress movement toward another tile belongs to its current order or movement state rather than replacing its current tile ID.
 
 **Ground order** — the persistent operational responsibility assigned to a division during runtime play, such as holding a critical tile, moving to a destination, attacking, supporting an attack, or retreating. Ground orders may carry rationale and other decision context for AI or future player-command systems, but they are resolved by core ground operation rules rather than by the division object itself.
 
