@@ -85,6 +85,8 @@ namespace Engine.Monobehaviours.Managers
         {
             gameManager = gameManager != null ? gameManager : GetComponent<GameManager>();
             sceneCamera = sceneCamera != null ? sceneCamera : Camera.main;
+            if (gameManager != null)
+                gameManager.GameTurnCompleted += RefreshCampaignAfterGameTurn;
 
             EnsureTilemap();
             EnsureEventSystem();
@@ -96,6 +98,12 @@ namespace Engine.Monobehaviours.Managers
             RenderCampaign();
         }
 
+        private void OnDestroy()
+        {
+            if (gameManager != null)
+                gameManager.GameTurnCompleted -= RefreshCampaignAfterGameTurn;
+        }
+
         private void Update()
         {
             if (gameManager == null || !gameManager.IsCampaignStarted)
@@ -105,10 +113,17 @@ namespace Engine.Monobehaviours.Managers
             HandleTileSelection();
         }
 
-        private void RenderCampaign()
+        private void RefreshCampaignAfterGameTurn()
+        {
+            RenderCampaign(false, true);
+        }
+
+        private void RenderCampaign(bool frameCamera = true, bool preserveSelection = false)
         {
             if (gameManager == null || !gameManager.IsCampaignStarted)
                 return;
+
+            var previousSelectedCell = preserveSelection ? selectedCell : null;
 
             tilemap.ClearAllTiles();
             tilesByCell.Clear();
@@ -146,8 +161,19 @@ namespace Engine.Monobehaviours.Managers
             CreateUnitCounters();
 
             tilemap.RefreshAllTiles();
-            FrameCamera();
-            SelectFirstTile();
+            if (frameCamera)
+                FrameCamera();
+
+            if (previousSelectedCell.HasValue && tilesByCell.ContainsKey(previousSelectedCell.Value))
+            {
+                selectedCell = previousSelectedCell;
+                UpdateSelectedTileUi();
+            }
+            else
+            {
+                SelectFirstTile();
+            }
+
             UpdateSummaryUi();
         }
 

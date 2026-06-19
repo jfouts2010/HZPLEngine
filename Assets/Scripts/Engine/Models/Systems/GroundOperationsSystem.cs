@@ -9,6 +9,7 @@ namespace Engine.Models.Ground
     {
         private readonly GameManager gameManager;
         private const float MinimumProgressPerHour = 0.05f;
+        private const float CombatPinnedMovementProgressLimit = 0.5f;
 
         public GroundOperationsSystem(GameManager gameManager)
         {
@@ -55,6 +56,17 @@ namespace Engine.Models.Ground
                     continue;
 
                 var progressPerHour = Mathf.Max(MinimumProgressPerHour, division.Speed);
+                if (!moveOrder.IsRetreat && gameManager.IsDivisionAttackingInGroundCombat(division.DivisionId))
+                    continue;
+
+                if (!moveOrder.IsRetreat && gameManager.IsDivisionDefendingInGroundCombat(division.DivisionId))
+                {
+                    moveOrder.MovementProgress = Mathf.Min(
+                        CombatPinnedMovementProgressLimit,
+                        moveOrder.MovementProgress + progressPerHour * elapsedHours);
+                    continue;
+                }
+
                 moveOrder.MovementProgress += progressPerHour * elapsedHours;
 
                 if (IsArrivalBlockedByDefenders(moveOrder.CurrentDestinationTileId, division))

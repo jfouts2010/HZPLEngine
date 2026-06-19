@@ -453,6 +453,31 @@ namespace Engine.Models.Ground
                     return false;
             }
         }
+
+        public bool IsDivisionEngagedInCombat(Guid divisionId)
+        {
+            return IsDivisionAttackingInCombat(divisionId)
+                   || IsDivisionDefendingInCombat(divisionId);
+        }
+
+        public bool IsDivisionAttackingInCombat(Guid divisionId)
+        {
+            EnsureIndex();
+            return (Combats ?? Enumerable.Empty<GroundCombat>())
+                .Any(combat => combat != null
+                               && combat.AttackerDivisionIds != null
+                               && combat.AttackerDivisionIds.Contains(divisionId));
+        }
+
+        public bool IsDivisionDefendingInCombat(Guid divisionId)
+        {
+            EnsureIndex();
+            return (Combats ?? Enumerable.Empty<GroundCombat>())
+                .Any(combat => combat != null
+                               && combat.DefenderDivisionIds != null
+                               && combat.DefenderDivisionIds.Contains(divisionId));
+        }
+
         public bool TryGetCombat(Vector3Int defendingTileId, out GroundCombat combat)
         {
             EnsureIndex();

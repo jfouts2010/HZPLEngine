@@ -19,6 +19,8 @@ namespace Engine.Monobehaviours.Managers
 
     public class GameManager : MonoBehaviour
     {
+        public event Action GameTurnCompleted;
+
         public bool IsGamePaused { get; private set; }
         public bool IsCampaignStarted => _campaignStarted;
         public string TemplateName { get; private set; }
@@ -102,6 +104,24 @@ namespace Engine.Monobehaviours.Managers
             return _AISystem.GetAllianceAI(alliance);
         }
 
+        public bool IsDivisionEngagedInGroundCombat(Guid divisionId)
+        {
+            return _groundCombatSystem != null
+                   && _groundCombatSystem.IsDivisionEngagedInCombat(divisionId);
+        }
+
+        public bool IsDivisionAttackingInGroundCombat(Guid divisionId)
+        {
+            return _groundCombatSystem != null
+                   && _groundCombatSystem.IsDivisionAttackingInCombat(divisionId);
+        }
+
+        public bool IsDivisionDefendingInGroundCombat(Guid divisionId)
+        {
+            return _groundCombatSystem != null
+                   && _groundCombatSystem.IsDivisionDefendingInCombat(divisionId);
+        }
+
         public void PauseCampaign()
         {
             IsGamePaused = true;
@@ -129,7 +149,7 @@ namespace Engine.Monobehaviours.Managers
 
         private IEnumerator SlowGameTurn()
         {
-            yield return new WaitForSeconds(0.16f);
+            yield return null;// yield return new WaitForSeconds(0.16f);
             GameTurn();
             GameTurnCoroutine = null;
         }
@@ -142,6 +162,7 @@ namespace Engine.Monobehaviours.Managers
             divisionSystem.GameTurn();
             _groundCombatSystem.GameTurn();
             _groundOperationsSystem.GameTurn(elapsedHours);
+            GameTurnCompleted?.Invoke();
         }
 
         private static List<TileData> CopyTileData(List<TileData> startingTileData)

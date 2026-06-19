@@ -30,6 +30,8 @@ namespace Engine.Models
         {
             _blueForAI.RefreshFront();
             _redForAI.RefreshFront();
+            _blueForAI.AssignMovementOrders();
+            _redForAI.AssignMovementOrders();
         }
     }
 }
