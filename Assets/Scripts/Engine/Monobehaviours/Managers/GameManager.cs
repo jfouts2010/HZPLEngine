@@ -129,6 +129,7 @@ namespace Engine.Monobehaviours.Managers
         {
             return _groundCombatSystem?.ActiveCombats ?? Array.Empty<GroundCombat>();
         }
+        
 
         public void PauseCampaign()
         {

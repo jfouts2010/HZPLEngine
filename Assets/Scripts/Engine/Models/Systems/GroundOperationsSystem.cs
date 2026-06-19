@@ -34,7 +34,7 @@ namespace Engine.Models.Ground
 
                 if (!GroundSystemUtility.TryGetLandTileData(
                         gameManager,
-                        retreatOrder.FinalDestinationTileId,
+                        retreatOrder.DestinationTileId,
                         out var destinationTileData))
                     continue;
 
@@ -99,7 +99,7 @@ namespace Engine.Models.Ground
 
             ResolveCapture(division, arrivedTileId);
 
-            if (arrivedTileId == moveOrder.FinalDestinationTileId)
+            if (arrivedTileId == moveOrder.DestinationTileId)
             {
                 division.CurrentOrder = new HoldGroundOrder(
                     GroundOrderAssignmentSource.System,
@@ -109,15 +109,72 @@ namespace Engine.Models.Ground
                 return;
             }
 
-            if (GroundSystemUtility.AreNeighbors(gameManager, arrivedTileId, moveOrder.FinalDestinationTileId))
-            {
-                moveOrder.CurrentDestinationTileId = moveOrder.FinalDestinationTileId;
+            if (TryAdvanceMoveOrderToNextStep(division, moveOrder, arrivedTileId))
                 return;
-            }
 
             division.CurrentOrder = new HoldGroundOrder(
                 GroundOrderAssignmentSource.System,
                 "Movement paused; no next path step available");
+        }
+
+        private bool TryAdvanceMoveOrderToNextStep(
+            Division division,
+            MoveGroundOrder moveOrder,
+            Vector3Int arrivedTileId)
+        {
+            if (moveOrder.Path != null
+                && moveOrder.Path.TryGetNextStep(arrivedTileId, out var pathNextStep)
+                && GroundSystemUtility.AreNeighbors(gameManager, arrivedTileId, pathNextStep)
+                && IsNextStepAllowed(division, moveOrder, pathNextStep))
+            {
+                moveOrder.CurrentDestinationTileId = pathNextStep;
+                return true;
+            }
+
+            if (!GroundSystemUtility.TryGetDivisionAlliance(gameManager, division, out var alliance))
+                return false;
+
+            if (GroundPathfindingService.TryFindFriendlyPath(
+                    gameManager,
+                    arrivedTileId,
+                    moveOrder.DestinationTileId,
+                    alliance,
+                    out var refreshedPath)
+                && refreshedPath.TryGetNextStep(arrivedTileId, out var refreshedNextStep)
+                && IsNextStepAllowed(division, moveOrder, refreshedNextStep))
+            {
+                moveOrder.Path = refreshedPath;
+                moveOrder.CurrentDestinationTileId = refreshedNextStep;
+                return true;
+            }
+
+            if (GroundSystemUtility.AreNeighbors(gameManager, arrivedTileId, moveOrder.DestinationTileId)
+                && IsNextStepAllowed(division, moveOrder, moveOrder.DestinationTileId))
+            {
+                moveOrder.Path = GroundPath.FromDirectStep(arrivedTileId, moveOrder.DestinationTileId);
+                moveOrder.CurrentDestinationTileId = moveOrder.DestinationTileId;
+                return true;
+            }
+
+            return false;
+        }
+
+        private bool IsNextStepAllowed(
+            Division division,
+            MoveGroundOrder moveOrder,
+            Vector3Int nextTileId)
+        {
+            if (!GroundSystemUtility.TryGetDivisionAlliance(gameManager, division, out var alliance))
+                return false;
+
+            if (moveOrder.IsRetreat)
+                return GroundPathfindingService.IsSafeFriendlyWaypoint(gameManager, nextTileId, alliance);
+
+            if (GroundSystemUtility.TryGetLandTileData(gameManager, nextTileId, out var landTileData)
+                && GroundSystemUtility.AreHostile(alliance, landTileData.Controller))
+                return true;
+
+            return GroundPathfindingService.IsSafeFriendlyWaypoint(gameManager, nextTileId, alliance);
         }
 
         private void ResolveCapture(Division division, Vector3Int tileId)
@@ -146,44 +203,30 @@ namespace Engine.Models.Ground
 
             foreach (var neighborTileId in GroundSystemUtility.GetNeighborTileIds(gameManager, fromTileId))
             {
-                if (!IsValidRetreatDestination(neighborTileId, alliance))
+                if (!GroundPathfindingService.IsSafeFriendlyWaypoint(gameManager, neighborTileId, alliance))
                     continue;
 
-                division.CurrentOrder = new MoveGroundOrder
+                var retreatOrder = new MoveGroundOrder
                 {
                     AssignmentSource = GroundOrderAssignmentSource.System,
                     CanBeReplaced = false,
                     Rationale = rationale ?? "Retreating after combat defeat",
-                    Purpose = MoveGroundOrderPurpose.Retreat,
-                    FinalDestinationTileId = neighborTileId,
-                    CurrentDestinationTileId = neighborTileId,
-                    MovementProgress = 0f
+                    Purpose = MoveGroundOrderPurpose.Retreat
                 };
+
+                if (!GroundPathfindingService.TryPrepareMoveGroundOrder(
+                        gameManager,
+                        fromTileId,
+                        neighborTileId,
+                        alliance,
+                        retreatOrder))
+                    continue;
+
+                division.CurrentOrder = retreatOrder;
                 return true;
             }
 
             return DestroyDivision(division);
-        }
-
-        private bool IsValidRetreatDestination(Vector3Int tileId, Alliance retreatingAlliance)
-        {
-            if (!GroundSystemUtility.TryGetLandTileData(gameManager, tileId, out var landTileData))
-                return false;
-
-            if (landTileData.Controller != retreatingAlliance)
-                return false;
-
-            return !gameManager.divisionSystem.GetDivisionsOnTile(tileId)
-                .Any(division => IsNonRetreatingHostileDivision(division, retreatingAlliance));
-        }
-
-        private bool IsNonRetreatingHostileDivision(Division division, Alliance retreatingAlliance)
-        {
-            if (GroundSystemUtility.IsRetreating(division))
-                return false;
-
-            return GroundSystemUtility.TryGetDivisionAlliance(gameManager, division, out var alliance)
-                   && GroundSystemUtility.AreHostile(alliance, retreatingAlliance);
         }
 
         private bool DestroyDivision(Division division)

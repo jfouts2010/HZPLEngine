@@ -29,10 +29,12 @@ namespace Models.Gameplay.Campaign
     [Serializable]
     public class MoveGroundOrder : GroundOrder
     {
-        public Vector3Int FinalDestinationTileId;
         public Vector3Int CurrentDestinationTileId;
+        public GroundPath Path;
         public float MovementProgress;
         public MoveGroundOrderPurpose Purpose = MoveGroundOrderPurpose.Normal;
+
+        public Vector3Int DestinationTileId => Path?.DestinationTileId ?? default;
 
         public MoveGroundOrder()
         {

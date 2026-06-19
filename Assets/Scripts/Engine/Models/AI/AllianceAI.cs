@@ -79,16 +79,23 @@ namespace Engine.Models
                         out var targetTileId))
                     continue;
 
-                division.CurrentOrder = new MoveGroundOrder
+                var moveOrder = new MoveGroundOrder
                 {
                     AssignmentSource = GroundOrderAssignmentSource.AI,
                     CanBeReplaced = true,
                     Rationale = "Advancing toward enemy land",
-                    Purpose = MoveGroundOrderPurpose.Normal,
-                    FinalDestinationTileId = targetTileId,
-                    CurrentDestinationTileId = targetTileId,
-                    MovementProgress = 0f
+                    Purpose = MoveGroundOrderPurpose.Normal
                 };
+
+                if (!GroundPathfindingService.TryPrepareMoveGroundOrder(
+                        _gameManager,
+                        division.TileId,
+                        targetTileId,
+                        Alliance,
+                        moveOrder))
+                    continue;
+
+                division.CurrentOrder = moveOrder;
             }
         }
 
@@ -135,19 +142,36 @@ namespace Engine.Models
             if (!distanceToFrontByTileId.TryGetValue(tileId, out var currentDistance))
                 return false;
 
-            foreach (var neighborTileId in OrderTileIds(neighborTileIds))
+            Vector3Int bestFriendlyTarget = default;
+            var bestFriendlyPathLength = int.MaxValue;
+
+            foreach (var entry in distanceToFrontByTileId)
             {
-                if (!controllersByTileId.TryGetValue(neighborTileId, out var controller)
+                if (entry.Key == tileId || entry.Value >= currentDistance)
+                    continue;
+
+                if (!controllersByTileId.TryGetValue(entry.Key, out var controller)
                     || controller != Alliance)
                     continue;
 
-                if (!distanceToFrontByTileId.TryGetValue(neighborTileId, out var neighborDistance))
+                if (!GroundPathfindingService.TryFindFriendlyPath(
+                        _gameManager,
+                        tileId,
+                        entry.Key,
+                        Alliance,
+                        out var path))
                     continue;
 
-                if (neighborDistance >= currentDistance)
+                if (path.StepCount >= bestFriendlyPathLength)
                     continue;
 
-                targetTileId = neighborTileId;
+                bestFriendlyPathLength = path.StepCount;
+                bestFriendlyTarget = entry.Key;
+            }
+
+            if (bestFriendlyPathLength != int.MaxValue)
+            {
+                targetTileId = bestFriendlyTarget;
                 return true;
             }
 
