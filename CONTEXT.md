@@ -106,6 +106,38 @@ Division speed and full-strength combat stats are stable capabilities derived wh
 
 **Ground order** — the persistent operational responsibility assigned to a division during runtime play, such as holding a critical tile, moving to a destination, attacking, supporting an attack, or retreating. Ground orders may carry rationale and other decision context for AI or future player-command systems, but they are resolved by core ground operation rules rather than by the division object itself.
 
+**AI order intent** — a persisted label on a ground order that records the AI's reason for assigning that order, such as holding a front tile, refilling a front gap, staging for an assault, supporting an attack, or pinning adjacent defenders. AI order intent is not a separate ground order type; it explains why an existing hold, move, attack, or support attack order exists.
+
+_Avoid_: treating AI role labels as independent order classes when they are planning intent on a ground order.
+
+**Hold front intent** — an AI order intent for a division anchored as a non-relocating defender of a front tile. A division with hold front intent is not available for offensive reassignment while that tile remains its front responsibility.
+
+**Hold edge intent** — an AI order intent for a division anchored on a front tile that has exactly one adjacent hostile-controlled land tile. A division with hold edge intent remains a defender, but may be eligible to attack that single adjacent hostile tile because its front responsibility has only one enemy edge.
+
+**Projected defensive coverage** — a front tile is defensively covered when a combat-ready friendly division is physically holding it or when a friendly division has a still-valid defensive movement order whose AI order intent commits it to that tile. Offensive staging, ordinary relocation, and non-defensive movement do not count as projected defensive coverage.
+
+_Avoid_: counting every in-progress move through or toward a front tile as defense.
+
+**Front coverage guarantee** — the defensive rule that every front tile should have at least one projected defender before the AI spends divisions on offensive plans. It answers whether the front has gaps, not whether every tile has enough strength for its local threat.
+
+**Threat reinforcement** — the defensive rule that assigns extra divisions to already covered front tiles whose local danger or strategic value calls for more than the minimum defender. Threat reinforcement is subordinate to the front coverage guarantee and may be left incomplete when reserves are scarce.
+
+**Tile strategic value** — the AI's estimate of how valuable a land tile is to control. In v1 it may be derived from existing map features such as forts, other buildings, tile infrastructure, and terrain context; future supply rules may add to this value rather than replace the concept.
+
+_Avoid_: using supply criticality as the general term before supply exists.
+
+**Defensive reserve** — a combat-ready friendly division that is available to receive defensive AI orders because it is not the sole physically present defender of a front tile, not already committed to a non-replaceable order, not retreating, and not engaged in ground combat. A division on a front tile may donate to an uncovered front tile only when its source tile has at least one other eligible defender physically present.
+
+_Avoid_: using a projected incoming defender to justify pulling the last physically present defender off a front tile; this can create timing holes and oscillating orders where the original tile immediately requests the same strength back.
+
+**Offensive plan** — the alliance AI's persistent coordination state for one chosen hostile front-adjacent target tile. In v1, an alliance may have at most one active offensive plan at a time, and offense only begins after the front coverage guarantee is satisfied; individual division ground orders record their assigned execution intent, but the plan itself belongs to the alliance AI.
+
+**Offensive assembly phase** — the phase of an offensive plan where assigned divisions move to friendly staging tiles adjacent to their assigned engagement target. The AI should not issue the coordinated attack until every assigned division is in position and the plan has finished assembly or has been explicitly replanned.
+
+**Offensive attack phase** — the phase of an offensive plan where assembled divisions execute their assigned attack, support attack, or pin responsibilities against hostile-controlled target tiles.
+
+**Offensive replan** — the cancellation of an active offensive plan so the alliance AI can choose a fresh target and assignments on a later planning pass. In v1, an unavailable assigned division, invalid staging tile, invalid target, or failed feasibility check causes the whole offensive plan to abort rather than substituting individual divisions mid-plan.
+
 **Current order** — the one active ground order carried by a division at a given moment. Every runtime division should have exactly one current order; when an order completes, the system assigns a default hold/no-action order rather than leaving the division without order state.
 
 **Move order** — a movement ground order for a division to relocate toward a final destination tile through a current movement target tile. Combat is not the intended responsibility of a move order, though ground operation rules may still need to resolve what happens if hostile contact interrupts or blocks the move.
