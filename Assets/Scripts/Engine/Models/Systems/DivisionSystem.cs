@@ -13,11 +13,42 @@ namespace Models.Gameplay.Campaign
         private Dictionary<Vector3Int, List<Division>> divisionsByTileId;
         private Dictionary<Guid, Division> divisionsById;
 
-        public void GameTurn()
+        private const float StrengthRecoveryFractionOfMaxPerDay = 0.2f;
+        private const float OrganizationRecoveryPerMaxOrganizationPerHour = 0.03f;
+
+        public void ApplyOutOfCombatRecovery(float elapsedHours, Func<Guid, bool> isDivisionEngagedInCombat)
         {
-            foreach (var div in Divisions)
+            if (elapsedHours <= 0f || isDivisionEngagedInCombat == null)
+                return;
+
+            foreach (var division in Divisions)
             {
-                
+                if (division == null)
+                    continue;
+
+                if (isDivisionEngagedInCombat(division.DivisionId))
+                    continue;
+
+                ApplyRecovery(division, elapsedHours);
+            }
+        }
+
+        private static void ApplyRecovery(Division division, float elapsedHours)
+        {
+            if (division.Strength < division.MaxStrength && division.MaxStrength > 0)
+            {
+                var strengthGain = division.MaxStrength
+                                   * StrengthRecoveryFractionOfMaxPerDay
+                                   * (elapsedHours / 24f);
+                division.Strength = Mathf.Min(division.MaxStrength, division.Strength + strengthGain);
+            }
+
+            if (division.Organization < division.MaxOrganization && division.MaxOrganization > 0)
+            {
+                var organizationGain = division.MaxOrganization
+                                         * OrganizationRecoveryPerMaxOrganizationPerHour
+                                         * elapsedHours;
+                division.Organization = Mathf.Min(division.MaxOrganization, division.Organization + organizationGain);
             }
         }
 

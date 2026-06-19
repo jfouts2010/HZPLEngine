@@ -164,8 +164,10 @@ namespace Engine.Monobehaviours.Managers
             var elapsedHours = SimulationSettings.SimulationTickMinutes / 60f;
             CurrentTime = CurrentTime.AddMinutes(SimulationSettings.SimulationTickMinutes);
             _AISystem.GameTurn();
-            divisionSystem.GameTurn();
             _groundCombatSystem.GameTurn();
+            divisionSystem.ApplyOutOfCombatRecovery(
+                elapsedHours,
+                _groundCombatSystem.IsDivisionEngagedInCombat);
             _groundOperationsSystem.GameTurn(elapsedHours);
             GameTurnCompleted?.Invoke();
         }
