@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
+using Engine.Models.Ground;
 using Models.Gameplay.Campaign;
 using UnityEngine;
 using UnityEngine.EventSystems;
@@ -35,6 +36,9 @@ namespace Engine.Monobehaviours.Managers
         private readonly Dictionary<string, UnityEngine.Tilemaps.Tile> renderTilesByKey = new Dictionary<string, UnityEngine.Tilemaps.Tile>();
         private readonly Dictionary<string, Sprite> spritesByKey = new Dictionary<string, Sprite>();
         private readonly Dictionary<string, Sprite> unitCounterSpritesByKey = new Dictionary<string, Sprite>();
+        private readonly Dictionary<int, Sprite> combatBubbleSpritesByScore = new Dictionary<int, Sprite>();
+        private Sprite movementArrowHeadSprite;
+        private Material movementArrowMaterial;
 
         private const int TilePixelSize = 32;
         private const int HexFlatInsetPixels = 8;
@@ -47,6 +51,14 @@ namespace Engine.Monobehaviours.Managers
         private const float UnitCounterLabelCharacterSize = 0.018f;
         private const int UnitCounterPixelWidth = 30;
         private const int UnitCounterPixelHeight = 20;
+        private const float CombatBubbleWorldWidth = 0.42f;
+        private const float CombatBubbleLabelCharacterSize = 0.018f;
+        private const int CombatBubblePixelSize = 36;
+        private const float MovementArrowWidth = 0.045f;
+        private const float MovementArrowEndTrim = 0.31f;
+        private const float MovementArrowRouteOffset = 0.16f;
+        private const float MovementArrowHeadWorldWidth = 0.18f;
+        private const int MovementArrowHeadPixelSize = 18;
         private static readonly Vector3Int[] TerritoryBorderNeighborOffsets =
         {
             new Vector3Int(1, -1, 0),
@@ -68,6 +80,8 @@ namespace Engine.Monobehaviours.Managers
 
         private Transform labelRoot;
         private Transform unitCounterRoot;
+        private Transform combatBubbleRoot;
+        private Transform movementArrowRoot;
         private Label titleLabel;
         private Label timeLabel;
         private Label selectedTileLabel;
@@ -139,6 +153,8 @@ namespace Engine.Monobehaviours.Managers
 
             ClearLabels();
             ClearUnitCounters();
+            ClearCombatBubbles();
+            ClearMovementArrows();
 
             foreach (var campaignTile in gameManager.CampaignTiles.Where(tile => tile != null))
             {
@@ -159,6 +175,8 @@ namespace Engine.Monobehaviours.Managers
             }
 
             CreateUnitCounters();
+            CreateMovementArrows();
+            CreateCombatBubbles();
 
             tilemap.RefreshAllTiles();
             if (frameCamera)
@@ -210,6 +228,20 @@ namespace Engine.Monobehaviours.Managers
                 var counterObject = new GameObject("Campaign Unit Counters");
                 counterObject.transform.SetParent(grid.transform, false);
                 unitCounterRoot = counterObject.transform;
+            }
+
+            if (combatBubbleRoot == null)
+            {
+                var bubbleObject = new GameObject("Campaign Combat Bubbles");
+                bubbleObject.transform.SetParent(grid.transform, false);
+                combatBubbleRoot = bubbleObject.transform;
+            }
+
+            if (movementArrowRoot == null)
+            {
+                var arrowObject = new GameObject("Campaign Movement Arrows");
+                arrowObject.transform.SetParent(grid.transform, false);
+                movementArrowRoot = arrowObject.transform;
             }
         }
 
@@ -607,6 +639,336 @@ namespace Engine.Monobehaviours.Managers
             texture.SetPixels(pixels);
             texture.Apply();
             return texture;
+        }
+
+        private void CreateMovementArrows()
+        {
+            if (movementArrowRoot == null || gameManager?.divisionSystem == null)
+                return;
+
+            foreach (var command in GetMovementArrowCommands())
+                CreateMovementArrow(command);
+        }
+
+        private IEnumerable<MovementArrowCommand> GetMovementArrowCommands()
+        {
+            var commands = new List<MovementArrowCommand>();
+            foreach (var division in gameManager.divisionSystem.Divisions.Where(division => division != null))
+            {
+                if (division.CurrentOrder is not MoveGroundOrder moveOrder)
+                    continue;
+
+                var originCell = GetCell(division.TileId);
+                var destinationCell = GetCell(moveOrder.CurrentDestinationTileId);
+                if (!hexCentersByCell.ContainsKey(originCell) || !hexCentersByCell.ContainsKey(destinationCell))
+                    continue;
+
+                if (division.TileId == moveOrder.CurrentDestinationTileId)
+                    continue;
+
+                commands.Add(new MovementArrowCommand(
+                    division.TileId,
+                    moveOrder.CurrentDestinationTileId,
+                    GetMovementArrowColor(division, moveOrder)));
+            }
+
+            return commands
+                .GroupBy(command => new MovementArrowKey(command.FromTileId, command.ToTileId, command.Color))
+                .Select(group => group.First());
+        }
+
+        private Color GetMovementArrowColor(Division division, MoveGroundOrder moveOrder)
+        {
+            if (moveOrder.IsRetreat)
+                return new Color(0.58f, 0.60f, 0.62f);
+
+            if (DoesMovementTriggerCombat(division, moveOrder.CurrentDestinationTileId))
+                return new Color(0.86f, 0.18f, 0.15f);
+
+            return new Color(0.20f, 0.48f, 0.94f);
+        }
+
+        private bool DoesMovementTriggerCombat(Division division, Vector3Int destinationTileId)
+        {
+            if (!GroundSystemUtility.TryGetDivisionAlliance(gameManager, division, out var divisionAlliance))
+                return false;
+
+            if (tileDataById.TryGetValue(destinationTileId, out var tileData)
+                && tileData is LandTileData landData
+                && GroundSystemUtility.AreHostile(divisionAlliance, landData.Controller))
+                return true;
+
+            return gameManager.divisionSystem.GetDivisionsOnTile(destinationTileId)
+                .Any(candidate => candidate != null
+                                  && !GroundSystemUtility.IsRetreating(candidate)
+                                  && GroundSystemUtility.TryGetDivisionAlliance(gameManager, candidate, out var candidateAlliance)
+                                  && GroundSystemUtility.AreHostile(divisionAlliance, candidateAlliance));
+        }
+
+        private void CreateMovementArrow(MovementArrowCommand command)
+        {
+            var fromCell = GetCell(command.FromTileId);
+            var toCell = GetCell(command.ToTileId);
+            var fromCenter = hexCentersByCell[fromCell];
+            var toCenter = hexCentersByCell[toCell];
+            var delta = toCenter - fromCenter;
+            if (delta.sqrMagnitude <= Mathf.Epsilon)
+                return;
+
+            var direction = delta.normalized;
+            var perpendicular = new Vector3(-direction.y, direction.x, 0f);
+            var start = fromCenter + direction * MovementArrowEndTrim + perpendicular * MovementArrowRouteOffset;
+            var end = toCenter - direction * MovementArrowEndTrim + perpendicular * MovementArrowRouteOffset;
+            if ((end - start).sqrMagnitude <= 0.01f)
+                return;
+
+            var arrowObject = new GameObject(
+                $"Movement Arrow {command.FromTileId.x},{command.FromTileId.y},{command.FromTileId.z} to {command.ToTileId.x},{command.ToTileId.y},{command.ToTileId.z}");
+            arrowObject.transform.SetParent(movementArrowRoot, false);
+
+            var lineRenderer = arrowObject.AddComponent<LineRenderer>();
+            lineRenderer.useWorldSpace = false;
+            lineRenderer.positionCount = 2;
+            lineRenderer.SetPosition(0, start + new Vector3(0f, 0f, -0.26f));
+            lineRenderer.SetPosition(1, end + new Vector3(0f, 0f, -0.26f));
+            lineRenderer.startWidth = MovementArrowWidth;
+            lineRenderer.endWidth = MovementArrowWidth;
+            lineRenderer.numCapVertices = 2;
+            lineRenderer.material = GetMovementArrowMaterial();
+            lineRenderer.startColor = command.Color;
+            lineRenderer.endColor = command.Color;
+            lineRenderer.sortingOrder = 18;
+
+            var headObject = new GameObject("Movement Arrow Head");
+            headObject.transform.SetParent(arrowObject.transform, false);
+            headObject.transform.localPosition = end + new Vector3(0f, 0f, -0.27f);
+            headObject.transform.localRotation = Quaternion.Euler(0f, 0f, Mathf.Atan2(direction.y, direction.x) * Mathf.Rad2Deg - 90f);
+
+            var headRenderer = headObject.AddComponent<SpriteRenderer>();
+            headRenderer.sprite = GetMovementArrowHeadSprite();
+            headRenderer.color = command.Color;
+            headRenderer.sortingOrder = 19;
+        }
+
+        private Material GetMovementArrowMaterial()
+        {
+            if (movementArrowMaterial != null)
+                return movementArrowMaterial;
+
+            movementArrowMaterial = new Material(Shader.Find("Sprites/Default"));
+            return movementArrowMaterial;
+        }
+
+        private Sprite GetMovementArrowHeadSprite()
+        {
+            if (movementArrowHeadSprite != null)
+                return movementArrowHeadSprite;
+
+            var texture = CreateMovementArrowHeadTexture();
+            movementArrowHeadSprite = Sprite.Create(
+                texture,
+                new Rect(0, 0, MovementArrowHeadPixelSize, MovementArrowHeadPixelSize),
+                new Vector2(0.5f, 1f),
+                MovementArrowHeadPixelSize / MovementArrowHeadWorldWidth);
+            return movementArrowHeadSprite;
+        }
+
+        private static Texture2D CreateMovementArrowHeadTexture()
+        {
+            var pixels = new Color[MovementArrowHeadPixelSize * MovementArrowHeadPixelSize];
+            var centerX = MovementArrowHeadPixelSize / 2;
+
+            for (var y = 0; y < MovementArrowHeadPixelSize; y++)
+            {
+                for (var x = 0; x < MovementArrowHeadPixelSize; x++)
+                {
+                    var distFromTip = (MovementArrowHeadPixelSize - 1) - y;
+                    var halfWidth = (distFromTip / (float)(MovementArrowHeadPixelSize - 1)) * (centerX - 1);
+                    var filled = Mathf.Abs(x - centerX) <= halfWidth;
+                    pixels[y * MovementArrowHeadPixelSize + x] = filled ? Color.white : Color.clear;
+                }
+            }
+
+            var texture = new Texture2D(MovementArrowHeadPixelSize, MovementArrowHeadPixelSize);
+            texture.filterMode = FilterMode.Point;
+            texture.wrapMode = TextureWrapMode.Clamp;
+            texture.SetPixels(pixels);
+            texture.Apply();
+            return texture;
+        }
+
+        private void CreateCombatBubbles()
+        {
+            if (combatBubbleRoot == null || gameManager?.divisionSystem == null)
+                return;
+
+            foreach (var combat in gameManager.GetActiveGroundCombats().Where(combat => combat != null))
+            {
+                var defenderCell = GetCell(combat.DefendingTileId);
+                if (!hexCentersByCell.TryGetValue(defenderCell, out var defenderCenter))
+                    continue;
+
+                var attackerCenter = GetAverageAttackerCenter(combat);
+                var bubbleCenter = Vector3.Lerp(attackerCenter, defenderCenter, 0.5f) + new Vector3(0f, 0.18f, 0f);
+                var score = CalculateAttackerCombatScore(combat);
+                CreateCombatBubble(combat.DefendingTileId, bubbleCenter, score);
+            }
+        }
+
+        private Vector3 GetAverageAttackerCenter(GroundCombat combat)
+        {
+            var centers = (combat.AttackerDivisionIds ?? new List<Guid>())
+                .Select(divisionId => gameManager.divisionSystem.TryGetDivision(divisionId, out var division)
+                    ? division
+                    : null)
+                .Where(division => division != null)
+                .Select(division => GetCell(division.TileId))
+                .Where(cell => hexCentersByCell.ContainsKey(cell))
+                .Select(cell => hexCentersByCell[cell])
+                .ToList();
+
+            if (centers.Count == 0)
+            {
+                var defenderCell = GetCell(combat.DefendingTileId);
+                return hexCentersByCell.TryGetValue(defenderCell, out var defenderCenter)
+                    ? defenderCenter + new Vector3(-HexHorizontalSpacing, 0f, 0f)
+                    : Vector3.zero;
+            }
+
+            return centers.Aggregate(Vector3.zero, (sum, center) => sum + center) / centers.Count;
+        }
+
+        private int CalculateAttackerCombatScore(GroundCombat combat)
+        {
+            var attackerPower = CalculateSideCombatPower(combat.AttackerDivisionIds);
+            var defenderPower = CalculateSideCombatPower(combat.DefenderDivisionIds);
+            var totalPower = attackerPower + defenderPower;
+
+            if (attackerPower <= 0f)
+                return 0;
+
+            if (defenderPower <= 0f)
+                return 100;
+
+            return Mathf.Clamp(Mathf.RoundToInt((attackerPower / totalPower) * 100f), 0, 100);
+        }
+
+        private float CalculateSideCombatPower(IEnumerable<Guid> divisionIds)
+        {
+            var total = 0f;
+            foreach (var divisionId in divisionIds ?? Enumerable.Empty<Guid>())
+            {
+                if (!gameManager.divisionSystem.TryGetDivision(divisionId, out var division) || division == null)
+                    continue;
+
+                var strengthPercent = division.MaxStrength <= 0
+                    ? 0f
+                    : Mathf.Clamp01(division.Strength / division.MaxStrength);
+                var organizationPercent = division.MaxOrganization <= 0
+                    ? 0f
+                    : Mathf.Clamp01(division.Organization / division.MaxOrganization);
+
+                total += Mathf.Max(0f, division.SoftAttack + division.HardAttack)
+                         * Mathf.Lerp(strengthPercent, organizationPercent, 0.55f);
+            }
+
+            return total;
+        }
+
+        private void CreateCombatBubble(Vector3Int defendingTileId, Vector3 hexCenter, int score)
+        {
+            var bubbleObject = new GameObject($"Combat Bubble {defendingTileId.x},{defendingTileId.y},{defendingTileId.z}");
+            bubbleObject.transform.SetParent(combatBubbleRoot, false);
+            bubbleObject.transform.position = grid.transform.TransformPoint(hexCenter) + new Vector3(0f, 0f, -0.35f);
+
+            var renderer = bubbleObject.AddComponent<SpriteRenderer>();
+            renderer.sprite = GetCombatBubbleSprite(score);
+            renderer.sortingOrder = 30;
+
+            var textObject = new GameObject("Combat Bubble Label");
+            textObject.transform.SetParent(bubbleObject.transform, false);
+            textObject.transform.localPosition = new Vector3(0f, 0f, -0.05f);
+
+            var textMesh = textObject.AddComponent<TextMesh>();
+            textMesh.anchor = TextAnchor.MiddleCenter;
+            textMesh.alignment = TextAlignment.Center;
+            textMesh.characterSize = CombatBubbleLabelCharacterSize;
+            textMesh.fontSize = 28;
+            textMesh.fontStyle = FontStyle.Bold;
+            textMesh.color = Color.white;
+            textMesh.text = score.ToString();
+
+            var textRenderer = textObject.GetComponent<MeshRenderer>();
+            textRenderer.sortingOrder = 31;
+        }
+
+        private Sprite GetCombatBubbleSprite(int score)
+        {
+            score = Mathf.Clamp(score, 0, 100);
+            if (combatBubbleSpritesByScore.TryGetValue(score, out var sprite))
+                return sprite;
+
+            var texture = CreateCombatBubbleTexture(score);
+            sprite = Sprite.Create(
+                texture,
+                new Rect(0, 0, CombatBubblePixelSize, CombatBubblePixelSize),
+                new Vector2(0.5f, 0.5f),
+                CombatBubblePixelSize / CombatBubbleWorldWidth);
+            combatBubbleSpritesByScore[score] = sprite;
+            return sprite;
+        }
+
+        private static Texture2D CreateCombatBubbleTexture(int score)
+        {
+            var pixels = new Color[CombatBubblePixelSize * CombatBubblePixelSize];
+            var center = (CombatBubblePixelSize - 1) * 0.5f;
+            var radius = center - 1f;
+            var fill = GetCombatScoreColor(score);
+            var dark = new Color(0.04f, 0.04f, 0.05f);
+            var highlight = new Color(1f, 1f, 1f, 0.35f);
+
+            for (var y = 0; y < CombatBubblePixelSize; y++)
+            {
+                for (var x = 0; x < CombatBubblePixelSize; x++)
+                {
+                    var distance = Vector2.Distance(new Vector2(x, y), new Vector2(center, center));
+                    var index = y * CombatBubblePixelSize + x;
+                    if (distance > radius)
+                    {
+                        pixels[index] = Color.clear;
+                        continue;
+                    }
+
+                    if (distance > radius - 2f)
+                    {
+                        pixels[index] = dark;
+                        continue;
+                    }
+
+                    var shade = y > center ? -0.08f : 0.05f;
+                    pixels[index] = Blend(AdjustColor(fill, shade, 0f), dark, 0.12f);
+                    if (distance < radius * 0.45f && y < center)
+                        pixels[index] = Blend(pixels[index], highlight, 0.35f);
+                }
+            }
+
+            var texture = new Texture2D(CombatBubblePixelSize, CombatBubblePixelSize);
+            texture.filterMode = FilterMode.Point;
+            texture.wrapMode = TextureWrapMode.Clamp;
+            texture.SetPixels(pixels);
+            texture.Apply();
+            return texture;
+        }
+
+        private static Color GetCombatScoreColor(int score)
+        {
+            var t = Mathf.Clamp01(score / 100f);
+            var losing = new Color(0.70f, 0.18f, 0.16f);
+            var even = new Color(0.84f, 0.70f, 0.22f);
+            var winning = new Color(0.16f, 0.56f, 0.28f);
+            return t < 0.5f
+                ? Color.Lerp(losing, even, t * 2f)
+                : Color.Lerp(even, winning, (t - 0.5f) * 2f);
         }
 
         private Alliance GetDivisionAlliance(Division division)
@@ -1168,6 +1530,52 @@ namespace Engine.Monobehaviours.Managers
 
             for (var i = unitCounterRoot.childCount - 1; i >= 0; i--)
                 Destroy(unitCounterRoot.GetChild(i).gameObject);
+        }
+
+        private void ClearCombatBubbles()
+        {
+            if (combatBubbleRoot == null)
+                return;
+
+            for (var i = combatBubbleRoot.childCount - 1; i >= 0; i--)
+                Destroy(combatBubbleRoot.GetChild(i).gameObject);
+        }
+
+        private void ClearMovementArrows()
+        {
+            if (movementArrowRoot == null)
+                return;
+
+            for (var i = movementArrowRoot.childCount - 1; i >= 0; i--)
+                Destroy(movementArrowRoot.GetChild(i).gameObject);
+        }
+
+        private readonly struct MovementArrowKey
+        {
+            private readonly Vector3Int fromTileId;
+            private readonly Vector3Int toTileId;
+            private readonly Color color;
+
+            public MovementArrowKey(Vector3Int fromTileId, Vector3Int toTileId, Color color)
+            {
+                this.fromTileId = fromTileId;
+                this.toTileId = toTileId;
+                this.color = color;
+            }
+        }
+
+        private sealed class MovementArrowCommand
+        {
+            public readonly Vector3Int FromTileId;
+            public readonly Vector3Int ToTileId;
+            public readonly Color Color;
+
+            public MovementArrowCommand(Vector3Int fromTileId, Vector3Int toTileId, Color color)
+            {
+                FromTileId = fromTileId;
+                ToTileId = toTileId;
+                Color = color;
+            }
         }
 
         private void FrameCamera()

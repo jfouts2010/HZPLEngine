@@ -17,6 +17,8 @@ namespace Engine.Models.Ground
         [SerializeReference]
         public List<GroundCombat> Combats = new List<GroundCombat>();
 
+        public IReadOnlyList<GroundCombat> ActiveCombats => Combats;
+
         private Dictionary<Vector3Int, GroundCombat> combatByDefendingTileId;
         private readonly GameManager gameManager;
         private readonly GroundOperationsSystem groundOperationsSystem;

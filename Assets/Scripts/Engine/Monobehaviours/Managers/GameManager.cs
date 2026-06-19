@@ -122,6 +122,11 @@ namespace Engine.Monobehaviours.Managers
                    && _groundCombatSystem.IsDivisionDefendingInCombat(divisionId);
         }
 
+        public IReadOnlyList<GroundCombat> GetActiveGroundCombats()
+        {
+            return _groundCombatSystem?.ActiveCombats ?? Array.Empty<GroundCombat>();
+        }
+
         public void PauseCampaign()
         {
             IsGamePaused = true;
