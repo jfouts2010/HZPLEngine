@@ -8,7 +8,6 @@ namespace Engine.Models.Ground
     public sealed class GroundOperationsSystem
     {
         private readonly GameManager gameManager;
-        private const float MinimumProgressPerHour = 0.05f;
         private const float CombatPinnedMovementProgressLimit = 0.5f;
 
         public GroundOperationsSystem(GameManager gameManager)
@@ -55,7 +54,10 @@ namespace Engine.Models.Ground
                         moveOrder.CurrentDestinationTileId))
                     continue;
 
-                var progressPerHour = Mathf.Max(MinimumProgressPerHour, division.Speed);
+                var tileDistanceKm = Mathf.Max(
+                    SimulationSettings.MinTileDistanceKM,
+                    gameManager.SimulationSettings?.TileDistanceKM ?? SimulationSettings.DefaultTileDistanceKM);
+                var progressPerHour = Mathf.Max(0f, division.Speed) / tileDistanceKm;
                 if (!moveOrder.IsRetreat && gameManager.IsDivisionAttackingInGroundCombat(division.DivisionId))
                     continue;
 

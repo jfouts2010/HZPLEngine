@@ -346,7 +346,8 @@ namespace Engine.Monobehaviours.Managers
             var copy = new SimulationSettings
             {
                 SimulationTickMinutes = settings.SimulationTickMinutes,
-                OperationalCadenceHours = settings.OperationalCadenceHours
+                OperationalCadenceHours = settings.OperationalCadenceHours,
+                TileDistanceKM = settings.TileDistanceKM
             };
 
             copy.Normalize();
