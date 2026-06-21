@@ -11,6 +11,7 @@ namespace Models.Gameplay.Campaign
 
         // Radius-3 hex disc: 37 tiles (within the 20-40 target).
         private const int HexRadius = 3;
+        private const int DivisionsPerFrontTile = 3;
 
         private static readonly Guid BlueCountryId = TestModule.BlueCountryId;
         private static readonly Guid RedCountryId = TestModule.RedCountryId;
@@ -18,15 +19,27 @@ namespace Models.Gameplay.Campaign
         private static readonly Guid[] BlueFrontDivisionIds =
         {
             Guid.Parse("a4c2e8f1-3b7d-4e91-9f06-1d5a8c2b0473"),
+            Guid.Parse("4aca313d-8ad0-4aa7-bd71-17b0adc3d85c"),
+            Guid.Parse("83924aba-bdba-4e35-85ed-1c1e64609bd7"),
             Guid.Parse("c3d4e5f6-7890-4abc-def1-234567890abc"),
-            Guid.Parse("d4e5f6a7-8901-4bcd-ef12-345678901bcd")
+            Guid.Parse("f4c047bf-4b74-4aa4-bb4b-dcf1abe53254"),
+            Guid.Parse("20981a2a-ba4c-4778-bfe7-fea0fe0b6881"),
+            Guid.Parse("d4e5f6a7-8901-4bcd-ef12-345678901bcd"),
+            Guid.Parse("1b7902f4-3716-4761-b4fe-ed2a2f4d21c3"),
+            Guid.Parse("f6577e75-fed4-4189-8ea6-401dc4f6264e")
         };
 
         private static readonly Guid[] RedFrontDivisionIds =
         {
             Guid.Parse("b8d3f9a2-6c4e-4f12-8a17-2e6b9d3c1584"),
+            Guid.Parse("e4a17cef-7f0e-4748-a88b-f71c42738737"),
+            Guid.Parse("6cd06517-ced0-4a33-ac42-36f21124df1e"),
             Guid.Parse("e5f6a7b8-9012-4cde-f123-456789012cde"),
-            Guid.Parse("f6a7b8c9-0123-4def-0123-567890123def")
+            Guid.Parse("dc41ff3f-ff9c-47ce-918a-4b41d54dfb78"),
+            Guid.Parse("d0692c0c-b5f8-4643-b327-339d06559bd9"),
+            Guid.Parse("f6a7b8c9-0123-4def-0123-567890123def"),
+            Guid.Parse("08edfbcc-222e-4db9-b3d2-852ad0be7d6f"),
+            Guid.Parse("95e65782-7075-4400-925a-d4a0c6f462be")
         };
 
         private static readonly Vector3Int BlueCapitalTileId = new Vector3Int(-3, 3, 0);
@@ -58,7 +71,7 @@ namespace Models.Gameplay.Campaign
                     SimulationTickMinutes = 5,
                     OperationalCadenceHours = 6
                 },
-                ContentHash = "advanced-mechanics-test-campaign-v4",
+                ContentHash = "advanced-mechanics-test-campaign-v5",
                 CountryAllianceAssignments = CreateCountryAllianceAssignments(),
                 Tiles = CreateTiles(),
                 StartingTileData = CreateStartingTileData(),
@@ -179,26 +192,34 @@ namespace Models.Gameplay.Campaign
 
             for (var i = 0; i < BlueFrontTileIds.Length; i++)
             {
-                divisions.Add(new DivisionStartingCondition
+                for (var divisionSlot = 0; divisionSlot < DivisionsPerFrontTile; divisionSlot++)
                 {
-                    DivisionId = BlueFrontDivisionIds[i],
-                    DivisionTemplateId = TestModule.BlueArmoredDivisionTemplateId,
-                    CountryId = BlueCountryId,
-                    TileId = BlueFrontTileIds[i],
-                    Name = $"{i + 1}{GetOrdinalSuffix(i + 1)} Blue Front Division"
-                });
+                    var divisionNumber = i * DivisionsPerFrontTile + divisionSlot + 1;
+                    divisions.Add(new DivisionStartingCondition
+                    {
+                        DivisionId = BlueFrontDivisionIds[divisionNumber - 1],
+                        DivisionTemplateId = TestModule.BlueArmoredDivisionTemplateId,
+                        CountryId = BlueCountryId,
+                        TileId = BlueFrontTileIds[i],
+                        Name = $"{divisionNumber}{GetOrdinalSuffix(divisionNumber)} Blue Front Division"
+                    });
+                }
             }
 
             for (var i = 0; i < RedFrontTileIds.Length; i++)
             {
-                divisions.Add(new DivisionStartingCondition
+                for (var divisionSlot = 0; divisionSlot < DivisionsPerFrontTile; divisionSlot++)
                 {
-                    DivisionId = RedFrontDivisionIds[i],
-                    DivisionTemplateId = TestModule.RedTankDivisionTemplateId,
-                    CountryId = RedCountryId,
-                    TileId = RedFrontTileIds[i],
-                    Name = $"{i + 1}{GetOrdinalSuffix(i + 1)} Red Front Division"
-                });
+                    var divisionNumber = i * DivisionsPerFrontTile + divisionSlot + 1;
+                    divisions.Add(new DivisionStartingCondition
+                    {
+                        DivisionId = RedFrontDivisionIds[divisionNumber - 1],
+                        DivisionTemplateId = TestModule.RedTankDivisionTemplateId,
+                        CountryId = RedCountryId,
+                        TileId = RedFrontTileIds[i],
+                        Name = $"{divisionNumber}{GetOrdinalSuffix(divisionNumber)} Red Front Division"
+                    });
+                }
             }
 
             return divisions;

@@ -126,11 +126,15 @@ _Avoid_: counting every in-progress move through or toward a front tile as defen
 
 _Avoid_: using supply criticality as the general term before supply exists.
 
+Tile strategic value is the shared base value for both offensive target selection and defensive priority. Offense asks whether an enemy tile is worth taking; defense asks whether a friendly front tile is costly to lose.
+
 **Defensive reserve** — a combat-ready friendly division that is available to receive defensive AI orders because it is not the sole physically present defender of a front tile, not already committed to a non-replaceable order, not retreating, and not engaged in ground combat. A division on a front tile may donate to an uncovered front tile only when its source tile has at least one other eligible defender physically present.
 
 _Avoid_: using a projected incoming defender to justify pulling the last physically present defender off a front tile; this can create timing holes and oscillating orders where the original tile immediately requests the same strength back.
 
 **Offensive plan** — the alliance AI's persistent coordination state for one chosen hostile front-adjacent target tile. In v1, an alliance may have at most one active offensive plan at a time, and offense only begins after the front coverage guarantee is satisfied; individual division ground orders record their assigned execution intent, but the plan itself belongs to the alliance AI.
+
+**Offensive feasibility gate** — the minimum projected combat chance an offensive target must satisfy before tile strategic value is considered. Strategic value ranks viable targets; it should not cause the AI to launch attacks it estimates as hopeless.
 
 **Offensive assembly phase** — the phase of an offensive plan where assigned divisions move to friendly staging tiles adjacent to their assigned engagement target. The AI should not issue the coordinated attack until every assigned division is in position and the plan has finished assembly or has been explicitly replanned.
 

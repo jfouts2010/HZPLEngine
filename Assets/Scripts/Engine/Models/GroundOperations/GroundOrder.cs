@@ -7,6 +7,7 @@ namespace Models.Gameplay.Campaign
     public abstract class GroundOrder
     {
         public GroundOrderAssignmentSource AssignmentSource = GroundOrderAssignmentSource.System;
+        public GroundOrderAIIntent AIIntent = GroundOrderAIIntent.None;
         public string Rationale = string.Empty;
         public bool CanBeReplaced = true;
     }
@@ -53,6 +54,19 @@ namespace Models.Gameplay.Campaign
     {
         AI,
         System
+    }
+
+    public enum GroundOrderAIIntent
+    {
+        None,
+        Flex,
+        HoldFront,
+        HoldEdge,
+        RefillFront,
+        Assault,
+        SupportAttack,
+        Pin,
+        OffensiveStaging
     }
 
     public enum MoveGroundOrderPurpose

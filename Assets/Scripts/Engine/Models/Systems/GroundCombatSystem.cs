@@ -35,6 +35,8 @@ namespace Engine.Models.Ground
         {
             ReconcileCombatsFromOrders();
             ReconcileCombatParticipants();
+            CancelSupportAttacksByDefenders();
+            ReconcileCombatParticipants();
             ResolveCombatRounds();
             ReconcileCombatParticipants();
             RemoveInactiveCombats();
@@ -123,6 +125,28 @@ namespace Engine.Models.Ground
         {
             foreach (var combat in Combats.ToList())
                 ResolveCombatRound(combat);
+        }
+
+        private void CancelSupportAttacksByDefenders()
+        {
+            foreach (var combat in Combats.ToList())
+            {
+                foreach (var defenderDivisionId in combat.DefenderDivisionIds.ToList())
+                {
+                    if (!gameManager.divisionSystem.TryGetDivision(defenderDivisionId, out var division))
+                        continue;
+
+                    if (division.CurrentOrder is not SupportAttackGroundOrder)
+                        continue;
+
+                    division.CurrentOrder = new HoldGroundOrder(
+                        GroundOrderAssignmentSource.AI,
+                        "Support attack cancelled by defensive contact")
+                    {
+                        AIIntent = GetHoldIntentForTile(division.TileId)
+                    };
+                }
+            }
         }
 
         private void ResolveCombatRound(GroundCombat combat)
@@ -418,6 +442,28 @@ namespace Engine.Models.Ground
             return division.Strength >= 1f
                    && division.Organization >= 1f
                    && !GroundSystemUtility.IsRetreating(division);
+        }
+
+        private GroundOrderAIIntent GetHoldIntentForTile(Vector3Int tileId)
+        {
+            if (!GroundSystemUtility.TryGetLandTileData(gameManager, tileId, out var landTileData))
+                return GroundOrderAIIntent.None;
+
+            var adjacentHostileTileCount = GroundSystemUtility.GetNeighborTileIds(gameManager, tileId)
+                .Count(neighborTileId => GroundSystemUtility.TryGetLandTileData(
+                                             gameManager,
+                                             neighborTileId,
+                                             out var neighborTileData)
+                                         && GroundSystemUtility.AreHostile(
+                                             landTileData.Controller,
+                                             neighborTileData.Controller));
+
+            if (adjacentHostileTileCount == 0)
+                return GroundOrderAIIntent.Flex;
+
+            return adjacentHostileTileCount == 1
+                ? GroundOrderAIIntent.HoldEdge
+                : GroundOrderAIIntent.HoldFront;
         }
 
         private void RemoveInactiveCombats()
