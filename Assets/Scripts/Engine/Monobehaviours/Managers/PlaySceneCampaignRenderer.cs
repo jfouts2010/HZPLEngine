@@ -59,6 +59,10 @@ namespace Engine.Monobehaviours.Managers
         private const float MovementArrowRouteOffset = 0.16f;
         private const float MovementArrowHeadWorldWidth = 0.18f;
         private const int MovementArrowHeadPixelSize = 18;
+        private const float RailwayLineWidth = 0.05f;
+        private static readonly Color RailwayLineColor = new Color(0.38f, 0.32f, 0.24f);
+        private static readonly Color SupplyHubMarkerColor = new Color(0.88f, 0.58f, 0.10f);
+        private static readonly Color SupplyHubMarkerBorderColor = new Color(0.98f, 0.92f, 0.78f);
         private static readonly Vector3Int[] TerritoryBorderNeighborOffsets =
         {
             new Vector3Int(1, -1, 0),
@@ -82,6 +86,7 @@ namespace Engine.Monobehaviours.Managers
         private Transform unitCounterRoot;
         private Transform combatBubbleRoot;
         private Transform movementArrowRoot;
+        private Transform railwayRoot;
         private Label titleLabel;
         private Label timeLabel;
         private Label selectedTileLabel;
@@ -155,6 +160,7 @@ namespace Engine.Monobehaviours.Managers
             ClearUnitCounters();
             ClearCombatBubbles();
             ClearMovementArrows();
+            ClearRailwayLines();
 
             foreach (var campaignTile in gameManager.CampaignTiles.Where(tile => tile != null))
             {
@@ -175,6 +181,7 @@ namespace Engine.Monobehaviours.Managers
             }
 
             CreateUnitCounters();
+            CreateRailwayLines();
             CreateMovementArrows();
             CreateCombatBubbles();
 
@@ -242,6 +249,13 @@ namespace Engine.Monobehaviours.Managers
                 var arrowObject = new GameObject("Campaign Movement Arrows");
                 arrowObject.transform.SetParent(grid.transform, false);
                 movementArrowRoot = arrowObject.transform;
+            }
+
+            if (railwayRoot == null)
+            {
+                var railwayObject = new GameObject("Campaign Railways");
+                railwayObject.transform.SetParent(grid.transform, false);
+                railwayRoot = railwayObject.transform;
             }
         }
 
@@ -403,6 +417,7 @@ namespace Engine.Monobehaviours.Managers
             var buildingText = buildings.Count == 0
                 ? "No buildings"
                 : string.Join(", ", buildings.Select(building => $"{building.Type} {building.FunctionalLevel}"));
+            var supplyFeatures = GetSupplyFeatureLabel(selectedTile.Coordinates);
 
             selectedTileLabel.text =
                 $"Hex {selectedTile.Coordinates.x}, {selectedTile.Coordinates.y}, {selectedTile.Coordinates.z}\n" +
@@ -410,7 +425,8 @@ namespace Engine.Monobehaviours.Managers
                 $"Settlement: {selectedTile.Urbanization} | Forest: {selectedTile.ForestCover}\n" +
                 $"Control: {controller}\n" +
                 $"Infrastructure: {infrastructure}\n" +
-                buildingText;
+                buildingText +
+                (string.IsNullOrWhiteSpace(supplyFeatures) ? string.Empty : $"\n{supplyFeatures}");
 
             UpdateNeighborsUi();
             UpdateUnitsUi();
@@ -759,6 +775,74 @@ namespace Engine.Monobehaviours.Managers
             headRenderer.sortingOrder = 19;
         }
 
+        private void CreateRailwayLines()
+        {
+            if (railwayRoot == null || gameManager?.buildingSystem == null)
+                return;
+
+            foreach (var campaignTile in gameManager.CampaignTiles.Where(tile => tile != null && tile.Surface == TileSurface.Land))
+            {
+                if (!TileHasRailroad(campaignTile.Coordinates))
+                    continue;
+
+                var fromCell = GetCell(campaignTile.Coordinates);
+                if (!hexCentersByCell.TryGetValue(fromCell, out var fromCenter))
+                    continue;
+
+                for (var sideIndex = 0; sideIndex < TerritoryBorderNeighborOffsets.Length; sideIndex++)
+                {
+                    var neighborId = campaignTile.Coordinates + TerritoryBorderNeighborOffsets[sideIndex];
+                    if (!ShouldDrawRailLink(campaignTile.Coordinates, neighborId) || !TileHasRailroad(neighborId))
+                        continue;
+
+                    var toCell = GetCell(neighborId);
+                    if (!hexCentersByCell.TryGetValue(toCell, out var toCenter))
+                        continue;
+
+                    CreateRailwayLine(fromCenter, toCenter, campaignTile.Coordinates, neighborId);
+                }
+            }
+        }
+
+        private void CreateRailwayLine(Vector3 fromCenter, Vector3 toCenter, Vector3Int fromTileId, Vector3Int toTileId)
+        {
+            var lineObject = new GameObject(
+                $"Railway {fromTileId.x},{fromTileId.y},{fromTileId.z} to {toTileId.x},{toTileId.y},{toTileId.z}");
+            lineObject.transform.SetParent(railwayRoot, false);
+
+            var lineRenderer = lineObject.AddComponent<LineRenderer>();
+            lineRenderer.useWorldSpace = false;
+            lineRenderer.positionCount = 2;
+            lineRenderer.SetPosition(0, fromCenter + new Vector3(0f, 0f, -0.22f));
+            lineRenderer.SetPosition(1, toCenter + new Vector3(0f, 0f, -0.22f));
+            lineRenderer.startWidth = RailwayLineWidth;
+            lineRenderer.endWidth = RailwayLineWidth;
+            lineRenderer.numCapVertices = 2;
+            lineRenderer.material = GetMovementArrowMaterial();
+            lineRenderer.startColor = RailwayLineColor;
+            lineRenderer.endColor = RailwayLineColor;
+            lineRenderer.sortingOrder = 12;
+        }
+
+        private bool TileHasRailroad(Vector3Int tileId)
+        {
+            return gameManager?.buildingSystem != null
+                   && gameManager.buildingSystem
+                       .GetBuildingsOnTile(tileId, BuildingType.Railroad)
+                       .Any(building => building.FunctionalLevel > 0);
+        }
+
+        private static bool ShouldDrawRailLink(Vector3Int fromTileId, Vector3Int toTileId)
+        {
+            if (fromTileId.x != toTileId.x)
+                return fromTileId.x < toTileId.x;
+
+            if (fromTileId.y != toTileId.y)
+                return fromTileId.y < toTileId.y;
+
+            return fromTileId.z < toTileId.z;
+        }
+
         private Material GetMovementArrowMaterial()
         {
             if (movementArrowMaterial != null)
@@ -1042,7 +1126,8 @@ namespace Engine.Monobehaviours.Managers
                 return $"Ocean:{campaignTile.Terrain}";
 
             var borderMask = GetTerritoryBorderMask(campaignTile, controller);
-            return $"Land:{campaignTile.Terrain}:{campaignTile.Urbanization}:{campaignTile.ForestCover}:{controller}:{borderMask}";
+            var supplyOverlay = GetSupplyOverlayKey(campaignTile.Coordinates);
+            return $"Land:{campaignTile.Terrain}:{campaignTile.Urbanization}:{campaignTile.ForestCover}:{controller}:{borderMask}:{supplyOverlay}";
         }
 
         private Sprite GetTileSprite(CampaignTile campaignTile, string key)
@@ -1073,6 +1158,7 @@ namespace Engine.Monobehaviours.Managers
             {
                 ApplyForestCover(pixels, campaignTile.ForestCover);
                 ApplyUrbanization(pixels, campaignTile.Urbanization);
+                ApplySupplyInfrastructure(pixels, campaignTile);
                 DrawTerritoryBorder(pixels, controller, borderMask);
             }
 
@@ -1216,6 +1302,111 @@ namespace Engine.Monobehaviours.Managers
                         }
                     }
                     break;
+            }
+        }
+
+        private void ApplySupplyInfrastructure(Color[] pixels, CampaignTile campaignTile)
+        {
+            if (gameManager?.buildingSystem == null)
+                return;
+
+            var tileId = campaignTile.Coordinates;
+            var hasHub = HasActiveSupplyHub(tileId);
+            var capitalAlliance = TryGetSupplyCapitalAlliance(tileId, out var alliance) ? alliance : Alliance.Neutral;
+
+            if (hasHub)
+                DrawSupplyHubMarker(pixels);
+
+            if (capitalAlliance != Alliance.Neutral)
+                DrawSupplyCapitalMarker(pixels, capitalAlliance);
+        }
+
+        private string GetSupplyOverlayKey(Vector3Int tileId)
+        {
+            var parts = new List<string>();
+            if (HasActiveSupplyHub(tileId))
+                parts.Add("H");
+
+            if (TryGetSupplyCapitalAlliance(tileId, out var alliance))
+                parts.Add($"C:{alliance}");
+
+            return parts.Count == 0 ? "none" : string.Join(",", parts);
+        }
+
+        private bool HasActiveSupplyHub(Vector3Int tileId)
+        {
+            return gameManager?.buildingSystem != null
+                   && gameManager.buildingSystem
+                       .GetBuildingsOnTile(tileId, BuildingType.SupplyHub)
+                       .Any(building => building.FunctionalLevel > 0);
+        }
+
+        private bool TryGetSupplyCapitalAlliance(Vector3Int tileId, out Alliance alliance)
+        {
+            alliance = Alliance.Neutral;
+            if (gameManager?.SupplyCapitals == null)
+                return false;
+
+            var capital = gameManager.SupplyCapitals
+                .FirstOrDefault(candidate => candidate != null && candidate.TileId == tileId);
+            if (capital == null || capital.Alliance == Alliance.Neutral)
+                return false;
+
+            alliance = capital.Alliance;
+            return true;
+        }
+
+        private static void DrawSupplyHubMarker(Color[] pixels)
+        {
+            const int width = 10;
+            const int height = 8;
+            const int x = 11;
+            const int y = 7;
+
+            DrawFilledRect(pixels, x, y, width, height, SupplyHubMarkerBorderColor);
+            DrawFilledRect(pixels, x + 1, y + 1, width - 2, height - 2, SupplyHubMarkerColor);
+            DrawFilledRect(pixels, x + 3, y + 2, 4, 4, SupplyHubMarkerBorderColor);
+        }
+
+        private static void DrawSupplyCapitalMarker(Color[] pixels, Alliance alliance)
+        {
+            var centerX = TilePixelSize / 2;
+            var centerY = TilePixelSize - 8;
+            var fillColor = GetControlColor(alliance);
+            var borderColor = Color.Lerp(fillColor, Color.white, 0.45f);
+
+            DrawFilledDiamond(pixels, centerX, centerY, 6, borderColor);
+            DrawFilledDiamond(pixels, centerX, centerY, 4, fillColor);
+        }
+
+        private static void DrawFilledRect(Color[] pixels, int x, int y, int width, int height, Color color)
+        {
+            for (var py = y; py < y + height && py < TilePixelSize; py++)
+            {
+                for (var px = x; px < x + width && px < TilePixelSize; px++)
+                {
+                    if (px < 0 || py < 0)
+                        continue;
+
+                    pixels[py * TilePixelSize + px] = color;
+                }
+            }
+        }
+
+        private static void DrawFilledDiamond(Color[] pixels, int centerX, int centerY, int radius, Color color)
+        {
+            for (var y = centerY - radius; y <= centerY + radius; y++)
+            {
+                for (var x = centerX - radius; x <= centerX + radius; x++)
+                {
+                    if (x < 0 || y < 0 || x >= TilePixelSize || y >= TilePixelSize)
+                        continue;
+
+                    if (Mathf.Abs(x - centerX) + Mathf.Abs(y - centerY) > radius)
+                        continue;
+
+                    pixels[y * TilePixelSize + x] = color;
+                }
             }
         }
 
@@ -1454,6 +1645,7 @@ namespace Engine.Monobehaviours.Managers
             var buildingCount = gameManager.buildingSystem.GetBuildingsOnTile(campaignTile.Coordinates).Count;
             var coords = campaignTile.Coordinates;
             var hexLine = $"Hex {coords.x},{coords.y},{coords.z}";
+            var supplyFeatures = GetSupplyFeatureLabel(campaignTile.Coordinates);
 
             if (campaignTile.Surface == TileSurface.Ocean)
                 return $"{GetTerrainLabel(campaignTile.Terrain)}\n{hexLine}";
@@ -1478,7 +1670,26 @@ namespace Engine.Monobehaviours.Managers
             if (string.IsNullOrWhiteSpace(detailLine))
                 detailLine = "Open land";
 
-            return $"{controller} {terrain}\n{detailLine}\n{buildings}\n{hexLine}";
+            var label = $"{controller} {terrain}\n{detailLine}\n{buildings}";
+            if (!string.IsNullOrWhiteSpace(supplyFeatures))
+                label += $"\n{supplyFeatures}";
+
+            return $"{label}\n{hexLine}";
+        }
+
+        private string GetSupplyFeatureLabel(Vector3Int tileId)
+        {
+            var features = new List<string>();
+            if (TryGetSupplyCapitalAlliance(tileId, out var alliance))
+                features.Add($"{GetControllerLabel(alliance)} supply capital");
+
+            if (HasActiveSupplyHub(tileId))
+                features.Add("Supply hub");
+
+            if (TileHasRailroad(tileId))
+                features.Add("Railway");
+
+            return features.Count == 0 ? string.Empty : string.Join(" | ", features);
         }
 
         private static string GetControllerLabel(Alliance controller)
@@ -1557,6 +1768,15 @@ namespace Engine.Monobehaviours.Managers
 
             for (var i = movementArrowRoot.childCount - 1; i >= 0; i--)
                 Destroy(movementArrowRoot.GetChild(i).gameObject);
+        }
+
+        private void ClearRailwayLines()
+        {
+            if (railwayRoot == null)
+                return;
+
+            for (var i = railwayRoot.childCount - 1; i >= 0; i--)
+                Destroy(railwayRoot.GetChild(i).gameObject);
         }
 
         private readonly struct MovementArrowKey
