@@ -5,6 +5,7 @@ using Engine.Models.Ground;
 using Engine.Monobehaviours.Managers;
 using Models.Gameplay.Campaign;
 using UnityEngine;
+using Random = UnityEngine.Random;
 
 namespace Engine.Models
 {
@@ -18,11 +19,13 @@ namespace Engine.Models
         private const float OffensiveFeasibilityThreshold = 0.55f;
         private const float CombatUtilityWeight = 0.65f;
         private const float StrategicValueUtilityWeight = 0.35f;
+        private const float OffensivePlanUtilityRandomVariance = 0.2f;
         private const float DefensiveRedeploymentThreatRatio = 1.25f;
         private const float DefensiveStrategicValueThreatWeight = 0.25f;
 
         private readonly GameManager _gameManager;
         private readonly HashSet<Vector3Int> _frontTileIds = new HashSet<Vector3Int>();
+        private Dictionary<Vector3Int, float> _supplyStrategicValueByTileId;
 
         public Alliance Alliance { get; }
         public OffensivePlan ActiveOffensivePlan { get; private set; }
@@ -67,6 +70,8 @@ namespace Engine.Models
 
         internal void AssignMovementOrders()
         {
+            _supplyStrategicValueByTileId = null;
+
             if (!TryGetHostileAlliance(Alliance, out var hostileAlliance))
                 return;
 
@@ -400,8 +405,7 @@ namespace Engine.Models
                 if (estimate.VictoryLikelihood < OffensiveFeasibilityThreshold)
                     continue;
 
-                var utility = estimate.VictoryLikelihood * CombatUtilityWeight
-                              + NormalizeStrategicValue(GetTileStrategicValue(targetTileId)) * StrategicValueUtilityWeight;
+                var utility = GetOffensivePlanUtility(estimate, targetTileId);
                 if (utility <= bestUtility)
                     continue;
 
@@ -1056,12 +1060,30 @@ namespace Engine.Models
                 } * functionalLevel;
             }
 
+            value += GetSupplyStrategicValue(tileId);
             return value;
+        }
+
+        private float GetSupplyStrategicValue(Vector3Int tileId)
+        {
+            _supplyStrategicValueByTileId ??= SupplyStrategicValueService.BuildSupplyStrategicValueLookup(_gameManager);
+            return _supplyStrategicValueByTileId.TryGetValue(tileId, out var value) ? value : 0f;
         }
 
         private static float NormalizeStrategicValue(float value)
         {
             return Mathf.Clamp01(value / 20f);
+        }
+
+        private float GetOffensivePlanUtility(GroundCombatEstimate estimate, Vector3Int targetTileId)
+        {
+            var baseUtility = estimate.VictoryLikelihood * CombatUtilityWeight
+                              + NormalizeStrategicValue(GetTileStrategicValue(targetTileId)) * StrategicValueUtilityWeight;
+            var randomMultiplier = Random.Range(
+                1f - OffensivePlanUtilityRandomVariance,
+                1f + OffensivePlanUtilityRandomVariance);
+
+            return baseUtility * randomMultiplier;
         }
 
         private bool CanReceiveAIOrder(Division division)
