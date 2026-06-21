@@ -183,16 +183,26 @@ namespace Engine.Models
             if (!TryFindBestDefensiveReserve(
                     targetTileId,
                     requireMaterialThreatAdvantage,
+                    false,
                     out var reserve,
-                    out var path))
+                    out var path)
+                && !TryFindBestDefensiveReserve(
+                    targetTileId,
+                    requireMaterialThreatAdvantage,
+                    true,
+                    out reserve,
+                    out path))
                 return false;
 
+            var removedFromOffensive = TryRemoveDivisionFromOffensivePlan(reserve.DivisionId);
             var moveOrder = new MoveGroundOrder
             {
                 AssignmentSource = GroundOrderAssignmentSource.AI,
                 AIIntent = GroundOrderAIIntent.RefillFront,
                 CanBeReplaced = true,
-                Rationale = rationale ?? "Refilling front",
+                Rationale = removedFromOffensive
+                    ? "Detached from viable offensive to refill front"
+                    : rationale ?? "Refilling front",
                 Purpose = MoveGroundOrderPurpose.Normal,
                 Path = path,
                 MovementProgress = 0f
@@ -209,6 +219,7 @@ namespace Engine.Models
         private bool TryFindBestDefensiveReserve(
             Vector3Int targetTileId,
             bool requireMaterialThreatAdvantage,
+            bool allowActiveOffensivePlanAssignments,
             out Division reserve,
             out GroundPath path)
         {
@@ -220,6 +231,11 @@ namespace Engine.Models
             foreach (var candidate in GetAllianceDivisions())
             {
                 if (!IsDefensiveReserve(candidate, targetTileId, requireMaterialThreatAdvantage))
+                    continue;
+
+                if (IsAssignedToActiveOffensivePlan(candidate.DivisionId)
+                    && (!allowActiveOffensivePlanAssignments
+                        || !CanRemoveDivisionFromOffensivePlan(candidate.DivisionId)))
                     continue;
 
                 if (!GroundPathfindingService.TryFindFriendlyPath(
@@ -247,6 +263,41 @@ namespace Engine.Models
             }
 
             return reserve != null && path != null;
+        }
+
+        private bool IsAssignedToActiveOffensivePlan(Guid divisionId)
+        {
+            return ActiveOffensivePlan?.Assignments != null
+                   && ActiveOffensivePlan.Assignments.Any(assignment => assignment.DivisionId == divisionId);
+        }
+
+        private bool CanRemoveDivisionFromOffensivePlan(Guid divisionId)
+        {
+            if (ActiveOffensivePlan == null)
+                return false;
+
+            var remainingAssignments = ActiveOffensivePlan.Assignments
+                .Where(assignment => assignment.DivisionId != divisionId)
+                .ToList();
+
+            if (remainingAssignments.Count == ActiveOffensivePlan.Assignments.Count)
+                return false;
+
+            if (CountAssaultAssignments(remainingAssignments)
+                < CalculateRequiredAssaultDivisionCount(ActiveOffensivePlan.TargetTileId))
+                return false;
+
+            return EstimateAssignments(ActiveOffensivePlan.TargetTileId, remainingAssignments, out var estimate)
+                   && estimate.VictoryLikelihood >= OffensiveFeasibilityThreshold;
+        }
+
+        private bool TryRemoveDivisionFromOffensivePlan(Guid divisionId)
+        {
+            if (!CanRemoveDivisionFromOffensivePlan(divisionId))
+                return false;
+
+            ActiveOffensivePlan.Assignments.RemoveAll(assignment => assignment.DivisionId == divisionId);
+            return true;
         }
 
         private bool IsDefensiveReserve(
