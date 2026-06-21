@@ -92,7 +92,7 @@ namespace Engine.Models.Ground
                 defenders,
                 terrain,
                 assaultIntent,
-                GetCombatDamageScale(gameManager));
+                1f);
             return true;
         }
 
@@ -133,7 +133,7 @@ namespace Engine.Models.Ground
                 defenderDivisions,
                 terrain,
                 assaultIntent,
-                GetDefaultCombatDamageScale());
+                1f);
         }
 
         private static GroundCombatEstimate Estimate(
@@ -487,18 +487,6 @@ namespace Engine.Models.Ground
             return division.MaxStrength <= 0
                 ? 0f
                 : Mathf.Clamp01(division.Strength / division.MaxStrength);
-        }
-
-        private static float GetCombatDamageScale(GameManager gameManager)
-        {
-            var tickMinutes = gameManager.SimulationSettings?.SimulationTickMinutes
-                              ?? SimulationSettings.DefaultSimulationTickMinutes;
-            return tickMinutes / 60f;
-        }
-
-        private static float GetDefaultCombatDamageScale()
-        {
-            return SimulationSettings.DefaultSimulationTickMinutes / 60f;
         }
 
         private static bool IsCombatReady(Division division)

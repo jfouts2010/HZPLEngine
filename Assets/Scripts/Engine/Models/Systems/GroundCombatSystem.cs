@@ -31,14 +31,19 @@ namespace Engine.Models.Ground
             random = new System.Random(0);
         }
 
-        public void GameTurn()
+        public void GameTurn(bool resolveCombatRound)
         {
             ReconcileCombatsFromOrders();
             ReconcileCombatParticipants();
             CancelSupportAttacksByDefenders();
             ReconcileCombatParticipants();
-            ResolveCombatRounds();
-            ReconcileCombatParticipants();
+
+            if (resolveCombatRound)
+            {
+                ResolveCombatRounds();
+                ReconcileCombatParticipants();
+            }
+
             RemoveInactiveCombats();
         }
 
@@ -345,19 +350,11 @@ namespace Engine.Models.Ground
             if (!hit)
                 return;
 
-            var damageScale = GetCombatDamageScale();
-            var strengthDamage = RandomRange(0f, 2f) * 0.05f * damageScale;
-            var organizationDamage = RandomRange(0f, 4f) * 0.053f * damageScale;
+            var strengthDamage = RandomRange(0f, 2f) * 0.05f;
+            var organizationDamage = RandomRange(0f, 4f) * 0.053f;
 
             target.Division.Strength = Mathf.Max(0f, target.Division.Strength - strengthDamage);
             target.Division.Organization = Mathf.Max(0f, target.Division.Organization - organizationDamage);
-        }
-
-        private float GetCombatDamageScale()
-        {
-            var tickMinutes = gameManager.SimulationSettings?.SimulationTickMinutes
-                              ?? SimulationSettings.DefaultSimulationTickMinutes;
-            return tickMinutes / 60f;
         }
 
         private float RandomRange(float minInclusive, float maxExclusive)

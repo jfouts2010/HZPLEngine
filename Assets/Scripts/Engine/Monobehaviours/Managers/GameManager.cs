@@ -178,7 +178,12 @@ namespace Engine.Monobehaviours.Managers
                 _AISystem.OperationalCadenceTurn();
             }
 
-            _groundCombatSystem.GameTurn();
+            var resolveCombatRound = SimulationSettings.CrossedOperationalCadenceBoundary(
+                _campaignStartTime,
+                previousTime,
+                CurrentTime,
+                1);
+            _groundCombatSystem.GameTurn(resolveCombatRound);
             divisionSystem.ApplyOutOfCombatRecovery(
                 elapsedHours,
                 _groundCombatSystem.IsDivisionEngagedInCombat);
