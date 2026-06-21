@@ -40,6 +40,30 @@ namespace Models.Gameplay.Campaign
             }
         }
 
+        public void ApplyCombatSupplyPenalties(
+            float elapsedHours,
+            Func<Guid, bool> isDivisionEngagedInCombat,
+            Func<Guid, float> getSupplyRatio,
+            Func<Division, bool> canApplySupplyEffect)
+        {
+            if (elapsedHours <= 0f || isDivisionEngagedInCombat == null || getSupplyRatio == null)
+                return;
+
+            foreach (var division in Divisions)
+            {
+                if (division == null)
+                    continue;
+
+                if (!isDivisionEngagedInCombat(division.DivisionId))
+                    continue;
+
+                if (canApplySupplyEffect != null && !canApplySupplyEffect(division))
+                    continue;
+
+                ApplyCombatSupplyPenalty(division, elapsedHours, getSupplyRatio(division.DivisionId));
+            }
+        }
+
         private static void ApplyRecovery(Division division, float elapsedHours, float supplyRatio)
         {
             var supplyEffect = ((Mathf.Clamp01(supplyRatio) - 0.5f) * 2f);
@@ -64,6 +88,22 @@ namespace Models.Gameplay.Campaign
                     division.MaxOrganization,
                     organizationDelta);
             }
+        }
+
+        private static void ApplyCombatSupplyPenalty(Division division, float elapsedHours, float supplyRatio)
+        {
+            var supplyEffect = ((Mathf.Clamp01(supplyRatio) - 0.5f) * 2f);
+            if (supplyEffect >= 0f || division.MaxOrganization <= 0)
+                return;
+
+            var organizationDelta = division.MaxOrganization
+                                    * OrganizationRecoveryPerMaxOrganizationPerHour
+                                    * elapsedHours
+                                    * supplyEffect;
+            division.Organization = ApplySupplyDelta(
+                division.Organization,
+                division.MaxOrganization,
+                organizationDelta);
         }
 
         private static float ApplySupplyDelta(float currentValue, int maxValue, float delta)
@@ -140,7 +180,10 @@ namespace Models.Gameplay.Campaign
                 .ToList();
 
             foreach (var division in divisions)
+            {
                 division.CurrentOrder ??= new HoldGroundOrder();
+                division.EnsureSupplyStore();
+            }
 
             divisionsByTileId = divisions
                 .GroupBy(division => division.TileId)

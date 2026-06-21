@@ -190,7 +190,12 @@ namespace Engine.Monobehaviours.Managers
                 1);
             _groundCombatSystem.GameTurn(resolveCombatRound);
             _groundOperationsSystem.GameTurn(elapsedHours);
-            _supplySystem.GameTurn();
+            _supplySystem.GameTurn(elapsedHours);
+            divisionSystem.ApplyCombatSupplyPenalties(
+                elapsedHours,
+                _groundCombatSystem.IsDivisionEngagedInCombat,
+                _supplySystem.GetSupplyRatio,
+                division => division?.CurrentOrder is not MoveGroundOrder { Purpose: MoveGroundOrderPurpose.Retreat });
             divisionSystem.ApplyOutOfCombatRecovery(
                 elapsedHours,
                 _groundCombatSystem.IsDivisionEngagedInCombat,

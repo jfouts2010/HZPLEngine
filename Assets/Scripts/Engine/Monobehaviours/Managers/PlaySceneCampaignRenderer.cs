@@ -535,8 +535,9 @@ namespace Engine.Monobehaviours.Managers
 
             var organizationPercent = GetDivisionStatPercent(division.Organization, division.MaxOrganization);
             var strengthPercent = GetDivisionStatPercent(division.Strength, division.MaxStrength);
+            var supplyPercent = GetDivisionSupplyStorePercent(division);
             var stats = new Label(
-                $"Org {organizationPercent}% | Strength {strengthPercent}% | Speed {division.Speed:0.#}");
+                $"Org {organizationPercent}% | Strength {strengthPercent}% | Supply {supplyPercent}% | Speed {division.Speed:0.#}");
             stats.AddToClassList("campaign-hud-unit-stat");
             ApplyRuntimeFont(stats);
 
@@ -550,6 +551,14 @@ namespace Engine.Monobehaviours.Managers
             return maxValue <= 0
                 ? 0
                 : Mathf.Clamp(Mathf.RoundToInt((currentValue / maxValue) * 100f), 0, 100);
+        }
+
+        private static int GetDivisionSupplyStorePercent(Division division)
+        {
+            if (division == null || division.MaxSupplyStore <= 0f)
+                return 100;
+
+            return Mathf.Clamp(Mathf.RoundToInt((division.SupplyStore / division.MaxSupplyStore) * 100f), 0, 100);
         }
 
         private Label CreateNeighborMessage(string message)

@@ -24,6 +24,8 @@ namespace Models.Gameplay.Campaign
         public int CombatWidth { get; private set; }
         public float SupplyConsumption { get; private set; }
         public float FuelConsumption { get; private set; }
+        public float MaxSupplyStore { get; private set; }
+        public float SupplyStore { get; set; }
         public float Organization { get; set; }
         public float Strength { get; set; }
 
@@ -58,11 +60,24 @@ namespace Models.Gameplay.Campaign
             CombatWidth = fullStrengthStats.CombatWidth;
             SupplyConsumption = fullStrengthStats.SupplyConsumption;
             FuelConsumption = fullStrengthStats.FuelConsumption;
+            MaxSupplyStore = CalculateMaxSupplyStore(SupplyConsumption);
+            SupplyStore = MaxSupplyStore;
             Organization = MaxOrganization;
             Strength = MaxStrength;
             CurrentOrder = new HoldGroundOrder(
                 GroundOrderAssignmentSource.System,
                 "Initial deployment");
+        }
+
+        public void EnsureSupplyStore()
+        {
+            MaxSupplyStore = CalculateMaxSupplyStore(SupplyConsumption);
+            SupplyStore = Mathf.Clamp(SupplyStore, 0f, MaxSupplyStore);
+        }
+
+        private static float CalculateMaxSupplyStore(float supplyConsumption)
+        {
+            return Mathf.Max(0f, supplyConsumption) * 5f;
         }
     }
 }
