@@ -242,6 +242,44 @@ In a later phase, **tile owner** (original or legal affiliation, fixed at campai
 
 _Avoid_: using “owner” in v1 data or rules when tile control is the sole authority.
 
+### Supply capital
+
+The designated alliance-level land tile that acts as the source of that alliance's supply network. In v1, a supply capital is a tile designation rather than a building, and it belongs to an alliance rather than a country.
+
+_Avoid_: using "capitol" for this concept; a capitol is a building, while a capital is a source location.
+
+### Supply network
+
+The alliance-controlled land connection through which supply can flow from a supply capital to supply hubs and onward to divisions. In v1, supply may only use land tiles controlled by the same alliance as the supply capital and supplied divisions, and each tile on a rail path, including the capital and hub endpoint tiles, must contain a functional Railroad building.
+
+_Avoid_: allowing supply to pass through hostile- or neutral-controlled land just because a railroad or supply hub exists there.
+
+### Hub distribution
+
+The local spread of supply from a supply hub to nearby divisions through same-alliance controlled land tiles. In v1, hub distribution is based on hex path distance through same-alliance controlled land tiles rather than tile infrastructure: full effect within 2 tiles, three-quarter effect at 3 tiles, half effect at 4 tiles, and no effect beyond 4 tiles.
+
+When multiple hubs can reach a tile, divisions on that tile draw from the single best hub, chosen by highest supply amount after distance falloff, and hub effects do not stack. A hub's supply is shared by all divisions drawing supply from that hub, whether those divisions occupy the same tile or different tiles. Hub distribution cannot supply hostile- or neutral-controlled tiles in v1.
+
+When divisions drawing from the same hub demand more supply than the hub can provide, the shortage is allocated proportionally across those divisions.
+
+**Supply ratio** is a division's allocated supply divided by its supply consumption, clamped from zero to one.
+
+**Supply effect** is the continuous effect of a division's supply ratio on out-of-combat strength and organization recovery. It applies to divisions that are stationary or under ordinary movement, but not to active combat participants or retreating divisions in v1. Full supply gives normal recovery, half supply is neutral, and zero supply turns the normal recovery amount into decay; supply-driven decay cannot reduce strength or organization below 1.
+
+Supply network state and division supply ratios are recalculated every game turn.
+
+### Hub supply
+
+The amount of supply a supply hub can make available before local distribution to divisions. Hub supply is determined from the hub's effective hub level, but that level is a lookup value rather than the supply amount itself.
+
+**Effective hub level** is the SupplyHub building's functional level capped by the lowest Railroad functional level on the best rail path from the supply capital to that hub. A level 10 SupplyHub supplied through a rail path whose weakest functional Railroad is level 3 functions as a level 3 hub.
+
+The best rail path is the path that gives the highest effective hub level. Path distance is ignored except as a deterministic tiebreaker between paths with the same effective hub level.
+
+If a SupplyHub cannot trace any valid rail path to its alliance's supply capital, it provides zero supply in v1.
+
+_Avoid_: assuming a level 10 SupplyHub provides exactly 10 supply.
+
 ### Front
 
 For a given alliance, the **front** is the set of land tiles **controlled by that alliance** that share a hex edge with at least one land tile controlled by a **hostile** alliance. Front membership is derived from current tile control and static tile neighbors; it is not authored on the campaign template.
@@ -353,6 +391,8 @@ Lightweight ground resolution that may run on most simulation ticks when opposin
 ### Tick resolution order
 
 Within each simulation tick, resolution order should stay deterministic. Air picture, air execution, air-to-ground effects, active ground combat, and ground movement progress participate every tick. Expensive ground planning and order assignment run only on ticks that fall on a ground operational cadence boundary.
+
+Supply recalculation happens after ground movement and tile capture for the game turn, and supply recovery or decay uses that freshly recalculated supply state.
 
 ### Air planning cadence
 

@@ -492,11 +492,11 @@ namespace Engine.Models
             if (!TryChooseStagingTile(division, stagingTiles, out stagingTileId, out path))
                 return false;
 
-            intent = needsAssaultAssignment && !IsSupportOnlyOffensiveCandidate(division)
+            intent = needsAssaultAssignment && !IsSupportOnlyOffensiveCandidate(division, targetTileId)
                 ? GroundOrderAIIntent.Assault
                 : GroundOrderAIIntent.SupportAttack;
 
-            if (CanAssignOffensivePlanRole(division, intent, stagingTileId, departingDivisionIds))
+            if (CanAssignOffensivePlanRole(division, intent, stagingTileId, targetTileId, departingDivisionIds))
                 return true;
 
             if (!CanSupportAttackFromCurrentTile(division, targetTileId))
@@ -512,12 +512,16 @@ namespace Engine.Models
             Division division,
             GroundOrderAIIntent intent,
             Vector3Int stagingTileId,
+            Vector3Int targetTileId,
             ISet<Guid> departingDivisionIds)
         {
             if (!DoesOffensiveAssignmentDepartCurrentTile(division, intent, stagingTileId))
                 return true;
 
             if (!_frontTileIds.Contains(division.TileId))
+                return true;
+
+            if (DoesCapturingTargetRemoveSourceFromFront(division.TileId, targetTileId))
                 return true;
 
             return CountAvailablePhysicalDefendersForSourceTile(
@@ -574,11 +578,17 @@ namespace Engine.Models
             }
         }
 
-        private static bool IsSupportOnlyOffensiveCandidate(Division division)
+        private bool IsSupportOnlyOffensiveCandidate(Division division, Vector3Int targetTileId)
         {
-            return division?.CurrentOrder is HoldGroundOrder
-                   && (division.CurrentOrder.AIIntent == GroundOrderAIIntent.HoldFront
-                       || division.CurrentOrder.AIIntent == GroundOrderAIIntent.HoldEdge);
+            if (division?.CurrentOrder is not HoldGroundOrder)
+                return false;
+
+            if (division.CurrentOrder.AIIntent == GroundOrderAIIntent.HoldEdge
+                && DoesCapturingTargetRemoveSourceFromFront(division.TileId, targetTileId))
+                return false;
+
+            return division.CurrentOrder.AIIntent == GroundOrderAIIntent.HoldFront
+                   || division.CurrentOrder.AIIntent == GroundOrderAIIntent.HoldEdge;
         }
 
         private void AddPinAssignments(
@@ -598,7 +608,7 @@ namespace Engine.Models
             {
                 var candidate = GetOffensiveCandidates(pinTarget)
                     .FirstOrDefault(division => !usedDivisionIds.Contains(division.DivisionId)
-                                                && !IsSupportOnlyOffensiveCandidate(division));
+                                                && !IsSupportOnlyOffensiveCandidate(division, pinTarget));
                 if (candidate == null)
                     continue;
 
@@ -606,7 +616,12 @@ namespace Engine.Models
                 if (!TryChooseStagingTile(candidate, pinStagingTiles, out var stagingTileId, out var path))
                     continue;
 
-                if (!CanAssignOffensivePlanRole(candidate, GroundOrderAIIntent.Pin, stagingTileId, departingDivisionIds))
+                if (!CanAssignOffensivePlanRole(
+                        candidate,
+                        GroundOrderAIIntent.Pin,
+                        stagingTileId,
+                        pinTarget,
+                        departingDivisionIds))
                     continue;
 
                 assignments.Add(new OffensivePlanAssignment(
@@ -808,6 +823,12 @@ namespace Engine.Models
                 if (!_frontTileIds.Contains(division.TileId))
                     continue;
 
+                if (DoesCapturingTargetRemoveSourceFromFront(division.TileId, assignment.EngagementTileId))
+                {
+                    departingDivisionIds.Add(division.DivisionId);
+                    continue;
+                }
+
                 var projectedDepartingDivisionIds = new HashSet<Guid>(departingDivisionIds)
                 {
                     division.DivisionId
@@ -826,6 +847,9 @@ namespace Engine.Models
 
         private int CalculateRequiredAssaultDivisionCount(Vector3Int targetTileId)
         {
+            if (!HasHostilePhysicalDefender(targetTileId))
+                return 1;
+
             var desired = MinAssaultDivisionsPerOffensiveTarget;
 
             if (GetAdjacentHostileDivisions(targetTileId).Count() >= 3)
@@ -1086,6 +1110,22 @@ namespace Engine.Models
                                              neighborTileId,
                                              out var landTileData)
                                          && landTileData.Controller == hostileAlliance);
+        }
+
+        private bool DoesCapturingTargetRemoveSourceFromFront(Vector3Int sourceTileId, Vector3Int targetTileId)
+        {
+            if (!_frontTileIds.Contains(sourceTileId))
+                return false;
+
+            if (!GroundSystemUtility.AreNeighbors(_gameManager, sourceTileId, targetTileId))
+                return false;
+
+            if (!IsHostileControlledLandTile(targetTileId))
+                return false;
+
+            return GetNeighborTileIds(sourceTileId)
+                .Where(neighborTileId => neighborTileId != targetTileId)
+                .All(neighborTileId => !IsHostileControlledLandTile(neighborTileId));
         }
 
         private bool IsFriendlyControlledLandTile(Vector3Int tileId)

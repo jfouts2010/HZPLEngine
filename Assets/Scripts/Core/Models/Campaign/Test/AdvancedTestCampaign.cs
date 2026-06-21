@@ -71,10 +71,11 @@ namespace Models.Gameplay.Campaign
                     SimulationTickMinutes = 5,
                     OperationalCadenceHours = 6
                 },
-                ContentHash = "advanced-mechanics-test-campaign-v5",
+                ContentHash = "advanced-mechanics-test-campaign-v6",
                 CountryAllianceAssignments = CreateCountryAllianceAssignments(),
                 Tiles = CreateTiles(),
                 StartingTileData = CreateStartingTileData(),
+                SupplyCapitals = CreateSupplyCapitals(),
                 BuildingStartingConditions = CreateBuildingStartingConditions(),
                 DivisionStartingConditions = CreateDivisionStartingConditions()
             };
@@ -90,6 +91,15 @@ namespace Models.Gameplay.Campaign
                 new CountryAllianceAssignment { CountryId = BlueCountryId, Alliance = Alliance.Bluefor },
                 new CountryAllianceAssignment { CountryId = RedCountryId, Alliance = Alliance.Redfor },
                 new CountryAllianceAssignment { CountryId = NeutralCountryId, Alliance = Alliance.Neutral }
+            };
+        }
+
+        private static List<SupplyCapitalStartingCondition> CreateSupplyCapitals()
+        {
+            return new List<SupplyCapitalStartingCondition>
+            {
+                new SupplyCapitalStartingCondition { Alliance = Alliance.Bluefor, TileId = BlueCapitalTileId },
+                new SupplyCapitalStartingCondition { Alliance = Alliance.Redfor, TileId = RedCapitalTileId }
             };
         }
 
@@ -177,12 +187,27 @@ namespace Models.Gameplay.Campaign
             {
                 CreateBuilding("c1a9f4e2-8d3b-4c17-a6f0-2e7b91d4c308", BlueCapitalTileId, BuildingType.Factory, 7),
                 CreateBuilding("d2b0a5f3-9e4c-4d28-b701-3f8ca2e5d419", BlueCapitalTileId, BuildingType.Airport, 5),
+                CreateBuilding("6c69a6d3-1b42-4f3a-8b42-06b5f601e86f", BlueCapitalTileId, BuildingType.Railroad, 8),
+                CreateBuilding("3bf75c64-7ba8-4ed6-9f9e-1c4d9c2266ce", BlueCapitalTileId, BuildingType.SupplyHub, 8),
                 CreateBuilding("e3c1b6a4-0f5d-4e39-c812-4a9db3f6e52a", BluePortTileId, BuildingType.Port, 4),
+                CreateBuilding("0b3f2aa6-61b7-4b2f-9d80-5aee3d844f91", BluePortTileId, BuildingType.Railroad, 6),
+                CreateBuilding("eb695aca-92bd-4e3d-a8b5-d61cb1f6b28e", new Vector3Int(-1, 2, -1), BuildingType.Railroad, 5),
+                CreateBuilding("e8fd115d-a93a-4649-95f3-364d5d986a9d", BlueFrontTileIds[0], BuildingType.Railroad, 4),
+                CreateBuilding("6b442e5a-9b54-424f-90fc-f4a27a9b8ed9", BlueFrontTileIds[1], BuildingType.Railroad, 4),
+                CreateBuilding("9a11758f-a4ac-4758-91df-a8c793ff55ae", BlueFrontTileIds[1], BuildingType.SupplyHub, 4),
+                CreateBuilding("1be9955d-4d8b-4b7c-8f03-29b8f6d9aabd", BlueFrontTileIds[2], BuildingType.Railroad, 3),
                 CreateBuilding("f4d2c7b5-1a6e-4f4a-d923-5b0ec407f63b", NeutralHubTileId, BuildingType.SupplyHub, 5),
                 CreateBuilding("a5e3d8c6-2b7f-405b-e034-6c1fd518074c", BlueFrontTileIds[1], BuildingType.Fort, 3),
                 CreateBuilding("b6f4e9d7-3c8a-416c-f145-7d2ae629185d", RedCapitalTileId, BuildingType.PowerPlant, 4),
+                CreateBuilding("8f6b7125-5ab8-4791-93be-a3ccdcf823ad", RedCapitalTileId, BuildingType.Railroad, 8),
+                CreateBuilding("8ef77ba7-1ca4-4898-8f8e-afbcbe173d11", RedCapitalTileId, BuildingType.SupplyHub, 8),
                 CreateBuilding("c7a5f0e8-4d9b-427d-0256-8e3bf73a296e", RedRefineryTileId, BuildingType.Refinery, 3),
-                CreateBuilding("d8b6a1f9-5e0c-438e-1367-9f4c084b3a7f", RedFrontTileIds[1], BuildingType.Railroad, 3)
+                CreateBuilding("c85658f6-45d4-4b4a-a64f-3e1a10f59991", RedRefineryTileId, BuildingType.Railroad, 6),
+                CreateBuilding("8b036491-6c29-432d-98b5-c70fb9326712", new Vector3Int(2, 0, -2), BuildingType.Railroad, 5),
+                CreateBuilding("a963e4f6-96f8-413c-b092-1d6f435f1fc0", RedFrontTileIds[0], BuildingType.Railroad, 4),
+                CreateBuilding("d8b6a1f9-5e0c-438e-1367-9f4c084b3a7f", RedFrontTileIds[1], BuildingType.Railroad, 4),
+                CreateBuilding("b8056bb0-5fb5-4d09-b9d4-a4585c43f0f7", RedFrontTileIds[1], BuildingType.SupplyHub, 4),
+                CreateBuilding("2f40d216-7eb7-4362-8f31-d519a6a2d585", RedFrontTileIds[2], BuildingType.Railroad, 3)
             };
         }
 

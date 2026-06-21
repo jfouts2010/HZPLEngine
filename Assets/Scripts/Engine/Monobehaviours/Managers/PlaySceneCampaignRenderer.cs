@@ -517,14 +517,23 @@ namespace Engine.Monobehaviours.Managers
             name.AddToClassList("campaign-hud-unit-name");
             ApplyRuntimeFont(name);
 
+            var organizationPercent = GetDivisionStatPercent(division.Organization, division.MaxOrganization);
+            var strengthPercent = GetDivisionStatPercent(division.Strength, division.MaxStrength);
             var stats = new Label(
-                $"Org {Mathf.RoundToInt(100)}% | Strength {Mathf.RoundToInt(100)}% | Speed {division.Speed:0.#}");
+                $"Org {organizationPercent}% | Strength {strengthPercent}% | Speed {division.Speed:0.#}");
             stats.AddToClassList("campaign-hud-unit-stat");
             ApplyRuntimeFont(stats);
 
             card.Add(name);
             card.Add(stats);
             return card;
+        }
+
+        private static int GetDivisionStatPercent(float currentValue, int maxValue)
+        {
+            return maxValue <= 0
+                ? 0
+                : Mathf.Clamp(Mathf.RoundToInt((currentValue / maxValue) * 100f), 0, 100);
         }
 
         private Label CreateNeighborMessage(string message)

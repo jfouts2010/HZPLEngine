@@ -38,6 +38,7 @@ namespace Models.Gameplay.Campaign
                 CountryAllianceAssignments = CreateCountryAllianceAssignments(),
                 Tiles = CreateTiles(),
                 StartingTileData = CreateStartingTileData(),
+                SupplyCapitals = CreateSupplyCapitals(),
                 BuildingStartingConditions = CreateBuildingStartingConditions(),
                 DivisionStartingConditions = CreateDivisionStartingConditions()
             };
@@ -53,6 +54,15 @@ namespace Models.Gameplay.Campaign
                 new CountryAllianceAssignment { CountryId = BlueCountryId, Alliance = Alliance.Bluefor },
                 new CountryAllianceAssignment { CountryId = RedCountryId, Alliance = Alliance.Redfor },
                 new CountryAllianceAssignment { CountryId = NeutralCountryId, Alliance = Alliance.Neutral }
+            };
+        }
+
+        private static List<SupplyCapitalStartingCondition> CreateSupplyCapitals()
+        {
+            return new List<SupplyCapitalStartingCondition>
+            {
+                new SupplyCapitalStartingCondition { Alliance = Alliance.Bluefor, TileId = BlueCapitalTileId },
+                new SupplyCapitalStartingCondition { Alliance = Alliance.Redfor, TileId = RedMountainTileId }
             };
         }
 
@@ -160,11 +170,15 @@ namespace Models.Gameplay.Campaign
             {
                 CreateBuilding("eeed9ddf-c652-4cb4-a98b-38848ff10088", BlueCapitalTileId, BuildingType.Factory, 7),
                 CreateBuilding("6ffcc54e-747e-487e-9885-dfdb60add354", BlueCapitalTileId, BuildingType.Airport, 5, 1),
+                CreateBuilding("3b4ded37-85f0-4958-ae42-f7a30e694447", BlueCapitalTileId, BuildingType.Railroad, 8),
+                CreateBuilding("4c5b3c77-1ea2-42d9-9c5a-bc23d4a2b11e", BlueCapitalTileId, BuildingType.SupplyHub, 8),
                 CreateBuilding("0f102fc4-c2cd-4ca8-b4f3-b3c2dfb7e1d4", BluePortTileId, BuildingType.Port, 6),
                 CreateBuilding("20bc594a-5599-4df1-896c-819908cd082f", BluePortTileId, BuildingType.Refinery, 4),
                 CreateBuilding("f8ca8166-caba-4d24-ac8c-896127b0ec91", NeutralHubTileId, BuildingType.SupplyHub, 5),
                 CreateBuilding("873f8560-bf69-47ae-b82f-e1f8b3e989c4", RedBorderTileId, BuildingType.Fort, 3, 1),
                 CreateBuilding("31ab8776-4af7-4533-b19f-fc0d4eaf060f", RedBorderTileId, BuildingType.Railroad, 4),
+                CreateBuilding("698495e7-14f6-4d58-9569-3f076ae419ab", RedMountainTileId, BuildingType.Railroad, 6),
+                CreateBuilding("33421d61-a7dd-42fe-b069-f65cd0295c62", RedMountainTileId, BuildingType.SupplyHub, 6),
                 CreateBuilding("d30ad13b-82a8-4f4c-a990-08614182716d", RedMountainTileId, BuildingType.PowerPlant, 2)
             };
         }

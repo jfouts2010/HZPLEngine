@@ -16,9 +16,13 @@ namespace Models.Gameplay.Campaign
         private const float StrengthRecoveryFractionOfMaxPerDay = 0.2f;
         private const float OrganizationRecoveryPerMaxOrganizationPerHour = 0.03f;
 
-        public void ApplyOutOfCombatRecovery(float elapsedHours, Func<Guid, bool> isDivisionEngagedInCombat)
+        public void ApplyOutOfCombatRecovery(
+            float elapsedHours,
+            Func<Guid, bool> isDivisionEngagedInCombat,
+            Func<Guid, float> getSupplyRatio,
+            Func<Division, bool> canApplySupplyEffect)
         {
-            if (elapsedHours <= 0f || isDivisionEngagedInCombat == null)
+            if (elapsedHours <= 0f || isDivisionEngagedInCombat == null || getSupplyRatio == null)
                 return;
 
             foreach (var division in Divisions)
@@ -29,27 +33,45 @@ namespace Models.Gameplay.Campaign
                 if (isDivisionEngagedInCombat(division.DivisionId))
                     continue;
 
-                ApplyRecovery(division, elapsedHours);
+                if (canApplySupplyEffect != null && !canApplySupplyEffect(division))
+                    continue;
+
+                ApplyRecovery(division, elapsedHours, getSupplyRatio(division.DivisionId));
             }
         }
 
-        private static void ApplyRecovery(Division division, float elapsedHours)
+        private static void ApplyRecovery(Division division, float elapsedHours, float supplyRatio)
         {
-            if (division.Strength < division.MaxStrength && division.MaxStrength > 0)
+            var supplyEffect = ((Mathf.Clamp01(supplyRatio) - 0.5f) * 2f);
+
+            if (division.MaxStrength > 0)
             {
-                var strengthGain = division.MaxStrength
-                                   * StrengthRecoveryFractionOfMaxPerDay
-                                   * (elapsedHours / 24f);
-                division.Strength = Mathf.Min(division.MaxStrength, division.Strength + strengthGain);
+                var strengthDelta = division.MaxStrength
+                                    * StrengthRecoveryFractionOfMaxPerDay
+                                    * (elapsedHours / 24f)
+                                    * supplyEffect;
+                division.Strength = ApplySupplyDelta(division.Strength, division.MaxStrength, strengthDelta);
             }
 
-            if (division.Organization < division.MaxOrganization && division.MaxOrganization > 0)
+            if (division.MaxOrganization > 0)
             {
-                var organizationGain = division.MaxOrganization
-                                         * OrganizationRecoveryPerMaxOrganizationPerHour
-                                         * elapsedHours;
-                division.Organization = Mathf.Min(division.MaxOrganization, division.Organization + organizationGain);
+                var organizationDelta = division.MaxOrganization
+                                        * OrganizationRecoveryPerMaxOrganizationPerHour
+                                        * elapsedHours
+                                        * supplyEffect;
+                division.Organization = ApplySupplyDelta(
+                    division.Organization,
+                    division.MaxOrganization,
+                    organizationDelta);
             }
+        }
+
+        private static float ApplySupplyDelta(float currentValue, int maxValue, float delta)
+        {
+            if (delta >= 0f)
+                return Mathf.Min(maxValue, currentValue + delta);
+
+            return Mathf.Max(1f, currentValue + delta);
         }
 
         public List<Division> GetDivisionsOnTile(Vector3Int tileId)

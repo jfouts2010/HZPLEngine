@@ -33,9 +33,11 @@ namespace Engine.Monobehaviours.Managers
         public CampaignTemplate CampaignTemplate { get; private set; }
         public List<Tile> CampaignTiles = new List<Tile>();
         [SerializeReference] public List<TileData> Tiles = new List<TileData>();
+        public List<SupplyCapitalStartingCondition> SupplyCapitals = new List<SupplyCapitalStartingCondition>();
         private AISystem _AISystem;
         private GroundCombatSystem _groundCombatSystem;
         private GroundOperationsSystem _groundOperationsSystem;
+        private SupplySystem _supplySystem;
         public BuildingSystem buildingSystem = new BuildingSystem();
         public DivisionSystem divisionSystem = new DivisionSystem();
 
@@ -81,6 +83,7 @@ namespace Engine.Monobehaviours.Managers
             SimulationSettings = CopySimulationSettings(template.SimulationSettings);
             CampaignTiles = CopyTiles(template.Tiles);
             Tiles = CopyTileData(template.StartingTileData);
+            SupplyCapitals = CopySupplyCapitals(template.SupplyCapitals);
             buildingSystem = new BuildingSystem
             {
                 Buildings = CreateRuntimeBuildings(template.BuildingStartingConditions)
@@ -94,6 +97,8 @@ namespace Engine.Monobehaviours.Managers
             _AISystem = new AISystem(this);
             _groundOperationsSystem = new GroundOperationsSystem(this);
             _groundCombatSystem = new GroundCombatSystem(this, _groundOperationsSystem);
+            _supplySystem = new SupplySystem(this);
+            _supplySystem.GameTurn();
             _AISystem.OperationalCadenceTurn();
             IsGamePaused = false;
             _campaignStarted = true;
@@ -184,10 +189,13 @@ namespace Engine.Monobehaviours.Managers
                 CurrentTime,
                 1);
             _groundCombatSystem.GameTurn(resolveCombatRound);
+            _groundOperationsSystem.GameTurn(elapsedHours);
+            _supplySystem.GameTurn();
             divisionSystem.ApplyOutOfCombatRecovery(
                 elapsedHours,
-                _groundCombatSystem.IsDivisionEngagedInCombat);
-            _groundOperationsSystem.GameTurn(elapsedHours);
+                _groundCombatSystem.IsDivisionEngagedInCombat,
+                _supplySystem.GetSupplyRatio,
+                division => division?.CurrentOrder is not MoveGroundOrder { Purpose: MoveGroundOrderPurpose.Retreat });
             GameTurnCompleted?.Invoke();
         }
 
@@ -208,6 +216,19 @@ namespace Engine.Monobehaviours.Managers
                 {
                     CountryId = assignment.CountryId,
                     Alliance = assignment.Alliance
+                })
+                .ToList();
+        }
+
+        private static List<SupplyCapitalStartingCondition> CopySupplyCapitals(
+            List<SupplyCapitalStartingCondition> supplyCapitals)
+        {
+            return (supplyCapitals ?? new List<SupplyCapitalStartingCondition>())
+                .Where(supplyCapital => supplyCapital != null)
+                .Select(supplyCapital => new SupplyCapitalStartingCondition
+                {
+                    Alliance = supplyCapital.Alliance,
+                    TileId = supplyCapital.TileId
                 })
                 .ToList();
         }
