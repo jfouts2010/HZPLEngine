@@ -188,6 +188,9 @@ namespace Engine.Monobehaviours.Managers
                 previousTime,
                 CurrentTime,
                 1);
+            if (resolveCombatRound)
+                _AISystem.CombatCadenceTurn();
+
             _groundCombatSystem.GameTurn(resolveCombatRound);
             _groundOperationsSystem.GameTurn(elapsedHours);
             _supplySystem.GameTurn(elapsedHours);

@@ -142,6 +142,8 @@ _Avoid_: using a projected incoming defender to justify pulling the last physica
 
 **Offensive replan** — the cancellation of an active offensive plan so the alliance AI can choose a fresh target and assignments on a later planning pass. In v1, an unavailable assigned division, invalid staging tile, invalid target, or failed feasibility check causes the whole offensive plan to abort rather than substituting individual divisions mid-plan.
 
+**Late offensive assist** — an hourly combat-cadence check during an active offensive attack phase that may add newly available friendly divisions as support attackers only when they are already on friendly-controlled tiles adjacent to the target tile. Late assists add local combat help without reopening assembly or pulling distant reserves into the offensive.
+
 **Current order** — the one active ground order carried by a division at a given moment. Every runtime division should have exactly one current order; when an order completes, the system assigns a default hold/no-action order rather than leaving the division without order state.
 
 **Move order** — a movement ground order for a division to relocate toward a final destination tile through a current movement target tile. Combat is not the intended responsibility of a move order, though ground operation rules may still need to resolve what happens if hostile contact interrupts or blocks the move.

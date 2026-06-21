@@ -90,6 +90,50 @@ namespace Engine.Models
             ReconcileOffensivePlan(hostileAlliance);
         }
 
+        internal void AssignAvailableAdjacentOffensiveAssists()
+        {
+            if (ActiveOffensivePlan == null || ActiveOffensivePlan.Phase != OffensivePlanPhase.Attack)
+                return;
+
+            if (IsOffensivePlanComplete())
+            {
+                ActiveOffensivePlan = null;
+                return;
+            }
+
+            if (!IsOffensivePlanValid(ActiveOffensivePlan, out var invalidReason))
+            {
+                AbortOffensivePlan(invalidReason);
+                return;
+            }
+
+            var targetTileId = ActiveOffensivePlan.TargetTileId;
+            var assignedDivisionIds = ActiveOffensivePlan.Assignments
+                .Select(assignment => assignment.DivisionId)
+                .ToHashSet();
+
+            foreach (var candidate in GetAdjacentOffensiveAssistCandidates(targetTileId, assignedDivisionIds))
+            {
+                ActiveOffensivePlan.Assignments.Add(new OffensivePlanAssignment(
+                    candidate.DivisionId,
+                    GroundOrderAIIntent.SupportAttack,
+                    candidate.TileId,
+                    targetTileId,
+                    GroundPath.FromSingleTile(candidate.TileId)));
+
+                candidate.CurrentOrder = new SupportAttackGroundOrder
+                {
+                    AssignmentSource = GroundOrderAssignmentSource.AI,
+                    AIIntent = GroundOrderAIIntent.SupportAttack,
+                    CanBeReplaced = true,
+                    Rationale = "Late support for active offensive plan",
+                    TargetTileId = targetTileId
+                };
+
+                assignedDivisionIds.Add(candidate.DivisionId);
+            }
+        }
+
         private void AssignIdleDivisionIntents(Alliance hostileAlliance)
         {
             var assignedHoldersByTileId = new Dictionary<Vector3Int, int>();
@@ -554,6 +598,22 @@ namespace Engine.Models
         {
             return GetAllianceDivisions()
                 .Where(division => IsEligibleForOffense(division, targetTileId))
+                .OrderByDescending(GroundCombatEstimationService.CalculateDivisionCombatPower)
+                .ThenBy(division => division.DivisionId);
+        }
+
+        private IEnumerable<Division> GetAdjacentOffensiveAssistCandidates(
+            Vector3Int targetTileId,
+            ISet<Guid> assignedDivisionIds)
+        {
+            return GetAllianceDivisions()
+                .Where(division => division != null
+                                   && (assignedDivisionIds == null
+                                       || !assignedDivisionIds.Contains(division.DivisionId))
+                                   && IsEligibleForOffense(division, targetTileId)
+                                   && IsFriendlyControlledLandTile(division.TileId)
+                                   && GroundSystemUtility.AreNeighbors(_gameManager, division.TileId, targetTileId)
+                                   && CanSupportAttackFromCurrentTile(division, targetTileId))
                 .OrderByDescending(GroundCombatEstimationService.CalculateDivisionCombatPower)
                 .ThenBy(division => division.DivisionId);
         }

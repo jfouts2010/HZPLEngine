@@ -33,5 +33,13 @@ namespace Engine.Models
             _blueForAI.AssignMovementOrders();
             _redForAI.AssignMovementOrders();
         }
+
+        public void CombatCadenceTurn()
+        {
+            _blueForAI.RefreshFront();
+            _redForAI.RefreshFront();
+            _blueForAI.AssignAvailableAdjacentOffensiveAssists();
+            _redForAI.AssignAvailableAdjacentOffensiveAssists();
+        }
     }
 }
