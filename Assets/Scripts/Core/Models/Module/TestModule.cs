@@ -49,8 +49,28 @@ namespace Models.Module
         {
             return new List<AircraftTypeDefinition>
             {
-                new AircraftTypeDefinition(F16AircraftTypeId, "F-16C Fighting Falcon"),
-                new AircraftTypeDefinition(Mig29AircraftTypeId, "MiG-29 Fulcrum")
+                new AircraftTypeDefinition(
+                    F16AircraftTypeId,
+                    "F-16C Fighting Falcon",
+                    cruiseSpeedKph: 850f,
+                    combatSpeedKph: 980f,
+                    rangeKm: 1400f,
+                    enduranceHours: 2.4f,
+                    preferredAltitudeBand: AircraftPreferredAltitudeBand.Medium,
+                    radarQuality: 0.7f,
+                    ecmQuality: 0.55f,
+                    survivability: 0.65f),
+                new AircraftTypeDefinition(
+                    Mig29AircraftTypeId,
+                    "MiG-29 Fulcrum",
+                    cruiseSpeedKph: 900f,
+                    combatSpeedKph: 1050f,
+                    rangeKm: 1100f,
+                    enduranceHours: 2.0f,
+                    preferredAltitudeBand: AircraftPreferredAltitudeBand.High,
+                    radarQuality: 0.78f,
+                    ecmQuality: 0.45f,
+                    survivability: 0.7f)
             };
         }
 
