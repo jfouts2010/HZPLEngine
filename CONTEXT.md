@@ -180,13 +180,13 @@ _Avoid_: using a projected incoming defender to justify pulling the last physica
 
 ### Air formations
 
-**Aircraft type** — reusable authored capability data for one aircraft model or variant available to a specific module country. Aircraft type definitions are Module catalog items and may carry a third-party ID for sim export.
+**Aircraft type** — reusable authored identity data for one aircraft model or variant in a Module catalog. Aircraft type definitions are not country-scoped; a campaign template gives an aircraft type to a country by creating a squadron for that country that uses the aircraft type. In v1, an aircraft type carries only its definition ID, name, and an opaque string third-party ID.
 
 _Avoid_: using "airframe" for the Module catalog concept; in this project, airframe can sound like a physical aircraft body, a flight-model implementation, or an individual tail.
 
-**Squadron** — the campaign air formation that owns aircraft inventory for one aircraft type and is based at a starting airport. Squadrons do not require third-party IDs; their aircraft type and airport references provide the mappable simulator entities when sorties are exported.
+**Squadron** — the campaign air formation that owns aircraft inventory for one aircraft type and is based at a starting airport building instance. Squadrons do not require third-party IDs; their aircraft type and airport references provide the mappable simulator entities when sorties are exported.
 
-**Squadron starting condition** — a campaign-template entry that creates one starting squadron at turn zero. It references a module country, aircraft type, and starting airport, and records starting aircraft inventory.
+**Squadron starting condition** — a campaign-template entry that creates one starting squadron at turn zero. It references a module country, aircraft type, and starting airport building ID, and records the squadron's starting aircraft count. Starting squadrons are assumed to have all aircraft ready; missing, damaged, or unavailable aircraft belong to later runtime state.
 
 _Avoid_: adding air wings before a rule or authoring workflow needs an organizational layer above squadrons.
 

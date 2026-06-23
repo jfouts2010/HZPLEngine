@@ -11,6 +11,7 @@ namespace Models.Module
         public string GameName { get; }
         public ISimAdapter SimAdapter { get; }
         public List<CountryDefinition> Countries { get; }
+        public List<AircraftTypeDefinition> AircraftTypeDefinitions { get; }
         public List<BattalionDefinition> BattalionDefinitions { get; }
         public List<DivisionTemplate> DivisionTemplates { get; }
 
@@ -21,6 +22,7 @@ namespace Models.Module
             string gameName,
             ISimAdapter simAdapter = null,
             List<CountryDefinition> countries = null,
+            List<AircraftTypeDefinition> aircraftTypeDefinitions = null,
             List<BattalionDefinition> battalionDefinitions = null,
             List<DivisionTemplate> divisionTemplates = null)
         {
@@ -33,6 +35,7 @@ namespace Models.Module
             GameName = string.IsNullOrWhiteSpace(gameName) ? DisplayName : gameName.Trim();
             SimAdapter = simAdapter ?? new NoOpSimAdapter();
             Countries = countries ?? new List<CountryDefinition>();
+            AircraftTypeDefinitions = aircraftTypeDefinitions ?? new List<AircraftTypeDefinition>();
             BattalionDefinitions = battalionDefinitions ?? new List<BattalionDefinition>();
             DivisionTemplates = divisionTemplates ?? new List<DivisionTemplate>();
         }

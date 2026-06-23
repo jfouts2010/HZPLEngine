@@ -15,6 +15,9 @@ namespace Models.Module
         public static readonly Guid RedMotorRifleBattalionId = Guid.Parse("9e1716ea-1d90-42ea-806d-1c93cc1cdf22");
         public static readonly Guid RedTankBattalionId = Guid.Parse("ebd352b3-dc92-463d-a3cf-73e8c6de1cd2");
 
+        public static readonly Guid F16AircraftTypeId = Guid.Parse("5084422f-4014-46be-88aa-215a927fc48e");
+        public static readonly Guid Mig29AircraftTypeId = Guid.Parse("12e89ecf-ac2e-4329-a21e-55f0fb0666f0");
+
         public static readonly Guid BlueArmoredDivisionTemplateId = Guid.Parse("4153b384-6e76-42df-a1e5-d54582022bee");
         public static readonly Guid RedTankDivisionTemplateId = Guid.Parse("2d4ecc7e-8285-4b8b-9281-00cccbf5d2e8");
 
@@ -27,6 +30,7 @@ namespace Models.Module
                 "HZPL Engine",
                 new NoOpSimAdapter(),
                 CreateCountries(),
+                CreateAircraftTypeDefinitions(),
                 CreateBattalionDefinitions(),
                 CreateDivisionTemplates());
         }
@@ -38,6 +42,15 @@ namespace Models.Module
                 new CountryDefinition(BlueCountryId, "Blue Republic"),
                 new CountryDefinition(RedCountryId, "Red Federation"),
                 new CountryDefinition(NeutralCountryId, "Neutral State")
+            };
+        }
+
+        private static List<AircraftTypeDefinition> CreateAircraftTypeDefinitions()
+        {
+            return new List<AircraftTypeDefinition>
+            {
+                new AircraftTypeDefinition(F16AircraftTypeId, "F-16C Fighting Falcon"),
+                new AircraftTypeDefinition(Mig29AircraftTypeId, "MiG-29 Fulcrum")
             };
         }
 

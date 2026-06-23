@@ -22,6 +22,7 @@ namespace Models.Gameplay.Campaign
         public List<SupplyCapitalStartingCondition> SupplyCapitals = new List<SupplyCapitalStartingCondition>();
         public List<BuildingStartingCondition> BuildingStartingConditions = new List<BuildingStartingCondition>();
         public List<DivisionStartingCondition> DivisionStartingConditions = new List<DivisionStartingCondition>();
+        public List<SquadronStartingCondition> SquadronStartingConditions = new List<SquadronStartingCondition>();
         
         public CampaignTemplate()
         {

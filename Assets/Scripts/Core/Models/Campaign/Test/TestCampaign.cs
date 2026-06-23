@@ -15,6 +15,10 @@ namespace Models.Gameplay.Campaign
         private static readonly Guid BlueDivisionId = Guid.Parse("2fa9789e-af9a-489f-8ec0-7a2f8d7c0039");
         private static readonly Guid BlueReserveDivisionId = Guid.Parse("f1e7e0ac-0e8d-4d1a-a6c1-00c8a883bb42");
         private static readonly Guid RedDivisionId = Guid.Parse("713f4192-5ed1-4cb5-b399-8d5c5786dc0a");
+        private static readonly Guid BlueSquadronId = Guid.Parse("375ea7d0-87ba-4487-b3a3-30484ff65dca");
+        private static readonly Guid RedSquadronId = Guid.Parse("f4ed5ed1-af8b-4cf6-8e76-6ec555d1dd42");
+        private static readonly Guid BlueCapitalAirportBuildingId = Guid.Parse("6ffcc54e-747e-487e-9885-dfdb60add354");
+        private static readonly Guid RedMountainAirportBuildingId = Guid.Parse("b4b155a0-f165-478d-9805-05a29baabf07");
 
         private static readonly Vector3Int BlueCapitalTileId = new Vector3Int(0, 0, 0);
         private static readonly Vector3Int BluePortTileId = new Vector3Int(1, -1, 0);
@@ -40,7 +44,8 @@ namespace Models.Gameplay.Campaign
                 StartingTileData = CreateStartingTileData(),
                 SupplyCapitals = CreateSupplyCapitals(),
                 BuildingStartingConditions = CreateBuildingStartingConditions(),
-                DivisionStartingConditions = CreateDivisionStartingConditions()
+                DivisionStartingConditions = CreateDivisionStartingConditions(),
+                SquadronStartingConditions = CreateSquadronStartingConditions()
             };
 
             template.RebuildDerivedData();
@@ -169,7 +174,7 @@ namespace Models.Gameplay.Campaign
             return new List<BuildingStartingCondition>
             {
                 CreateBuilding("eeed9ddf-c652-4cb4-a98b-38848ff10088", BlueCapitalTileId, BuildingType.Factory, 7),
-                CreateBuilding("6ffcc54e-747e-487e-9885-dfdb60add354", BlueCapitalTileId, BuildingType.Airport, 5, 1),
+                CreateBuilding(BlueCapitalAirportBuildingId.ToString(), BlueCapitalTileId, BuildingType.Airport, 5, 1),
                 CreateBuilding("3b4ded37-85f0-4958-ae42-f7a30e694447", BlueCapitalTileId, BuildingType.Railroad, 8),
                 CreateBuilding("4c5b3c77-1ea2-42d9-9c5a-bc23d4a2b11e", BlueCapitalTileId, BuildingType.SupplyHub, 8),
                 CreateBuilding("0f102fc4-c2cd-4ca8-b4f3-b3c2dfb7e1d4", BluePortTileId, BuildingType.Port, 6),
@@ -178,6 +183,7 @@ namespace Models.Gameplay.Campaign
                 CreateBuilding("873f8560-bf69-47ae-b82f-e1f8b3e989c4", RedBorderTileId, BuildingType.Fort, 3, 1),
                 CreateBuilding("31ab8776-4af7-4533-b19f-fc0d4eaf060f", RedBorderTileId, BuildingType.Railroad, 4),
                 CreateBuilding("698495e7-14f6-4d58-9569-3f076ae419ab", RedMountainTileId, BuildingType.Railroad, 6),
+                CreateBuilding(RedMountainAirportBuildingId.ToString(), RedMountainTileId, BuildingType.Airport, 4),
                 CreateBuilding("33421d61-a7dd-42fe-b069-f65cd0295c62", RedMountainTileId, BuildingType.SupplyHub, 6),
                 CreateBuilding("d30ad13b-82a8-4f4c-a990-08614182716d", RedMountainTileId, BuildingType.PowerPlant, 2)
             };
@@ -210,6 +216,31 @@ namespace Models.Gameplay.Campaign
                     CountryId = RedCountryId,
                     TileId = RedMountainTileId,
                     Name = "1st Red Tank Division"
+                }
+            };
+        }
+
+        private static List<SquadronStartingCondition> CreateSquadronStartingConditions()
+        {
+            return new List<SquadronStartingCondition>
+            {
+                new SquadronStartingCondition
+                {
+                    SquadronId = BlueSquadronId,
+                    CountryId = BlueCountryId,
+                    AircraftTypeDefinitionId = TestModule.F16AircraftTypeId,
+                    StartingAirportBuildingId = BlueCapitalAirportBuildingId,
+                    AircraftCount = 18,
+                    Name = "1st Blue Fighter Squadron"
+                },
+                new SquadronStartingCondition
+                {
+                    SquadronId = RedSquadronId,
+                    CountryId = RedCountryId,
+                    AircraftTypeDefinitionId = TestModule.Mig29AircraftTypeId,
+                    StartingAirportBuildingId = RedMountainAirportBuildingId,
+                    AircraftCount = 16,
+                    Name = "1st Red Fighter Squadron"
                 }
             };
         }
