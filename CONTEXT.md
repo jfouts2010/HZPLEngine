@@ -178,6 +178,18 @@ _Avoid_: using a projected incoming defender to justify pulling the last physica
 
 **Division starting condition** — a campaign-template entry that places one starting division instance on a tile at turn zero. It references a module division template, a module country, and a starting tile; it does not duplicate the division's derived combat stats.
 
+### Air formations
+
+**Aircraft type** — reusable authored capability data for one aircraft model or variant available to a specific module country. Aircraft type definitions are Module catalog items and may carry a third-party ID for sim export.
+
+_Avoid_: using "airframe" for the Module catalog concept; in this project, airframe can sound like a physical aircraft body, a flight-model implementation, or an individual tail.
+
+**Squadron** — the campaign air formation that owns aircraft inventory for one aircraft type and is based at a starting airport. Squadrons do not require third-party IDs; their aircraft type and airport references provide the mappable simulator entities when sorties are exported.
+
+**Squadron starting condition** — a campaign-template entry that creates one starting squadron at turn zero. It references a module country, aircraft type, and starting airport, and records starting aircraft inventory.
+
+_Avoid_: adding air wings before a rule or authoring workflow needs an organizational layer above squadrons.
+
 ### Campaign template
 
 What an author creates in the campaign editor after choosing a Module. A campaign template defines the starting premise for play under that Module. The Module is fixed for the lifetime of an edit session; it cannot be changed while editing an open template.
