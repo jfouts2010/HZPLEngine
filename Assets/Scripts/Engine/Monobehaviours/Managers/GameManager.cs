@@ -40,6 +40,7 @@ namespace Engine.Monobehaviours.Managers
         private SupplySystem _supplySystem;
         public BuildingSystem buildingSystem = new BuildingSystem();
         public DivisionSystem divisionSystem = new DivisionSystem();
+        public SquadronSystem squadronSystem = new SquadronSystem();
 
         private Coroutine GameTurnCoroutine = null;
         private bool _campaignStarted;
@@ -94,6 +95,11 @@ namespace Engine.Monobehaviours.Managers
                 Divisions = CreateRuntimeDivisions(template.DivisionStartingConditions, activeModule)
             };
             divisionSystem.RebuildIndex();
+            squadronSystem = new SquadronSystem
+            {
+                Squadrons = CreateRuntimeSquadrons(template.SquadronStartingConditions, activeModule)
+            };
+            squadronSystem.RebuildIndex();
             _AISystem = new AISystem(this);
             _groundOperationsSystem = new GroundOperationsSystem(this);
             _groundCombatSystem = new GroundCombatSystem(this, _groundOperationsSystem);
@@ -363,6 +369,38 @@ namespace Engine.Monobehaviours.Managers
 
             var fullStrengthStats = divisionTemplate.CalculateFullStrengthStats(battalionDefinitions);
             return new Division(startingCondition, fullStrengthStats);
+        }
+
+        private static List<Squadron> CreateRuntimeSquadrons(
+            List<SquadronStartingCondition> startingConditions,
+            ModuleDefinition module)
+        {
+            if (module == null)
+                throw new ArgumentNullException(nameof(module));
+
+            var aircraftTypeDefinitions = module.AircraftTypeDefinitions
+                .Where(aircraftType => aircraftType != null)
+                .ToDictionary(aircraftType => aircraftType.AircraftTypeDefinitionId);
+
+            return (startingConditions ?? new List<SquadronStartingCondition>())
+                .Where(startingCondition => startingCondition != null)
+                .Select(startingCondition => CreateRuntimeSquadron(
+                    startingCondition,
+                    aircraftTypeDefinitions))
+                .ToList();
+        }
+
+        private static Squadron CreateRuntimeSquadron(
+            SquadronStartingCondition startingCondition,
+            IReadOnlyDictionary<Guid, AircraftTypeDefinition> aircraftTypeDefinitions)
+        {
+            if (!aircraftTypeDefinitions.ContainsKey(startingCondition.AircraftTypeDefinitionId))
+            {
+                throw new KeyNotFoundException(
+                    $"Aircraft type definition {startingCondition.AircraftTypeDefinitionId} was not found in the active module.");
+            }
+
+            return new Squadron(startingCondition);
         }
 
         private static BuildingLevel CopyBuildingLevel(BuildingLevel level)
