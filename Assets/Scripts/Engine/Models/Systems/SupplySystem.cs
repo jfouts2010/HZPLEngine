@@ -177,7 +177,6 @@ namespace Engine.Models
         private Dictionary<Vector3Int, List<Vector3Int>> BuildNeighborLookup()
         {
             return (gameManager.CampaignTiles ?? new List<Tile>())
-                .Where(tile => tile != null)
                 .GroupBy(tile => tile.Coordinates)
                 .ToDictionary(
                     group => group.Key,

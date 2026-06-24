@@ -75,7 +75,6 @@ namespace Models.Gameplay.Campaign
         public void RebuildIndex()
         {
             var mobileSites = (MobileSamSites ?? new List<MobileSamSite>())
-                .Where(site => site != null)
                 .ToList();
 
             mobileSitesById = mobileSites

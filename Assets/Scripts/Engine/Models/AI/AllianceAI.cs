@@ -607,9 +607,7 @@ namespace Engine.Models
             ISet<Guid> assignedDivisionIds)
         {
             return GetAllianceDivisions()
-                .Where(division => division != null
-                                   && (assignedDivisionIds == null
-                                       || !assignedDivisionIds.Contains(division.DivisionId))
+                .Where(division => assignedDivisionIds.Contains(division.DivisionId)
                                    && IsEligibleForOffense(division, targetTileId)
                                    && IsFriendlyControlledLandTile(division.TileId)
                                    && GroundSystemUtility.AreNeighbors(_gameManager, division.TileId, targetTileId)

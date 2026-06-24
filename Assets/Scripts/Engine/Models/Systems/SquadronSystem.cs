@@ -30,7 +30,6 @@ namespace Models.Gameplay.Campaign
         public void RebuildIndex()
         {
             var squadrons = (Squadrons ?? new List<Squadron>())
-                .Where(squadron => squadron != null)
                 .ToList();
 
             squadronsById = squadrons

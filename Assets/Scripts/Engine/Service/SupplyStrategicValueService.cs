@@ -343,7 +343,6 @@ namespace Engine.Models
         private static Dictionary<Vector3Int, List<Vector3Int>> BuildNeighborLookup(GameManager gameManager)
         {
             return (gameManager.CampaignTiles ?? new List<Tile>())
-                .Where(tile => tile != null)
                 .GroupBy(tile => tile.Coordinates)
                 .ToDictionary(
                     group => group.Key,

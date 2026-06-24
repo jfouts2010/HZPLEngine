@@ -23,13 +23,12 @@ namespace Models.Gameplay.Campaign
                 return;
 
             var tilesByCoordinate = tiles
-                .Where(tile => tile != null)
                 .GroupBy(tile => tile.Coordinates)
                 .Where(group => group.Count() == 1)
                 .Select(group => group.First())
                 .ToDictionary(tile => tile.Coordinates);
 
-            foreach (var tile in tiles.Where(tile => tile != null))
+            foreach (var tile in tiles)
             {
                 tile.NeighborTileIds = CubeNeighborOffsets
                     .Select(offset => tile.Coordinates + offset)
@@ -50,7 +49,7 @@ namespace Models.Gameplay.Campaign
             if (tiles == null)
                 return errors;
 
-            var concreteTiles = tiles.Where(tile => tile != null).ToList();
+            var concreteTiles = tiles.ToList();
             foreach (var tile in concreteTiles.Where(tile => !IsValidCubeCoordinate(tile.Coordinates)))
                 errors.Add($"Tile {tile.Coordinates} has invalid cube coordinates {tile.Coordinates}.");
 

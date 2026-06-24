@@ -150,10 +150,10 @@ namespace Engine.Monobehaviours.Managers
             tilesById.Clear();
             tileDataById.Clear();
 
-            foreach (var tileData in gameManager.Tiles.Where(tileData => tileData != null))
+            foreach (var tileData in gameManager.Tiles)
                 tileDataById[tileData.TileId] = tileData;
 
-            foreach (var campaignTile in gameManager.CampaignTiles.Where(tile => tile != null))
+            foreach (var campaignTile in gameManager.CampaignTiles)
                 tilesById[campaignTile.Coordinates] = campaignTile;
 
             ClearLabels();
@@ -162,7 +162,7 @@ namespace Engine.Monobehaviours.Managers
             ClearMovementArrows();
             ClearRailwayLines();
 
-            foreach (var campaignTile in gameManager.CampaignTiles.Where(tile => tile != null))
+            foreach (var campaignTile in gameManager.CampaignTiles)
             {
                 var cell = GetCell(campaignTile.Coordinates);
                 var hexCenter = GetHexCenter(campaignTile.Coordinates);
@@ -594,7 +594,6 @@ namespace Engine.Monobehaviours.Managers
                 return;
 
             foreach (var group in gameManager.divisionSystem.Divisions
-                         .Where(division => division != null)
                          .GroupBy(division => division.TileId))
             {
                 var cell = GetCell(group.Key);
@@ -687,7 +686,7 @@ namespace Engine.Monobehaviours.Managers
         private IEnumerable<MovementArrowCommand> GetMovementArrowCommands()
         {
             var commands = new List<MovementArrowCommand>();
-            foreach (var division in gameManager.divisionSystem.Divisions.Where(division => division != null))
+            foreach (var division in gameManager.divisionSystem.Divisions)
             {
                 if (division.CurrentOrder is not MoveGroundOrder moveOrder)
                     continue;
@@ -789,7 +788,7 @@ namespace Engine.Monobehaviours.Managers
             if (railwayRoot == null || gameManager?.buildingSystem == null)
                 return;
 
-            foreach (var campaignTile in gameManager.CampaignTiles.Where(tile => tile != null && tile.Surface == TileSurface.Land))
+            foreach (var campaignTile in gameManager.CampaignTiles.Where(tile => tile.Surface == TileSurface.Land))
             {
                 if (!TileHasRailroad(campaignTile.Coordinates))
                     continue;
@@ -904,7 +903,7 @@ namespace Engine.Monobehaviours.Managers
             if (combatBubbleRoot == null || gameManager?.divisionSystem == null)
                 return;
 
-            foreach (var combat in gameManager.GetActiveGroundCombats().Where(combat => combat != null))
+            foreach (var combat in gameManager.GetActiveGroundCombats())
             {
                 var defenderCell = GetCell(combat.DefendingTileId);
                 if (!hexCentersByCell.TryGetValue(defenderCell, out var defenderCenter))
@@ -923,7 +922,6 @@ namespace Engine.Monobehaviours.Managers
                 .Select(divisionId => gameManager.divisionSystem.TryGetDivision(divisionId, out var division)
                     ? division
                     : null)
-                .Where(division => division != null)
                 .Select(division => GetCell(division.TileId))
                 .Where(cell => hexCentersByCell.ContainsKey(cell))
                 .Select(cell => hexCentersByCell[cell])

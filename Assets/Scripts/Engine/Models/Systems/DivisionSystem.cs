@@ -176,7 +176,6 @@ namespace Models.Gameplay.Campaign
         public void RebuildIndex()
         {
             var divisions = (Divisions ?? new List<Division>())
-                .Where(division => division != null)
                 .ToList();
 
             foreach (var division in divisions)

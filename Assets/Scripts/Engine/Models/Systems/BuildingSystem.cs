@@ -46,12 +46,10 @@ namespace Models.Gameplay.Campaign
         public void RebuildIndex()
         {
             buildingsByTileId = (Buildings ?? new List<Building>())
-                .Where(building => building != null)
                 .GroupBy(building => building.TileId)
                 .ToDictionary(group => group.Key, group => group.ToList());
 
             buildingsById = (Buildings ?? new List<Building>())
-                .Where(building => building != null)
                 .GroupBy(building => building.BuildingId)
                 .ToDictionary(group => group.Key, group => group.First());
         }

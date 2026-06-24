@@ -227,7 +227,6 @@ namespace Engine.Monobehaviours.Managers
         {
             return (startingTileData ?? new List<TileData>())
                 .Select(CopyTileData)
-                .Where(tileData => tileData != null)
                 .ToList();
         }
 
@@ -235,7 +234,6 @@ namespace Engine.Monobehaviours.Managers
             List<CountryAllianceAssignment> assignments)
         {
             return (assignments ?? new List<CountryAllianceAssignment>())
-                .Where(assignment => assignment != null)
                 .Select(assignment => new CountryAllianceAssignment
                 {
                     CountryId = assignment.CountryId,
@@ -263,7 +261,6 @@ namespace Engine.Monobehaviours.Managers
             List<SupplyCapitalStartingCondition> supplyCapitals)
         {
             return (supplyCapitals ?? new List<SupplyCapitalStartingCondition>())
-                .Where(supplyCapital => supplyCapital != null)
                 .Select(supplyCapital => new SupplyCapitalStartingCondition
                 {
                     Alliance = supplyCapital.Alliance,
@@ -275,7 +272,6 @@ namespace Engine.Monobehaviours.Managers
         private static List<Tile> CopyTiles(List<Tile> tiles)
         {
             return (tiles ?? new List<Tile>())
-                .Where(tile => tile != null)
                 .Select(CopyTile)
                 .ToList();
         }
@@ -296,6 +292,9 @@ namespace Engine.Monobehaviours.Managers
 
         private static TileData CopyTileData(TileData data)
         {
+            if (data == null)
+                throw new ArgumentNullException(nameof(data));
+
             if (data is LandTileData landData)
             {
                 return new LandTileData
@@ -315,7 +314,10 @@ namespace Engine.Monobehaviours.Managers
                 };
             }
 
-            return null;
+            throw new ArgumentOutOfRangeException(
+                nameof(data),
+                data,
+                $"Unsupported tile data type {data.GetType().Name}.");
         }
 
         private static List<Building> CreateRuntimeBuildings(
@@ -326,15 +328,12 @@ namespace Engine.Monobehaviours.Managers
                 throw new ArgumentNullException(nameof(module));
 
             var samSiteTemplates = module.SamSiteTemplates
-                .Where(template => template != null)
                 .ToDictionary(template => template.SamSiteTemplateId);
 
             var samComponentDefinitions = module.SamComponentDefinitions
-                .Where(definition => definition != null)
                 .ToDictionary(definition => definition.SamComponentDefinitionId);
 
             return (startingConditions ?? new List<BuildingStartingCondition>())
-                .Where(startingCondition => startingCondition != null)
                 .Select(startingCondition => CreateRuntimeBuilding(
                     startingCondition,
                     samSiteTemplates,
@@ -387,15 +386,12 @@ namespace Engine.Monobehaviours.Managers
                 throw new ArgumentNullException(nameof(module));
 
             var samSiteTemplates = module.SamSiteTemplates
-                .Where(template => template != null)
                 .ToDictionary(template => template.SamSiteTemplateId);
 
             var samComponentDefinitions = module.SamComponentDefinitions
-                .Where(definition => definition != null)
                 .ToDictionary(definition => definition.SamComponentDefinitionId);
 
             return (startingConditions ?? new List<MobileSamSiteStartingCondition>())
-                .Where(startingCondition => startingCondition != null)
                 .Select(startingCondition => CreateRuntimeMobileSamSite(
                     startingCondition,
                     samSiteTemplates,
@@ -488,15 +484,12 @@ namespace Engine.Monobehaviours.Managers
                 throw new ArgumentNullException(nameof(module));
 
             var battalionDefinitions = module.BattalionDefinitions
-                .Where(battalion => battalion != null)
                 .ToDictionary(battalion => battalion.BattalionDefinitionId);
 
             var divisionTemplates = module.DivisionTemplates
-                .Where(template => template != null)
                 .ToDictionary(template => template.DivisionTemplateId);
 
             return (startingConditions ?? new List<DivisionStartingCondition>())
-                .Where(startingCondition => startingCondition != null)
                 .Select(startingCondition => CreateRuntimeDivision(
                     startingCondition,
                     divisionTemplates,
@@ -533,11 +526,9 @@ namespace Engine.Monobehaviours.Managers
                 throw new ArgumentNullException(nameof(module));
 
             var aircraftTypeDefinitions = module.AircraftTypeDefinitions
-                .Where(aircraftType => aircraftType != null)
                 .ToDictionary(aircraftType => aircraftType.AircraftTypeDefinitionId);
 
             return (startingConditions ?? new List<SquadronStartingCondition>())
-                .Where(startingCondition => startingCondition != null)
                 .Select(startingCondition => CreateRuntimeSquadron(
                     startingCondition,
                     aircraftTypeDefinitions))
