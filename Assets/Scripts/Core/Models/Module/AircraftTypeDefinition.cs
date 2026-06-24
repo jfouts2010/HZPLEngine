@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace Models.Module
 {
@@ -22,6 +23,8 @@ namespace Models.Module
         public float RadarQuality { get; }
         public float EcmQuality { get; }
         public float Survivability { get; }
+        public float OrdnanceCapacity { get; }
+        public List<Guid> CompatibleOrdnanceTypeDefinitionIds { get; }
 
         public AircraftTypeDefinition(
             Guid aircraftTypeDefinitionId,
@@ -34,6 +37,8 @@ namespace Models.Module
             float radarQuality,
             float ecmQuality,
             float survivability,
+            float ordnanceCapacity = 0f,
+            List<Guid> compatibleOrdnanceTypeDefinitionIds = null,
             string thirdPartyId = "")
         {
             if (aircraftTypeDefinitionId == Guid.Empty)
@@ -50,6 +55,8 @@ namespace Models.Module
             RadarQuality = radarQuality;
             EcmQuality = ecmQuality;
             Survivability = survivability;
+            OrdnanceCapacity = Math.Max(0f, ordnanceCapacity);
+            CompatibleOrdnanceTypeDefinitionIds = compatibleOrdnanceTypeDefinitionIds ?? new List<Guid>();
         }
     }
 }

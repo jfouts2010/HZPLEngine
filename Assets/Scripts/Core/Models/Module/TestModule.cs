@@ -18,6 +18,14 @@ namespace Models.Module
         public static readonly Guid F16AircraftTypeId = Guid.Parse("5084422f-4014-46be-88aa-215a927fc48e");
         public static readonly Guid Mig29AircraftTypeId = Guid.Parse("12e89ecf-ac2e-4329-a21e-55f0fb0666f0");
 
+        public static readonly Guid Aim120OrdnanceTypeId = Guid.Parse("7486758d-565b-4a19-8d26-29dd717b0e22");
+        public static readonly Guid Aim9OrdnanceTypeId = Guid.Parse("5e7975e2-09a8-46f4-bb2d-05de209b60b8");
+        public static readonly Guid Agm88OrdnanceTypeId = Guid.Parse("3160216b-64bf-45b8-b245-c7ee2303864e");
+        public static readonly Guid Gbu38OrdnanceTypeId = Guid.Parse("37f8f135-55a8-42a1-9478-f583508e344c");
+        public static readonly Guid Agm65OrdnanceTypeId = Guid.Parse("24d59f63-9714-4306-9ebb-f79075df0909");
+        public static readonly Guid R27OrdnanceTypeId = Guid.Parse("df62234e-e894-4d4e-8d67-e4bc6fe68405");
+        public static readonly Guid R73OrdnanceTypeId = Guid.Parse("fc9d6932-ef37-4fc3-b024-12fc1e2d9f1c");
+
         public static readonly Guid BlueArmoredDivisionTemplateId = Guid.Parse("4153b384-6e76-42df-a1e5-d54582022bee");
         public static readonly Guid RedTankDivisionTemplateId = Guid.Parse("2d4ecc7e-8285-4b8b-9281-00cccbf5d2e8");
 
@@ -31,6 +39,7 @@ namespace Models.Module
                 new NoOpSimAdapter(),
                 CreateCountries(),
                 CreateAircraftTypeDefinitions(),
+                CreateOrdnanceTypeDefinitions(),
                 CreateBattalionDefinitions(),
                 CreateDivisionTemplates());
         }
@@ -59,7 +68,16 @@ namespace Models.Module
                     preferredAltitudeBand: AircraftPreferredAltitudeBand.Medium,
                     radarQuality: 0.7f,
                     ecmQuality: 0.55f,
-                    survivability: 0.65f),
+                    survivability: 0.65f,
+                    ordnanceCapacity: 12f,
+                    compatibleOrdnanceTypeDefinitionIds: new List<Guid>
+                    {
+                        Aim120OrdnanceTypeId,
+                        Aim9OrdnanceTypeId,
+                        Agm88OrdnanceTypeId,
+                        Gbu38OrdnanceTypeId,
+                        Agm65OrdnanceTypeId
+                    }),
                 new AircraftTypeDefinition(
                     Mig29AircraftTypeId,
                     "MiG-29 Fulcrum",
@@ -70,7 +88,86 @@ namespace Models.Module
                     preferredAltitudeBand: AircraftPreferredAltitudeBand.High,
                     radarQuality: 0.78f,
                     ecmQuality: 0.45f,
-                    survivability: 0.7f)
+                    survivability: 0.7f,
+                    ordnanceCapacity: 10f,
+                    compatibleOrdnanceTypeDefinitionIds: new List<Guid>
+                    {
+                        R27OrdnanceTypeId,
+                        R73OrdnanceTypeId
+                    })
+            };
+        }
+
+        private static List<OrdnanceTypeDefinition> CreateOrdnanceTypeDefinitions()
+        {
+            return new List<OrdnanceTypeDefinition>
+            {
+                new OrdnanceTypeDefinition(
+                    Aim120OrdnanceTypeId,
+                    "AIM-120 AMRAAM",
+                    weight: 1f,
+                    effectPower: 2,
+                    effectivenessByTargetCategory: new Dictionary<OrdnanceTargetCategory, float>
+                    {
+                        { OrdnanceTargetCategory.Aircraft, 0.95f }
+                    }),
+                new OrdnanceTypeDefinition(
+                    Aim9OrdnanceTypeId,
+                    "AIM-9 Sidewinder",
+                    weight: 0.75f,
+                    effectPower: 1,
+                    effectivenessByTargetCategory: new Dictionary<OrdnanceTargetCategory, float>
+                    {
+                        { OrdnanceTargetCategory.Aircraft, 0.75f }
+                    }),
+                new OrdnanceTypeDefinition(
+                    Agm88OrdnanceTypeId,
+                    "AGM-88 HARM",
+                    weight: 3f,
+                    effectPower: 3,
+                    effectivenessByTargetCategory: new Dictionary<OrdnanceTargetCategory, float>
+                    {
+                        { OrdnanceTargetCategory.Radar, 1f },
+                        { OrdnanceTargetCategory.Building, 0.15f }
+                    }),
+                new OrdnanceTypeDefinition(
+                    Gbu38OrdnanceTypeId,
+                    "GBU-38 JDAM",
+                    weight: 2f,
+                    effectPower: 3,
+                    effectivenessByTargetCategory: new Dictionary<OrdnanceTargetCategory, float>
+                    {
+                        { OrdnanceTargetCategory.Vehicle, 0.55f },
+                        { OrdnanceTargetCategory.Building, 0.8f }
+                    }),
+                new OrdnanceTypeDefinition(
+                    Agm65OrdnanceTypeId,
+                    "AGM-65 Maverick",
+                    weight: 2f,
+                    effectPower: 3,
+                    effectivenessByTargetCategory: new Dictionary<OrdnanceTargetCategory, float>
+                    {
+                        { OrdnanceTargetCategory.Vehicle, 0.9f },
+                        { OrdnanceTargetCategory.Building, 0.45f }
+                    }),
+                new OrdnanceTypeDefinition(
+                    R27OrdnanceTypeId,
+                    "R-27 Alamo",
+                    weight: 1.25f,
+                    effectPower: 2,
+                    effectivenessByTargetCategory: new Dictionary<OrdnanceTargetCategory, float>
+                    {
+                        { OrdnanceTargetCategory.Aircraft, 0.85f }
+                    }),
+                new OrdnanceTypeDefinition(
+                    R73OrdnanceTypeId,
+                    "R-73 Archer",
+                    weight: 0.75f,
+                    effectPower: 1,
+                    effectivenessByTargetCategory: new Dictionary<OrdnanceTargetCategory, float>
+                    {
+                        { OrdnanceTargetCategory.Aircraft, 0.75f }
+                    })
             };
         }
 

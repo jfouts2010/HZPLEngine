@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace Models.Gameplay.Campaign
 {
@@ -14,6 +15,7 @@ namespace Models.Gameplay.Campaign
         public int DamagedAircraft;
         public int LostAircraft;
         public int AssignedAircraft;
+        public List<CampaignAircraft> Aircraft = new List<CampaignAircraft>();
 
         public Squadron()
         {
@@ -33,6 +35,16 @@ namespace Models.Gameplay.Campaign
             DamagedAircraft = 0;
             LostAircraft = 0;
             AssignedAircraft = 0;
+            Aircraft = CreateAircraft(ReadyAircraft);
+        }
+
+        private List<CampaignAircraft> CreateAircraft(int aircraftCount)
+        {
+            var aircraft = new List<CampaignAircraft>();
+            for (var i = 0; i < Math.Max(0, aircraftCount); i++)
+                aircraft.Add(new CampaignAircraft(SquadronId, AircraftTypeDefinitionId));
+
+            return aircraft;
         }
     }
 }

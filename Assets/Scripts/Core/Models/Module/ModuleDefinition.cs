@@ -12,6 +12,7 @@ namespace Models.Module
         public ISimAdapter SimAdapter { get; }
         public List<CountryDefinition> Countries { get; }
         public List<AircraftTypeDefinition> AircraftTypeDefinitions { get; }
+        public List<OrdnanceTypeDefinition> OrdnanceTypeDefinitions { get; }
         public List<BattalionDefinition> BattalionDefinitions { get; }
         public List<DivisionTemplate> DivisionTemplates { get; }
 
@@ -23,6 +24,7 @@ namespace Models.Module
             ISimAdapter simAdapter = null,
             List<CountryDefinition> countries = null,
             List<AircraftTypeDefinition> aircraftTypeDefinitions = null,
+            List<OrdnanceTypeDefinition> ordnanceTypeDefinitions = null,
             List<BattalionDefinition> battalionDefinitions = null,
             List<DivisionTemplate> divisionTemplates = null)
         {
@@ -36,6 +38,7 @@ namespace Models.Module
             SimAdapter = simAdapter ?? new NoOpSimAdapter();
             Countries = countries ?? new List<CountryDefinition>();
             AircraftTypeDefinitions = aircraftTypeDefinitions ?? new List<AircraftTypeDefinition>();
+            OrdnanceTypeDefinitions = ordnanceTypeDefinitions ?? new List<OrdnanceTypeDefinition>();
             BattalionDefinitions = battalionDefinitions ?? new List<BattalionDefinition>();
             DivisionTemplates = divisionTemplates ?? new List<DivisionTemplate>();
         }

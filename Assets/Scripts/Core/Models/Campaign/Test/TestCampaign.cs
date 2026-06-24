@@ -40,6 +40,7 @@ namespace Models.Gameplay.Campaign
                 },
                 ContentHash = "mechanics-test-campaign-v3",
                 CountryAllianceAssignments = CreateCountryAllianceAssignments(),
+                OrdnanceAllowances = CreateOrdnanceAllowances(),
                 Tiles = CreateTiles(),
                 StartingTileData = CreateStartingTileData(),
                 SupplyCapitals = CreateSupplyCapitals(),
@@ -59,6 +60,32 @@ namespace Models.Gameplay.Campaign
                 new CountryAllianceAssignment { CountryId = BlueCountryId, Alliance = Alliance.Bluefor },
                 new CountryAllianceAssignment { CountryId = RedCountryId, Alliance = Alliance.Redfor },
                 new CountryAllianceAssignment { CountryId = NeutralCountryId, Alliance = Alliance.Neutral }
+            };
+        }
+
+        private static Dictionary<Alliance, List<Guid>> CreateOrdnanceAllowances()
+        {
+            return new Dictionary<Alliance, List<Guid>>
+            {
+                {
+                    Alliance.Bluefor,
+                    new List<Guid>
+                    {
+                        TestModule.Aim120OrdnanceTypeId,
+                        TestModule.Aim9OrdnanceTypeId,
+                        TestModule.Agm88OrdnanceTypeId,
+                        TestModule.Gbu38OrdnanceTypeId,
+                        TestModule.Agm65OrdnanceTypeId
+                    }
+                },
+                {
+                    Alliance.Redfor,
+                    new List<Guid>
+                    {
+                        TestModule.R27OrdnanceTypeId,
+                        TestModule.R73OrdnanceTypeId
+                    }
+                }
             };
         }
 

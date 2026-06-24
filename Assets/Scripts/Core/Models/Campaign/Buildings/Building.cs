@@ -9,6 +9,7 @@ namespace Models.Gameplay.Campaign
         public Guid BuildingId;
         public Vector3Int TileId;
         public BuildingLevel Level = new BuildingLevel();
+        public int TargetToughness = 1;
 
         public abstract BuildingType Type { get; }
 

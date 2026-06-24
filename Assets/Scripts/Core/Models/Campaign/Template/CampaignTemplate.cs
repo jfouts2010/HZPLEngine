@@ -17,6 +17,7 @@ namespace Models.Gameplay.Campaign
         public SimulationSettings SimulationSettings = new SimulationSettings();
         public string ContentHash = string.Empty;
         public List<CountryAllianceAssignment> CountryAllianceAssignments = new List<CountryAllianceAssignment>();
+        public Dictionary<Alliance, List<Guid>> OrdnanceAllowances = new Dictionary<Alliance, List<Guid>>();
         public List<Tile> Tiles = new List<Tile>();
         [SerializeReference] public List<TileData> StartingTileData = new List<TileData>();
         public List<SupplyCapitalStartingCondition> SupplyCapitals = new List<SupplyCapitalStartingCondition>();

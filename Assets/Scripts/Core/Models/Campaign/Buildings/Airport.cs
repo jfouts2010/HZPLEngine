@@ -16,6 +16,7 @@ namespace Models.Gameplay.Campaign
 
         public Airport(BuildingStartingCondition startingCondition) : base(startingCondition)
         {
+            TargetToughness = 3;
         }
     }
 }

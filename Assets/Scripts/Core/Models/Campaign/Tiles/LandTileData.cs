@@ -7,5 +7,6 @@ namespace Models.Gameplay.Campaign
     {
         public Alliance Controller = Alliance.Neutral;
         public BuildingLevel Infrastructure = new BuildingLevel();
+        public int InfrastructureTargetToughness = 2;
     }
 }

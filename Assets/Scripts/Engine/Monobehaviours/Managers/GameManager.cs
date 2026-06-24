@@ -31,6 +31,7 @@ namespace Engine.Monobehaviours.Managers
         public bool AutoStartTestCampaign = true;
         public TestCampaignKind SelectedTestCampaign = TestCampaignKind.Advanced;
         public CampaignTemplate CampaignTemplate { get; private set; }
+        public Dictionary<Alliance, List<Guid>> OrdnanceAllowances = new Dictionary<Alliance, List<Guid>>();
         public List<Tile> CampaignTiles = new List<Tile>();
         [SerializeReference] public List<TileData> Tiles = new List<TileData>();
         public List<SupplyCapitalStartingCondition> SupplyCapitals = new List<SupplyCapitalStartingCondition>();
@@ -82,6 +83,7 @@ namespace Engine.Monobehaviours.Managers
             _campaignStartTime = template.CampaignStartTime;
             CurrentTime = template.CampaignStartTime;
             SimulationSettings = CopySimulationSettings(template.SimulationSettings);
+            OrdnanceAllowances = CopyOrdnanceAllowances(template.OrdnanceAllowances);
             CampaignTiles = CopyTiles(template.Tiles);
             Tiles = CopyTileData(template.StartingTileData);
             SupplyCapitals = CopySupplyCapitals(template.SupplyCapitals);
@@ -234,6 +236,15 @@ namespace Engine.Monobehaviours.Managers
                 .ToList();
         }
 
+        private static Dictionary<Alliance, List<Guid>> CopyOrdnanceAllowances(
+            Dictionary<Alliance, List<Guid>> allowances)
+        {
+            return (allowances ?? new Dictionary<Alliance, List<Guid>>())
+                .ToDictionary(
+                    allowance => allowance.Key,
+                    allowance => new List<Guid>(allowance.Value ?? new List<Guid>()));
+        }
+
         private static List<SupplyCapitalStartingCondition> CopySupplyCapitals(
             List<SupplyCapitalStartingCondition> supplyCapitals)
         {
@@ -277,7 +288,8 @@ namespace Engine.Monobehaviours.Managers
                 {
                     TileId = landData.TileId,
                     Controller = landData.Controller,
-                    Infrastructure = CopyBuildingLevel(landData.Infrastructure)
+                    Infrastructure = CopyBuildingLevel(landData.Infrastructure),
+                    InfrastructureTargetToughness = Math.Max(1, landData.InfrastructureTargetToughness)
                 };
             }
 

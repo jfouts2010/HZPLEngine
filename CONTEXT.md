@@ -190,6 +190,79 @@ _Avoid_: using "airframe" for the Module catalog concept; in this project, airfr
 
 _Avoid_: adding air wings before a rule or authoring workflow needs an organizational layer above squadrons.
 
+### Ordnance
+
+**Ordnance type** — reusable authored identity data for one weapon or store in a Module catalog, such as AIM-120, GBU-38, or AGM-88. Ordnance types are mappable entities when the target simulator needs explicit loadout or store IDs. Module authors define each store's **ordnance weight** and how effective it is against each **ordnance target category**.
+
+**Ordnance weight** — the capacity cost of one store on an aircraft loadout. Mixed loadouts are valid when the sum of carried ordnance weights is within the aircraft type's **ordnance capacity**.
+
+**Ordnance effect power** — the coarse campaign effect strength of one store. Effect power is the v1 stat used to decide whether ordnance can meaningfully affect a target's toughness. It may correlate with warhead size or explosive power, but it is an authored campaign abstraction rather than exact physics.
+
+**Ordnance capacity** — the maximum total ordnance weight an aircraft type may carry. Aircraft type definitions own ordnance capacity and a compatible ordnance allow-list. A store may be loaded only if it is on that aircraft type's allow-list and the loadout stays within ordnance capacity.
+
+_Avoid_: bidirectional aircraft–ordnance compatibility lists that must be kept in sync on both ordnance and aircraft definitions.
+
+**Ordnance target category** — the class of target a store is evaluated against. Ordnance capability is expressed as **ordnance effectiveness** ratings per target category, not per mission role.
+
+V1 ordnance target categories:
+
+- **Infantry**
+- **Vehicle** — ground vehicles; target toughness distinguishes light vehicles from heavily armored vehicles
+- **Building** — fixed structures, installations, and infrastructure
+- **Aircraft** — airborne targets
+- **Radar** — emitting air-defense sensors and similar radiating targets
+- **Ship** — naval surface targets
+
+**Ordnance effectiveness** — a 0–1 rating of how well an ordnance type performs against one ordnance target category. Sortie and loadout planning compare effectiveness against expected target categories rather than mission-role tags. In code, effectiveness is keyed by ordnance target category so lookups answer "how effective is this store against vehicles?" directly.
+
+_Avoid_: using "weapon" alone when the concept is specifically air-launched stores modeled in the third-party sim; ground unit armament belongs to battalion definitions unless a future rule needs separate treatment.
+
+**Campaign template ordnance allowance** — the subset of module ordnance types permitted in this campaign story. Campaign authors may allow or disallow specific ordnance regardless of the campaign's calendar year or the full Module catalog.
+
+In v1, ordnance allowance is scoped per **alliance**. Each alliance on a campaign template has its own allowed ordnance list, represented as a dictionary keyed by alliance. A store must be both defined in the Module and allowed for that alliance before it may be loaded.
+
+_Avoid_: scoping v1 ordnance allowance per squadron or per module country unless a future rule needs national ROE differences within the same alliance.
+
+**Ordnance availability** — runtime logistics state for whether permitted ordnance can be drawn and loaded at an airport or squadron now. Availability is separate from allowance: a permitted store may be unavailable because the base is out of supply or local stock is depleted.
+
+In v1, ordnance availability rules are not enforced. If ordnance is allowed for a side and a loadout is requested, the stores are granted instantly with no rearm step and no airbase stock check.
+
+**Campaign aircraft** — one persistent runtime aircraft instance owned by a squadron. A campaign aircraft has a status such as ready, damaged, assigned, or lost, and carries an **aircraft loadout** describing what it can employ now.
+
+Loading and unloading ordnance onto a campaign aircraft is instant in v1. There is no rearm duration, transit time, or separate arming workflow yet.
+
+Campaign aircraft start empty in v1. They receive a loadout when assigned to a sortie because sortie purpose determines what ordnance should be carried.
+
+When a campaign aircraft lands at the end of a sortie in v1, its loadout is cleared. The next sortie assignment generates a fresh loadout. Future supply rules may return unused ordnance from a landed aircraft back into available stock.
+
+**Aircraft loadout** — the ordnance physically carried by one campaign aircraft at a given moment, including remaining counts after expenditure. The core engine uses loadout state to know what that aircraft can still employ during autonomous simulation and, later, what to place on export.
+
+In v1, a loadout is an abstract count per ordnance type, such as four AIM-120 and two AGM-88, with no pylon or station geometry. Pylon placement for third-party export is deferred to the sim adapter.
+
+A loadout must satisfy the aircraft type's ordnance capacity: the sum of each carried store's ordnance weight may not exceed that aircraft's ordnance capacity. Each carried store must also be on that aircraft type's compatible ordnance allow-list and allowed for the aircraft's alliance.
+
+V1 loadout planning is demand-driven. The planner should not fill unused ordnance capacity simply because capacity remains; carrying unnecessary stores increases fuel burden and should be avoided.
+
+For a sortie's primary target category, the planned primary ordnance quantity should cover the expected target need plus a reserve of either 25% extra or one additional store, whichever is higher. Self-defense ordnance is planned separately and scales with expected enemy air threat: clear skies need little reserve, while enemy air superiority justifies a higher self-defense allocation.
+
+In v1, self-defense ordnance is based on fixed desired shot counts by air-threat level. Longer term, self-defense planning may derive desired hits from expected aircraft threats. Determining the current air-threat level is outside the ordnance foundation.
+
+The game should only create sorties whose required loadout can fit the assigned aircraft. Detailed policy for resolving capacity conflicts between primary ordnance and self-defense ordnance is deferred until sortie generation is designed.
+
+**Sortie target desired hits** — the expected number of successful weapon effects needed against a sortie target. V1 sortie planning may provide desired hits directly per target, usually one for simple point targets such as a tank, radar, or building and more for broad or durable targets such as an airfield runway. Loadout planning treats one desired hit as one planned weapon launch, then applies the primary ordnance reserve to cover misses without modeling hit probability.
+
+**Target toughness** — a coarse rating of how hard a target is to meaningfully damage or destroy within its target category. Toughness lets the planner distinguish a tent from a hardened bunker without expanding **ordnance target category** into many narrow target types. Ordnance effect power must satisfy the target's toughness before weight efficiency is considered.
+
+In v1, air-to-ground sortie targets are existing buildings or tile infrastructure. Building target toughness lives on the building definition/runtime building model, and infrastructure target toughness lives on the relevant infrastructure model. Future alternative targets that do not fit the building model may define their own toughness when that target type is introduced.
+
+Target toughness is stable for weapon selection. Current target damage may reduce desired hits, but it does not reduce the toughness gate; a damaged hardened bunker still requires bunker-capable ordnance.
+
+When multiple compatible and allowed ordnance types can satisfy a target category, v1 loadout planning should choose an adequately effective store before optimizing for weight. Among stores that meet the needed effect, prefer lighter or more weight-efficient stores so aircraft do not carry unnecessarily heavy ordnance. Avoid choosing a light store that is technically weight-efficient but too weak for the target.
+
+_Avoid_: per-ordnance maximum counts on an aircraft type as the primary mixing rule; they cannot express tradeoffs between store types.
+
+_Avoid_: treating squadron aggregate aircraft counts as a substitute for loadout state; two ready aircraft of the same type may carry different stores.
+
 ### Campaign template
 
 What an author creates in the campaign editor after choosing a Module. A campaign template defines the starting premise for play under that Module. The Module is fixed for the lifetime of an edit session; it cannot be changed while editing an open template.
