@@ -273,7 +273,7 @@ What an author creates in the campaign editor after choosing a Module. A campaig
 
 A v1 campaign template directly contains tile definitions for static tile geography, starting tile state for day-zero tile control and tile infrastructure values, and authored building data for building placement and starting building values. Additional map aggregate models should be introduced only when a real rule needs them.
 
-Building categories are core-engine concepts, not Module-specific template classes. A Korean War campaign template and a Gulf War campaign template use the same building options; the template records which building types are placed where and their starting build/damage values. V1 building types are airport, factory, supply hub, fort, port, railroad, refinery, and power plant. Static SAM sites are not buildings; they belong to a separate future IADS implementation. Any future third-party export mapping for buildings belongs to the sim adapter/export process, not to the tile implementation.
+Building categories are core-engine concepts, not Module-specific template classes. A Korean War campaign template and a Gulf War campaign template use the same building options; the template records which building types are placed where and their starting build/damage values. V1 building types are airport, factory, supply hub, fort, port, railroad, refinery, power plant, static SAM, and standalone radar. Static SAM buildings and standalone radar buildings host air-defense components, but the component capabilities come from Module catalog definitions. Any future third-party export mapping for buildings belongs to the sim adapter/export process, not to the tile implementation.
 
 The v1 tile/building implementation includes both template authoring data and runtime campaign state. Starting tile and building data are copied or instantiated into runtime state when play begins; runtime systems mutate the runtime state rather than the campaign template.
 
@@ -524,6 +524,117 @@ Import may also include **mission performance evaluation** — a graded assessme
 
 _Avoid_: campaign turn (old meaning: coarse ground step that owns air slices), air execution slice (old meaning: sub-turn air clock parallel to ground turns)
 
+### Air-defense site
+
+An air-defense site is a runtime IADS participant that can contribute sensor, shooter, command, or network roles. SAM sites and radar sites are air-defense sites with different role mixes.
+
+### SAM site
+
+A SAM site is a shooter-capable air-defense site that can contribute sensors, shooters, command/network support, or some combination of those roles to IADS behavior and SAM launch execution.
+
+A SAM site may be hosted by a static placed asset or by a mobile ground formation. Static and mobile hosts affect placement, movement, ownership, capture, damage, and repair rules; the core detection, engagement-assignment, launch-authorization, suppression, and role-status concepts remain shared.
+
+_Avoid_: splitting SAM behavior into unrelated "building that shoots" and "ground unit that shoots" models.
+
+### Radar site
+
+A radar site is an air-defense site that contributes sensor, cueing, command, or network roles without launcher capability. A radar site is not a SAM site unless it also has shooter capability.
+
+### SAM component definition
+
+A SAM component definition is a reusable authored component in a Module catalog. It describes an independently damageable SAM-site component and the air-defense roles it can contribute when a campaign places or instantiates it.
+
+Module authors define component capabilities once, then campaign templates use those component definitions when authoring static SAM sites, mobile SAM sites, standalone radar buildings, or hybrid self-propelled SAM systems.
+
+### SAM component
+
+A SAM component is an independently damageable part of a SAM site that contributes one or more air-defense roles such as search sensing, fire-control quality, shooting, command/network support, ammo, reload, or emissions.
+
+Components are campaign-level damage units instantiated from SAM component definitions, not always literal real-world subassemblies. A static SAM site may expose separate radar, launcher, command, and support components, while an all-in-one self-propelled system may expose a hybrid component that loses multiple roles when destroyed.
+
+SAM components do not use building-style build levels. A component either functions or is damaged enough that it no longer contributes its roles until repaired. Suppression is a temporary SAM-site behavior state in the initial model; component-level suppression may be added later only when a specific effect needs it.
+
+In the first model, damaged SAM components stay damaged indefinitely. Repair and replacement are deferred to a later logistics or repair system.
+
+Air-to-ground strikes against SAM sites target specific known SAM components rather than the site as a single undifferentiated target. The SAM site remains the grouping and behavior actor, but component identity determines weapon suitability and damage effects.
+
+Every SAM component is targetable. Each SAM component definition should describe the target profile that strike planning uses for weapon selection and damage resolution.
+
+SAM component target profiles reuse the shared ordnance target categories for weapon selection and may expand those categories when SAM-specific targets need distinctions the current list cannot express.
+
+_Avoid_: forcing every radar, launcher, or command function into separate damage entries when the real platform or desired campaign abstraction only supports killing the whole combined vehicle.
+_Avoid_: modeling a radar or launcher as having a build level when the campaign question is whether that component is functioning, damaged, suppressed, or repaired.
+_Avoid_: tasking a strike against a whole SAM site when the planner needs to know whether it is attacking a radar, launcher, command component, or other targetable part.
+
+### Campaign SAM component allowance
+
+Campaign SAM component allowance is the subset of Module SAM component definitions permitted in one campaign story. In v1, SAM component allowance should follow the ordnance allowance pattern and be scoped per alliance unless a future rule needs country-specific access within the same alliance.
+
+A SAM component must be both defined in the Module and allowed for the relevant alliance before it may be used in that alliance's authored SAM sites or mobile SAM attachments.
+
+Component allowance is the lower-level guardrail for custom sites, template overrides, and shared components reused across multiple SAM site templates.
+
+### SAM site host constraint
+
+A SAM site host constraint describes where a SAM site template may be instantiated: static only, mobile only, or static/mobile if a future system genuinely supports both. Host constraints belong to the template because the same shared SAM site behavior can be valid for different placement models.
+
+_Avoid_: creating unrelated static-SAM-template and mobile-SAM-template families when the main difference is where the site can be hosted.
+
+### SAM site template
+
+A SAM site template is a reusable Module catalog definition for a recognizable SAM site arrangement, such as an SA-2 battery, SA-6 battery, or SA-8 platoon. It is built from SAM component definitions and records the default component mix a campaign author can instantiate.
+
+Campaign templates should usually place SAM sites from SAM site templates rather than hand-assembling every radar, launcher, command, or support component. Template-level defaults may still be overridden when a campaign needs a nonstandard site, damaged starting condition, or scenario-specific force structure.
+
+A SAM site template carries a SAM site host constraint rather than belonging to a separate static-template or mobile-template family.
+
+### SAM launcher component
+
+A SAM launcher component is a SAM component definition that contributes shooter capability and includes its interceptor behavior directly: engagement envelope, ready rounds, reload behavior, salvo or launch rate behavior, and guidance dependency.
+
+Launcher ammo is tracked at the launcher component level as abstract ready and remaining counts rather than individual missile objects. Reload delay, reload rate, and simultaneous shot or channel limits may be modeled as component capability when needed.
+
+SAM-launched missiles are not ordinary aircraft ordnance, and in the first model they do not need a separate interceptor catalog definition. Split interceptor definitions out later only if runtime logistics, shared missile stocks, or cross-launcher reuse make that extra catalog layer necessary.
+
+_Avoid_: modeling SAM missiles as aircraft ordnance when they are consumed by SAM launch execution rather than aircraft loadout planning.
+
+### Campaign SAM site template allowance
+
+Campaign SAM site template allowance is the subset of Module SAM site templates permitted in one campaign story. In v1, SAM site template allowance should follow the ordnance allowance pattern and be scoped per alliance unless a future rule needs country-specific access within the same alliance.
+
+Template allowance controls which named SAM systems an alliance can field during ordinary campaign authoring. A template must be allowed for the alliance, and its required SAM component definitions must also be allowed, before that template can be instantiated without overrides.
+
+### Radar definition
+
+A radar definition is a reusable Module catalog definition for a radar capability, such as a Fan Song fire-control radar or an early warning radar. It describes the radar capability once so it can be used by SAM components, static SAM buildings, standalone radar buildings, or future sensor hosts without duplicating radar behavior.
+
+Radar definitions are authored capabilities, not runtime placed assets. Runtime hosts determine where the radar capability exists, who controls it, and whether the hosted radar component or building is damaged, suppressed, or emitting.
+
+### Static SAM site
+
+A static SAM site is a SAM site whose host is a static SAM building on a tile. It behaves like other placed assets for map placement and damage identity, while contributing air-defense roles through the shared SAM site model.
+
+A static SAM building groups the site's SAM components under one placed site identity. Its components can be damaged without every launcher, command post, or support asset becoming a separate building.
+
+Radars are the exception when they need to exist outside a SAM site. A standalone radar building is its own placed asset because radar sites may contribute detection, cueing, command, or network roles without being SAM launch sites.
+
+Standalone radar buildings are not SAM sites when they cannot launch missiles. They may still reuse radar definitions, SAM component definitions where appropriate, target profiles, damage state, suppression concepts, and IADS network contribution rules.
+
+In the first model, hostile tile capture disables a static SAM site's SAM behavior or a standalone radar building's radar behavior rather than transferring it into the captor's IADS. The placed asset may remain, but its components do not become operational for the new controller automatically.
+
+### Mobile SAM site
+
+A mobile SAM site is a SAM site whose host moves with a ground formation or mobile detachment. Self-propelled SAMs are mobile SAM sites when their air-defense behavior follows the shared SAM site model rather than ordinary ground combat rules.
+
+In the first model, mobile SAM sites may be hosted by divisions for position, movement, alliance/country context, supply context, and overrun or capture vulnerability. They remain separate from the division's ground combat stats and do not participate in ground combat as battalion strength.
+
+Mobile SAM sites should keep their own identity so a later transfer rule can move them between host divisions or detach them into independent mobile air-defense units without redefining what a SAM site is.
+
+In the first model, mobile SAM components are damaged or destroyed by aircraft strikes against those components, or automatically destroyed when the host division is overrun. Normal ground combat attrition against the host division does not directly damage attached mobile SAM components.
+
+_Avoid_: treating "self-propelled SAM" as a separate domain category when "mobile SAM site" is the broader host model.
+_Avoid_: folding mobile SAMs into battalion definitions or division soft/hard attack values when they are meant to affect the air war.
+
 ### IADS current track
 
 An IADS current track is an air contact that a site or network is currently aware of through direct detection or shared cueing. Current track awareness is not authorization to fire.
@@ -540,7 +651,7 @@ The IADS commander layer owns engagement assignment. SAM launch execution consum
 
 ### IADS commander refresh
 
-IADS commander refresh is the update of tactical IADS commander decisions for static air-defense sites: suppression decay, network membership, EMCON and radar posture, track and engagement reset, IADS current track assignment, and IADS engagement assignment. It reflects what a human IADS commander would decide before shooters fire, not threat-field products for route planning, SAM launch resolution, or per-slice emission bookkeeping for debug or EMCON history.
+IADS commander refresh is the update of tactical IADS commander decisions for SAM sites: suppression decay, network membership, EMCON and radar posture, track and engagement reset, IADS current track assignment, and IADS engagement assignment. It reflects what a human IADS commander would decide before shooters fire, not threat-field products for route planning, SAM launch resolution, or per-slice emission bookkeeping for debug or EMCON history.
 
 Most commander decisions refresh each simulation tick because the air battle is tactically dense. Commander inputs that change slowly or need not be re-evaluated every tick may refresh on an operational cadence boundary instead.
 
@@ -582,9 +693,9 @@ SAM launch execution is site-driven: SAM sites are the actors that consume assig
 
 Package-level SAM debug should answer why a package was or was not fired on without listing every site unless drill-down detail is requested.
 
-### SAM site role status
+### Air-defense site role status
 
-SAM site role status describes the remaining combat contributions of an air-defense site by role rather than by one broad operational flag. A site may still contribute sensors, shooters, or command/network support independently as component damage changes.
+Air-defense site role status describes the remaining combat contributions of an air-defense site by role rather than by one broad operational flag. A site may still contribute sensors, shooters, or command/network support independently as component damage changes.
 
 Use `CanContributeSensor`, `CanContributeShooter`, `CanContributeCommand`, `IsCombatIneffective`, and `IsTemporarilySuppressed` style concepts for air-defense behavior. Avoid treating a single `IsOperational` flag as the source of truth for detection, engagement assignment, or SAM launch execution.
 

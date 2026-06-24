@@ -19,6 +19,8 @@ namespace Models.Gameplay.Campaign
         private static readonly Guid RedSquadronId = Guid.Parse("f4ed5ed1-af8b-4cf6-8e76-6ec555d1dd42");
         private static readonly Guid BlueCapitalAirportBuildingId = Guid.Parse("6ffcc54e-747e-487e-9885-dfdb60add354");
         private static readonly Guid RedMountainAirportBuildingId = Guid.Parse("b4b155a0-f165-478d-9805-05a29baabf07");
+        private static readonly Guid RedSa2BuildingId = Guid.Parse("504a1c37-bb02-4d7e-9db1-dcc6d03f8c49");
+        private static readonly Guid RedOsaSiteId = Guid.Parse("e2cb724c-13d1-46ec-bb06-8a2aee724b5f");
 
         private static readonly Vector3Int BlueCapitalTileId = new Vector3Int(0, 0, 0);
         private static readonly Vector3Int BluePortTileId = new Vector3Int(1, -1, 0);
@@ -41,11 +43,13 @@ namespace Models.Gameplay.Campaign
                 ContentHash = "mechanics-test-campaign-v3",
                 CountryAllianceAssignments = CreateCountryAllianceAssignments(),
                 OrdnanceAllowances = CreateOrdnanceAllowances(),
+                SamSiteTemplateAllowances = CreateSamSiteTemplateAllowances(),
                 Tiles = CreateTiles(),
                 StartingTileData = CreateStartingTileData(),
                 SupplyCapitals = CreateSupplyCapitals(),
                 BuildingStartingConditions = CreateBuildingStartingConditions(),
                 DivisionStartingConditions = CreateDivisionStartingConditions(),
+                MobileSamSiteStartingConditions = CreateMobileSamSiteStartingConditions(),
                 SquadronStartingConditions = CreateSquadronStartingConditions()
             };
 
@@ -84,6 +88,40 @@ namespace Models.Gameplay.Campaign
                     {
                         TestModule.R27OrdnanceTypeId,
                         TestModule.R73OrdnanceTypeId
+                    }
+                }
+            };
+        }
+
+        private static Dictionary<Alliance, List<Guid>> CreateSamComponentAllowances()
+        {
+            return new Dictionary<Alliance, List<Guid>>
+            {
+                {
+                    Alliance.Redfor,
+                    new List<Guid>
+                    {
+                        TestModule.FanSongComponentId,
+                        TestModule.Sa2LauncherComponentId,
+                        TestModule.SamCommandPostComponentId,
+                        TestModule.OsaRadarComponentId,
+                        TestModule.OsaLauncherComponentId,
+                        TestModule.OsaCommandComponentId
+                    }
+                }
+            };
+        }
+
+        private static Dictionary<Alliance, List<Guid>> CreateSamSiteTemplateAllowances()
+        {
+            return new Dictionary<Alliance, List<Guid>>
+            {
+                {
+                    Alliance.Redfor,
+                    new List<Guid>
+                    {
+                        TestModule.Sa2SiteTemplateId,
+                        TestModule.OsaSiteTemplateId
                     }
                 }
             };
@@ -212,7 +250,8 @@ namespace Models.Gameplay.Campaign
                 CreateBuilding("698495e7-14f6-4d58-9569-3f076ae419ab", RedMountainTileId, BuildingType.Railroad, 6),
                 CreateBuilding(RedMountainAirportBuildingId.ToString(), RedMountainTileId, BuildingType.Airport, 4),
                 CreateBuilding("33421d61-a7dd-42fe-b069-f65cd0295c62", RedMountainTileId, BuildingType.SupplyHub, 6),
-                CreateBuilding("d30ad13b-82a8-4f4c-a990-08614182716d", RedMountainTileId, BuildingType.PowerPlant, 2)
+                CreateBuilding("d30ad13b-82a8-4f4c-a990-08614182716d", RedMountainTileId, BuildingType.PowerPlant, 2),
+                CreateStaticSamBuilding(RedSa2BuildingId.ToString(), RedMountainTileId, RedCountryId, TestModule.Sa2SiteTemplateId)
             };
         }
 
@@ -243,6 +282,20 @@ namespace Models.Gameplay.Campaign
                     CountryId = RedCountryId,
                     TileId = RedMountainTileId,
                     Name = "1st Red Tank Division"
+                }
+            };
+        }
+
+        private static List<MobileSamSiteStartingCondition> CreateMobileSamSiteStartingConditions()
+        {
+            return new List<MobileSamSiteStartingCondition>
+            {
+                new MobileSamSiteStartingCondition
+                {
+                    MobileSamSiteId = RedOsaSiteId,
+                    SamSiteTemplateId = TestModule.OsaSiteTemplateId,
+                    HostDivisionId = RedDivisionId,
+                    Alliance = Alliance.Redfor
                 }
             };
         }
@@ -301,6 +354,23 @@ namespace Models.Gameplay.Campaign
                 TileId = tileId,
                 Type = type,
                 Level = new BuildingLevel(level, damage)
+            };
+        }
+
+        private static BuildingStartingCondition CreateStaticSamBuilding(
+            string buildingId,
+            Vector3Int tileId,
+            Guid countryId,
+            Guid samSiteTemplateId)
+        {
+            return new BuildingStartingCondition
+            {
+                BuildingId = Guid.Parse(buildingId),
+                TileId = tileId,
+                Type = BuildingType.AirDefense,
+                Level = new BuildingLevel(1),
+                CountryId = countryId,
+                SamSiteTemplateId = samSiteTemplateId
             };
         }
     }

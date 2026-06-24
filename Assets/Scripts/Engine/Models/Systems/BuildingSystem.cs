@@ -12,6 +12,7 @@ namespace Models.Gameplay.Campaign
         public List<Building> Buildings = new List<Building>();
 
         private Dictionary<Vector3Int, List<Building>> buildingsByTileId;
+        private Dictionary<Guid, Building> buildingsById;
 
         public List<Building> GetBuildingsOnTile(Vector3Int tileId)
         {
@@ -28,17 +29,36 @@ namespace Models.Gameplay.Campaign
                 .ToList();
         }
 
+        public bool TryGetBuilding(Guid buildingId, out Building building)
+        {
+            EnsureIndex();
+            return buildingsById.TryGetValue(buildingId, out building);
+        }
+
+        public List<TBuilding> GetBuildings<TBuilding>() where TBuilding : Building
+        {
+            EnsureIndex();
+            return Buildings
+                .OfType<TBuilding>()
+                .ToList();
+        }
+
         public void RebuildIndex()
         {
             buildingsByTileId = (Buildings ?? new List<Building>())
                 .Where(building => building != null)
                 .GroupBy(building => building.TileId)
                 .ToDictionary(group => group.Key, group => group.ToList());
+
+            buildingsById = (Buildings ?? new List<Building>())
+                .Where(building => building != null)
+                .GroupBy(building => building.BuildingId)
+                .ToDictionary(group => group.Key, group => group.First());
         }
 
         private void EnsureIndex()
         {
-            if (buildingsByTileId == null)
+            if (buildingsByTileId == null || buildingsById == null)
                 RebuildIndex();
         }
     }

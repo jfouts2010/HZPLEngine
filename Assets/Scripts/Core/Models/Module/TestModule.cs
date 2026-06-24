@@ -26,6 +26,15 @@ namespace Models.Module
         public static readonly Guid R27OrdnanceTypeId = Guid.Parse("df62234e-e894-4d4e-8d67-e4bc6fe68405");
         public static readonly Guid R73OrdnanceTypeId = Guid.Parse("fc9d6932-ef37-4fc3-b024-12fc1e2d9f1c");
 
+        public static readonly Guid FanSongComponentId = Guid.Parse("0ec0a8c9-dc38-461c-a3f8-1831afdf43ad");
+        public static readonly Guid Sa2LauncherComponentId = Guid.Parse("1ecf62f4-3034-4be3-86c3-0e8d65ecef6a");
+        public static readonly Guid SamCommandPostComponentId = Guid.Parse("0ef1697d-f3fb-49fa-8f54-bac90107b552");
+        public static readonly Guid OsaRadarComponentId = Guid.Parse("9daab0e8-3d79-49f3-91b5-feb343f09fac");
+        public static readonly Guid OsaLauncherComponentId = Guid.Parse("f7f2f3d3-0e2b-4f6f-9b7e-617b1ec23cb3");
+        public static readonly Guid OsaCommandComponentId = Guid.Parse("1ad7d010-b81c-48af-9844-854a864385e6");
+        public static readonly Guid Sa2SiteTemplateId = Guid.Parse("9a408a92-9a60-4fb6-bd38-18cb6f2771a5");
+        public static readonly Guid OsaSiteTemplateId = Guid.Parse("710226da-3875-4312-81ea-29606aca76c6");
+
         public static readonly Guid BlueArmoredDivisionTemplateId = Guid.Parse("4153b384-6e76-42df-a1e5-d54582022bee");
         public static readonly Guid RedTankDivisionTemplateId = Guid.Parse("2d4ecc7e-8285-4b8b-9281-00cccbf5d2e8");
 
@@ -40,6 +49,8 @@ namespace Models.Module
                 CreateCountries(),
                 CreateAircraftTypeDefinitions(),
                 CreateOrdnanceTypeDefinitions(),
+                CreateSamComponentDefinitions(),
+                CreateSamSiteTemplates(),
                 CreateBattalionDefinitions(),
                 CreateDivisionTemplates());
         }
@@ -167,6 +178,92 @@ namespace Models.Module
                     effectivenessByTargetCategory: new Dictionary<OrdnanceTargetCategory, float>
                     {
                         { OrdnanceTargetCategory.Aircraft, 0.75f }
+                    })
+            };
+        }
+
+        private static List<AirDefenseComponentDefinition> CreateSamComponentDefinitions()
+        {
+            return new List<AirDefenseComponentDefinition>
+            {
+                new RadarAirDefenseComponentDefinition(
+                    FanSongComponentId,
+                    "Fan Song radar component",
+                    OrdnanceTargetCategory.Radar,
+                    targetToughness: 2,
+                    detectionRangeKm: 75f,
+                    maxAltitudeMeters: 24000f,
+                    trackQuality: 0.75f,
+                    providesWeaponQualityTrack: true),
+                new LauncherAirDefenseComponentDefinition(
+                    Sa2LauncherComponentId,
+                    "SA-2 launcher rail",
+                    OrdnanceTargetCategory.Building,
+                    targetToughness: 2,
+                    minEngagementRangeKm: 7f,
+                    maxEngagementRangeKm: 35f,
+                    minEngagementAltitudeMeters: 300f,
+                    maxEngagementAltitudeMeters: 24000f,
+                    readyRoundCapacity: 1,
+                    reserveRoundCapacity: 1,
+                    reloadMinutes: 30f),
+                new CommandAirDefenseComponentDefinition(
+                    SamCommandPostComponentId,
+                    "SAM command post",
+                    OrdnanceTargetCategory.Building,
+                    targetToughness: 2),
+                new RadarAirDefenseComponentDefinition(
+                    OsaRadarComponentId,
+                    "SA-8 Osa organic radar",
+                    OrdnanceTargetCategory.Radar,
+                    targetToughness: 2,
+                    detectionRangeKm: 35f,
+                    maxAltitudeMeters: 12000f,
+                    trackQuality: 0.55f,
+                    providesWeaponQualityTrack: true),
+                new LauncherAirDefenseComponentDefinition(
+                    OsaLauncherComponentId,
+                    "SA-8 Osa launcher",
+                    OrdnanceTargetCategory.Vehicle,
+                    targetToughness: 2,
+                    minEngagementRangeKm: 1.5f,
+                    maxEngagementRangeKm: 12f,
+                    minEngagementAltitudeMeters: 25f,
+                    maxEngagementAltitudeMeters: 5000f,
+                    readyRoundCapacity: 6,
+                    reserveRoundCapacity: 0,
+                    reloadMinutes: 0f),
+                new CommandAirDefenseComponentDefinition(
+                    OsaCommandComponentId,
+                    "SA-8 Osa command component",
+                    OrdnanceTargetCategory.Vehicle,
+                    targetToughness: 2)
+            };
+        }
+
+        private static List<SamSiteTemplate> CreateSamSiteTemplates()
+        {
+            return new List<SamSiteTemplate>
+            {
+                new SamSiteTemplate(
+                    Sa2SiteTemplateId,
+                    "SA-2 battery",
+                    SamSiteHostConstraint.StaticOnly,
+                    new List<SamSiteTemplateComponent>
+                    {
+                        new SamSiteTemplateComponent(FanSongComponentId, 1),
+                        new SamSiteTemplateComponent(Sa2LauncherComponentId, 6),
+                        new SamSiteTemplateComponent(SamCommandPostComponentId, 1)
+                    }),
+                new SamSiteTemplate(
+                    OsaSiteTemplateId,
+                    "SA-8 Osa section",
+                    SamSiteHostConstraint.MobileOnly,
+                    new List<SamSiteTemplateComponent>
+                    {
+                        new SamSiteTemplateComponent(OsaRadarComponentId, 1),
+                        new SamSiteTemplateComponent(OsaLauncherComponentId, 1),
+                        new SamSiteTemplateComponent(OsaCommandComponentId, 1)
                     })
             };
         }

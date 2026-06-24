@@ -32,6 +32,7 @@ namespace Engine.Monobehaviours.Managers
         public TestCampaignKind SelectedTestCampaign = TestCampaignKind.Advanced;
         public CampaignTemplate CampaignTemplate { get; private set; }
         public Dictionary<Alliance, List<Guid>> OrdnanceAllowances = new Dictionary<Alliance, List<Guid>>();
+        public Dictionary<Alliance, List<Guid>> SamSiteTemplateAllowances = new Dictionary<Alliance, List<Guid>>();
         public List<Tile> CampaignTiles = new List<Tile>();
         [SerializeReference] public List<TileData> Tiles = new List<TileData>();
         public List<SupplyCapitalStartingCondition> SupplyCapitals = new List<SupplyCapitalStartingCondition>();
@@ -42,6 +43,7 @@ namespace Engine.Monobehaviours.Managers
         public BuildingSystem buildingSystem = new BuildingSystem();
         public DivisionSystem divisionSystem = new DivisionSystem();
         public SquadronSystem squadronSystem = new SquadronSystem();
+        public AirDefenseSiteSystem airDefenseSiteSystem = new AirDefenseSiteSystem();
 
         private Coroutine GameTurnCoroutine = null;
         private bool _campaignStarted;
@@ -84,12 +86,13 @@ namespace Engine.Monobehaviours.Managers
             CurrentTime = template.CampaignStartTime;
             SimulationSettings = CopySimulationSettings(template.SimulationSettings);
             OrdnanceAllowances = CopyOrdnanceAllowances(template.OrdnanceAllowances);
+            SamSiteTemplateAllowances = CopyGuidAllowances(template.SamSiteTemplateAllowances);
             CampaignTiles = CopyTiles(template.Tiles);
             Tiles = CopyTileData(template.StartingTileData);
             SupplyCapitals = CopySupplyCapitals(template.SupplyCapitals);
             buildingSystem = new BuildingSystem
             {
-                Buildings = CreateRuntimeBuildings(template.BuildingStartingConditions)
+                Buildings = CreateRuntimeBuildings(template.BuildingStartingConditions, activeModule)
             };
             buildingSystem.RebuildIndex();
             divisionSystem = new DivisionSystem
@@ -102,6 +105,11 @@ namespace Engine.Monobehaviours.Managers
                 Squadrons = CreateRuntimeSquadrons(template.SquadronStartingConditions, activeModule)
             };
             squadronSystem.RebuildIndex();
+            airDefenseSiteSystem = new AirDefenseSiteSystem
+            {
+                MobileSamSites = CreateRuntimeMobileSamSites(template.MobileSamSiteStartingConditions, activeModule)
+            };
+            airDefenseSiteSystem.RebuildIndex();
             _AISystem = new AISystem(this);
             _groundOperationsSystem = new GroundOperationsSystem(this);
             _groundCombatSystem = new GroundCombatSystem(this, _groundOperationsSystem);
@@ -239,6 +247,12 @@ namespace Engine.Monobehaviours.Managers
         private static Dictionary<Alliance, List<Guid>> CopyOrdnanceAllowances(
             Dictionary<Alliance, List<Guid>> allowances)
         {
+            return CopyGuidAllowances(allowances);
+        }
+
+        private static Dictionary<Alliance, List<Guid>> CopyGuidAllowances(
+            Dictionary<Alliance, List<Guid>> allowances)
+        {
             return (allowances ?? new Dictionary<Alliance, List<Guid>>())
                 .ToDictionary(
                     allowance => allowance.Key,
@@ -304,15 +318,34 @@ namespace Engine.Monobehaviours.Managers
             return null;
         }
 
-        private static List<Building> CreateRuntimeBuildings(List<BuildingStartingCondition> startingConditions)
+        private static List<Building> CreateRuntimeBuildings(
+            List<BuildingStartingCondition> startingConditions,
+            ModuleDefinition module)
         {
+            if (module == null)
+                throw new ArgumentNullException(nameof(module));
+
+            var samSiteTemplates = module.SamSiteTemplates
+                .Where(template => template != null)
+                .ToDictionary(template => template.SamSiteTemplateId);
+
+            var samComponentDefinitions = module.SamComponentDefinitions
+                .Where(definition => definition != null)
+                .ToDictionary(definition => definition.SamComponentDefinitionId);
+
             return (startingConditions ?? new List<BuildingStartingCondition>())
                 .Where(startingCondition => startingCondition != null)
-                .Select(CreateRuntimeBuilding)
+                .Select(startingCondition => CreateRuntimeBuilding(
+                    startingCondition,
+                    samSiteTemplates,
+                    samComponentDefinitions))
                 .ToList();
         }
 
-        private static Building CreateRuntimeBuilding(BuildingStartingCondition startingCondition)
+        private static Building CreateRuntimeBuilding(
+            BuildingStartingCondition startingCondition,
+            IReadOnlyDictionary<Guid, SamSiteTemplate> samSiteTemplates,
+            IReadOnlyDictionary<Guid, AirDefenseComponentDefinition> samComponentDefinitions)
         {
             switch (startingCondition.Type)
             {
@@ -332,10 +365,119 @@ namespace Engine.Monobehaviours.Managers
                     return new Refinery(startingCondition);
                 case BuildingType.PowerPlant:
                     return new PowerPlant(startingCondition);
+                case BuildingType.AirDefense:
+                    return new AirDefenseBuilding(
+                        startingCondition,
+                        CreateAirDefenseComponentsFromTemplate(
+                            startingCondition.SamSiteTemplateId,
+                            samSiteTemplates,
+                            samComponentDefinitions,
+                            SamSiteHostConstraint.MobileOnly));
                 default:
                     throw new ArgumentOutOfRangeException(nameof(startingCondition.Type), startingCondition.Type,
                         "Unknown building type.");
             }
+        }
+
+        private static List<MobileSamSite> CreateRuntimeMobileSamSites(
+            List<MobileSamSiteStartingCondition> startingConditions,
+            ModuleDefinition module)
+        {
+            if (module == null)
+                throw new ArgumentNullException(nameof(module));
+
+            var samSiteTemplates = module.SamSiteTemplates
+                .Where(template => template != null)
+                .ToDictionary(template => template.SamSiteTemplateId);
+
+            var samComponentDefinitions = module.SamComponentDefinitions
+                .Where(definition => definition != null)
+                .ToDictionary(definition => definition.SamComponentDefinitionId);
+
+            return (startingConditions ?? new List<MobileSamSiteStartingCondition>())
+                .Where(startingCondition => startingCondition != null)
+                .Select(startingCondition => CreateRuntimeMobileSamSite(
+                    startingCondition,
+                    samSiteTemplates,
+                    samComponentDefinitions))
+                .ToList();
+        }
+
+        private static MobileSamSite CreateRuntimeMobileSamSite(
+            MobileSamSiteStartingCondition startingCondition,
+            IReadOnlyDictionary<Guid, SamSiteTemplate> samSiteTemplates,
+            IReadOnlyDictionary<Guid, AirDefenseComponentDefinition> samComponentDefinitions)
+        {
+            return new MobileSamSite(
+                startingCondition,
+                CreateAirDefenseComponentsFromTemplate(
+                    startingCondition.SamSiteTemplateId,
+                    samSiteTemplates,
+                    samComponentDefinitions,
+                    SamSiteHostConstraint.StaticOnly));
+        }
+
+        private static List<AirDefenseComponent> CreateAirDefenseComponentsFromTemplate(
+            Guid samSiteTemplateId,
+            IReadOnlyDictionary<Guid, SamSiteTemplate> samSiteTemplates,
+            IReadOnlyDictionary<Guid, AirDefenseComponentDefinition> samComponentDefinitions,
+            SamSiteHostConstraint disallowedHostConstraint)
+        {
+            if (!samSiteTemplates.TryGetValue(samSiteTemplateId, out var samSiteTemplate))
+            {
+                throw new KeyNotFoundException(
+                    $"SAM site template {samSiteTemplateId} was not found in the active module.");
+            }
+
+            if (samSiteTemplate.HostConstraint == disallowedHostConstraint)
+            {
+                throw new InvalidOperationException(
+                    $"SAM site template {samSiteTemplate.SamSiteTemplateId} cannot be used by this host type.");
+            }
+
+            return CreateDefaultAirDefenseComponents(samSiteTemplate, samComponentDefinitions);
+        }
+
+        private static List<AirDefenseComponent> CreateDefaultAirDefenseComponents(
+            SamSiteTemplate samSiteTemplate,
+            IReadOnlyDictionary<Guid, AirDefenseComponentDefinition> samComponentDefinitions)
+        {
+            var components = new List<AirDefenseComponent>();
+            foreach (var templateComponent in samSiteTemplate.Components)
+            {
+                if (templateComponent == null || templateComponent.Count <= 0)
+                    continue;
+
+                if (!samComponentDefinitions.TryGetValue(
+                        templateComponent.SamComponentDefinitionId,
+                        out var componentDefinition))
+                {
+                    throw new KeyNotFoundException(
+                        $"SAM component definition {templateComponent.SamComponentDefinitionId} was not found in the active module.");
+                }
+
+                for (var i = 0; i < templateComponent.Count; i++)
+                {
+                    components.Add(CreateAirDefenseComponent(componentDefinition));
+                }
+            }
+
+            return components;
+        }
+
+        private static AirDefenseComponent CreateAirDefenseComponent(AirDefenseComponentDefinition definition)
+        {
+            return definition switch
+            {
+                RadarAirDefenseComponentDefinition radarDefinition => new RadarAirDefenseComponent(radarDefinition),
+                LauncherAirDefenseComponentDefinition launcherDefinition => new LauncherAirDefenseComponent(launcherDefinition),
+                CommandAirDefenseComponentDefinition commandDefinition => new CommandAirDefenseComponent(commandDefinition),
+                SupportAirDefenseComponentDefinition supportDefinition => new SupportAirDefenseComponent(supportDefinition),
+                _ => throw new ArgumentOutOfRangeException(
+                    nameof(definition),
+                    definition,
+                    $"Unsupported SAM component definition type {definition?.GetType().Name ?? "null"}.")
+            };
         }
 
         private static List<Division> CreateRuntimeDivisions(

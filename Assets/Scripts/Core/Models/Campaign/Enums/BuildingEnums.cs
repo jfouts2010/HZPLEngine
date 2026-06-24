@@ -12,6 +12,7 @@ namespace Models.Gameplay.Campaign
         Port,
         Railroad,
         Refinery,
-        PowerPlant
+        PowerPlant,
+        AirDefense
     }
 }

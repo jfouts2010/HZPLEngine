@@ -18,11 +18,14 @@ namespace Models.Gameplay.Campaign
         public string ContentHash = string.Empty;
         public List<CountryAllianceAssignment> CountryAllianceAssignments = new List<CountryAllianceAssignment>();
         public Dictionary<Alliance, List<Guid>> OrdnanceAllowances = new Dictionary<Alliance, List<Guid>>();
+        public Dictionary<Alliance, List<Guid>> SamSiteTemplateAllowances = new Dictionary<Alliance, List<Guid>>();
         public List<Tile> Tiles = new List<Tile>();
         [SerializeReference] public List<TileData> StartingTileData = new List<TileData>();
         public List<SupplyCapitalStartingCondition> SupplyCapitals = new List<SupplyCapitalStartingCondition>();
         public List<BuildingStartingCondition> BuildingStartingConditions = new List<BuildingStartingCondition>();
         public List<DivisionStartingCondition> DivisionStartingConditions = new List<DivisionStartingCondition>();
+        public List<MobileSamSiteStartingCondition> MobileSamSiteStartingConditions =
+            new List<MobileSamSiteStartingCondition>();
         public List<SquadronStartingCondition> SquadronStartingConditions = new List<SquadronStartingCondition>();
         
         public CampaignTemplate()

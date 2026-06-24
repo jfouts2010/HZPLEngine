@@ -10,5 +10,7 @@ namespace Models.Gameplay.Campaign
         public Vector3Int TileId;
         public BuildingType Type;
         public BuildingLevel Level = new BuildingLevel();
+        public Guid CountryId;
+        public Guid SamSiteTemplateId;
     }
 }

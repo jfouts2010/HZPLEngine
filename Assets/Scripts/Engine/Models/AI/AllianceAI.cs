@@ -1116,6 +1116,7 @@ namespace Engine.Models
                     BuildingType.PowerPlant => 4f,
                     BuildingType.Railroad => 3f,
                     BuildingType.Fort => 3f,
+                    BuildingType.AirDefense => 4f,
                     _ => 1f
                 } * functionalLevel;
             }
