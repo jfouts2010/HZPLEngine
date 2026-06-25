@@ -635,11 +635,49 @@ In the first model, mobile SAM components are damaged or destroyed by aircraft s
 _Avoid_: treating "self-propelled SAM" as a separate domain category when "mobile SAM site" is the broader host model.
 _Avoid_: folding mobile SAMs into battalion definitions or division soft/hard attack values when they are meant to affect the air war.
 
+### Alliance IADS
+
+An alliance IADS is the persistent integrated air-defense actor for one combatant alliance. Bluefor and Redfor each have an alliance IADS in v1; Neutral does not.
+
+An alliance IADS owns that alliance's shared air picture; air-defense sites contribute observations to it, and v1 assumes friendly sites can use the shared air picture automatically.
+
+Air-defense sites contribute to the alliance IADS for their effective site alliance. Mobile SAM sites use their assigned alliance; static air-defense sites derive their effective alliance from their campaign country assignment and stop contributing when disabled by hostile tile capture.
+
+In v1, the alliance IADS owns current tracks and engagement assignments. IADS commander refresh names the decision pass that updates those assignments, even if a future IADS commander becomes a separate durable entity.
+
+In v1, an alliance IADS builds tracks for active airborne hostile aircraft only. Friendly aircraft remain known through air operations rather than as IADS current tracks.
+
+Alliance IADS tracks are persistent campaign state across turns. They should be representable as campaign state even before save/load behavior exists.
+
+_Avoid_: treating future network topology as the owner of the v1 shared air picture.
+
 ### IADS current track
 
-An IADS current track is an air contact that a site or network is currently aware of through direct detection or shared cueing. Current track awareness is not authorization to fire.
+An IADS current track is an individual aircraft contact that a site or alliance IADS is currently aware of through direct detection or shared cueing. Current track awareness is not authorization to fire.
 
 Remote cueing may add current track awareness for another site, but remote cueing alone is not enough to authorize a SAM launch.
+
+_Avoid_: treating a package, flight, or other air-plan grouping as the tracked object.
+
+An IADS current track records the aircraft's last known position. It may reference the true aircraft entity for simulation bookkeeping, duplicate prevention, and resolution, but that reference is not itself alliance knowledge about aircraft type, squadron, mission, or package.
+
+### Stale IADS track
+
+A stale IADS track is an IADS current track that persists after the tracked aircraft is no longer currently observed. Stale tracks record that they are stale and remain in the alliance IADS air picture only until their configured expiry threshold is reached.
+
+Stale tracks represent lost sensor contact with an aircraft that may still be airborne. Their IADS track quality decays while stale, and tracks are removed when their true aircraft is no longer an active airborne entity, such as after landing, destruction, or leaving the battlespace.
+
+If a stale track is reacquired before expiry, it keeps the same track identity, clears stale state, refreshes its last known position, and continues building from its decayed quality.
+
+### IADS track quality
+
+IADS track quality is a continuous 0.0 to 1.0 estimate of how useful an IADS current track is for air-defense decisions. Track quality builds over time from radar contributions, is capped by the radar-aircraft situation, may improve faster when multiple radars contribute with diminishing returns, and is interpreted through gameplay thresholds for awareness, engagement assignment, weapon-quality use, and other actions.
+
+An aircraft contact must reach at least 0.10 IADS track quality before it becomes an IADS current track. The 0.10 threshold creates tracks; stale tracks below that quality persist until their stale expiry threshold is reached.
+
+Damaged, destroyed, disabled, or suppressed radar capability does not contribute to IADS track quality in v1. Radar emission is binary, and available radars are assumed to emit; future emission modes or graded suppression may add more detailed behavior.
+
+Radar contributions are component-level, while air-defense site status gates whether those components can contribute. A site with multiple radar components may still contribute through intact radar components when other radar components are damaged.
 
 ### IADS engagement assignment
 
@@ -687,7 +725,7 @@ SAM launch execution is the resolution of assigned SAM engagements after sortie 
 
 SAM launch execution happens once per simulation tick after all live sorties have moved for that tick, so all launch decisions use the same updated air picture.
 
-Within a tick, sortie movement updates the air picture first, IADS detection and engagement assignment refresh second, and SAM launch execution resolves assigned shots third.
+Within a tick, sortie movement updates aircraft positions first, the alliance IADS ages existing tracks and applies radar contributions second, IADS engagement assignment refresh runs third, and SAM launch execution resolves assigned shots fourth.
 
 SAM launch execution is site-driven: SAM sites are the actors that consume assigned engagements and fire. Debug output should still make package and sortie exposure legible by showing whether a package was fired at and, when it was not, why assigned or plausible SAM sites did not launch.
 

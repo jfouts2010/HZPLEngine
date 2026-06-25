@@ -37,6 +37,7 @@ namespace Engine.Monobehaviours.Managers
         [SerializeReference] public List<TileData> Tiles = new List<TileData>();
         public List<SupplyCapitalStartingCondition> SupplyCapitals = new List<SupplyCapitalStartingCondition>();
         private AISystem _AISystem;
+        private IADSSystem _IADSSystem;
         private GroundCombatSystem _groundCombatSystem;
         private GroundOperationsSystem _groundOperationsSystem;
         private SupplySystem _supplySystem;
@@ -111,6 +112,7 @@ namespace Engine.Monobehaviours.Managers
             };
             airDefenseSiteSystem.RebuildIndex();
             _AISystem = new AISystem(this);
+            _IADSSystem = new IADSSystem(this);
             _groundOperationsSystem = new GroundOperationsSystem(this);
             _groundCombatSystem = new GroundCombatSystem(this, _groundOperationsSystem);
             _supplySystem = new SupplySystem(this);
@@ -126,6 +128,14 @@ namespace Engine.Monobehaviours.Managers
                 return null;
 
             return _AISystem.GetAllianceAI(alliance);
+        }
+
+        public AllianceIADS GetAllianceIADS(Alliance alliance)
+        {
+            if (!_campaignStarted || _IADSSystem == null)
+                return null;
+
+            return _IADSSystem.GetAllianceIADS(alliance);
         }
 
         public bool IsDivisionEngagedInGroundCombat(Guid divisionId)
@@ -209,6 +219,7 @@ namespace Engine.Monobehaviours.Managers
 
             _groundCombatSystem.GameTurn(resolveCombatRound);
             _groundOperationsSystem.GameTurn(elapsedHours);
+            _IADSSystem.TacticalTurn();
             _supplySystem.GameTurn(elapsedHours);
             divisionSystem.ApplyCombatSupplyPenalties(
                 elapsedHours,
