@@ -9,11 +9,6 @@ namespace Engine.Models.Ground
 {
     public sealed class GroundCombatSystem
     {
-        private const float MultiOriginWidthMultiplier = 1.5f;
-        private const float ProtectedShotMissChance = 0.9f;
-        private const float ExposedShotMissChance = 0.6f;
-        private const float MinimumTargetWeight = 0.01f;
-
         [SerializeReference]
         public List<GroundCombat> Combats = new List<GroundCombat>();
 
@@ -106,7 +101,7 @@ namespace Engine.Models.Ground
 
         private bool IsValidAttacker(Division division, GroundCombat combat)
         {
-            if (!IsCombatReady(division) || GroundSystemUtility.IsRetreating(division))
+            if (!GroundTacticalCombatRules.IsCombatReady(division) || GroundSystemUtility.IsRetreating(division))
                 return false;
 
             if (!GroundSystemUtility.TryGetDivisionAlliance(gameManager, division, out var alliance)
@@ -119,7 +114,7 @@ namespace Engine.Models.Ground
 
         private bool IsValidDefender(Division division, GroundCombat combat)
         {
-            if (!IsCombatReady(division))
+            if (!GroundTacticalCombatRules.IsCombatReady(division))
                 return false;
 
             return GroundSystemUtility.TryGetDivisionAlliance(gameManager, division, out var alliance)
@@ -171,9 +166,9 @@ namespace Engine.Models.Ground
             if (!TryGetDefendingTerrain(combat, out var terrain))
                 return;
 
-            var combatWidth = GetCombatWidth(terrain, attackers);
-            var attackerFront = AssignFrontLine(attackers, combatWidth, true);
-            var defenderFront = AssignFrontLine(defenders, combatWidth, false);
+            var combatWidth = GroundTacticalCombatRules.GetCombatWidth(terrain, attackers);
+            var attackerFront = GroundTacticalCombatRules.AssignFrontLine(attackers, combatWidth, true);
+            var defenderFront = GroundTacticalCombatRules.AssignFrontLine(defenders, combatWidth, false);
 
             FirePhase(attackerFront, defenderFront, terrain, true);
             FirePhase(defenderFront, attackerFront, terrain, false);
@@ -213,68 +208,6 @@ namespace Engine.Models.Ground
             return true;
         }
 
-        private static int GetCombatWidth(TileTerrain terrain, IReadOnlyCollection<Combatant> attackers)
-        {
-            var width = GetBaseCombatWidth(terrain);
-            if (attackers.Select(attacker => attacker.Division.TileId).Distinct().Count() > 1)
-                width = Mathf.FloorToInt(width * MultiOriginWidthMultiplier);
-
-            return Mathf.Max(1, width);
-        }
-
-        private static int GetBaseCombatWidth(TileTerrain terrain)
-        {
-            return terrain switch
-            {
-                TileTerrain.Mountain => 50,
-                TileTerrain.Hills => 70,
-                TileTerrain.Tundra => 70,
-                _ => 80
-            };
-        }
-
-        private static float GetAttackerFireMultiplier(TileTerrain terrain)
-        {
-            return terrain switch
-            {
-                TileTerrain.Mountain => 0.6f,
-                TileTerrain.Hills => 0.8f,
-                _ => 1f
-            };
-        }
-
-        private static List<Combatant> AssignFrontLine(
-            IReadOnlyList<Combatant> combatants,
-            int combatWidth,
-            bool useToughness)
-        {
-            var frontLine = new List<Combatant>();
-            var usedWidth = 0;
-
-            foreach (var combatant in combatants)
-            {
-                var width = Mathf.Max(0, combatant.Division.CombatWidth);
-                if (usedWidth + width > combatWidth)
-                    continue;
-
-                combatant.DefensePoints = useToughness
-                    ? combatant.Division.Toughness
-                    : combatant.Division.Defense;
-                frontLine.Add(combatant);
-                usedWidth += width;
-            }
-
-            if (frontLine.Count != 0 || combatants.Count == 0)
-                return frontLine;
-
-            var overWidthCombatant = combatants[0];
-            overWidthCombatant.DefensePoints = useToughness
-                ? overWidthCombatant.Division.Toughness
-                : overWidthCombatant.Division.Defense;
-            frontLine.Add(overWidthCombatant);
-            return frontLine;
-        }
-
         private void FirePhase(
             IReadOnlyList<Combatant> shooters,
             IReadOnlyList<Combatant> targets,
@@ -290,7 +223,7 @@ namespace Engine.Models.Ground
                 if (target == null)
                     continue;
 
-                var shots = CalculateShotCount(shooter, target, terrain, shootersAreAttackers);
+                var shots = GroundTacticalCombatRules.CalculateShotCount(shooter, target, terrain, shootersAreAttackers);
                 for (var shotIndex = 0; shotIndex < shots; shotIndex++)
                     ResolveShot(target);
             }
@@ -298,17 +231,13 @@ namespace Engine.Models.Ground
 
         private Combatant ChooseTarget(Combatant shooter, IReadOnlyList<Combatant> targets)
         {
-            var totalWeight = 0f;
+            var totalWeight = GroundTacticalCombatRules.GetTotalTargetWeight(shooter, targets);
             var weights = new List<float>(targets.Count);
-            var preferSoftTargets = shooter.Division.SoftAttack >= shooter.Division.HardAttack;
 
             foreach (var target in targets)
             {
-                var softness = Mathf.Clamp01(target.Division.Softness);
-                var weight = preferSoftTargets ? softness : 1f - softness;
-                weight = Mathf.Max(MinimumTargetWeight, weight);
+                var weight = GroundTacticalCombatRules.GetTargetWeight(shooter, target);
                 weights.Add(weight);
-                totalWeight += weight;
             }
 
             var roll = (float)random.NextDouble() * totalWeight;
@@ -322,28 +251,11 @@ namespace Engine.Models.Ground
             return targets[targets.Count - 1];
         }
 
-        private static int CalculateShotCount(
-            Combatant shooter,
-            Combatant target,
-            TileTerrain terrain,
-            bool shooterIsAttacker)
-        {
-            var targetSoftness = Mathf.Clamp01(target.Division.Softness);
-            var shots = shooter.Division.SoftAttack * targetSoftness
-                        + shooter.Division.HardAttack * (1f - targetSoftness);
-            shots *= shooter.StrengthPercent;
-
-            if (shooterIsAttacker)
-                shots *= GetAttackerFireMultiplier(terrain);
-
-            return Mathf.Max(0, Mathf.FloorToInt(shots));
-        }
-
         private void ResolveShot(Combatant target)
         {
             var missChance = target.DefensePoints > 0
-                ? ProtectedShotMissChance
-                : ExposedShotMissChance;
+                ? GroundTacticalCombatRules.ProtectedShotMissChance
+                : GroundTacticalCombatRules.ExposedShotMissChance;
             var hit = random.NextDouble() >= missChance;
             target.DefensePoints = Mathf.Max(0, target.DefensePoints - 1);
 
@@ -369,7 +281,7 @@ namespace Engine.Models.Ground
                 if (!gameManager.divisionSystem.TryGetDivision(divisionId, out var division))
                     continue;
 
-                if (IsCombatReady(division))
+                if (GroundTacticalCombatRules.IsCombatReady(division))
                     continue;
 
                 division.CurrentOrder = new HoldGroundOrder(
@@ -389,7 +301,7 @@ namespace Engine.Models.Ground
                     || alliance != combat.DefendingAlliance)
                     continue;
 
-                if (IsCombatReady(division))
+                if (GroundTacticalCombatRules.IsCombatReady(division))
                     continue;
 
                 groundOperationsSystem.TryAssignRetreat(
@@ -432,13 +344,6 @@ namespace Engine.Models.Ground
                     GroundOrderAssignmentSource.System,
                     "Support attack ended after defenders broke");
             }
-        }
-
-        private static bool IsCombatReady(Division division)
-        {
-            return division.Strength >= 1f
-                   && division.Organization >= 1f
-                   && !GroundSystemUtility.IsRetreating(division);
         }
 
         private GroundOrderAIIntent GetHoldIntentForTile(Vector3Int tileId)
@@ -567,19 +472,26 @@ namespace Engine.Models.Ground
                 RebuildIndex();
         }
 
-        private sealed class Combatant
+        private sealed class Combatant : IGroundTacticalCombatant
         {
             public readonly Division Division;
-            public int DefensePoints;
 
             public Combatant(Division division)
             {
                 Division = division;
             }
 
-            public float StrengthPercent => Division.MaxStrength <= 0
-                ? 0f
-                : Mathf.Clamp01(Division.Strength / Division.MaxStrength);
+            public Vector3Int TileId => Division.TileId;
+            public float Strength => Division.Strength;
+            public int MaxStrength => Division.MaxStrength;
+            public float Organization => Division.Organization;
+            public float SoftAttack => Division.SoftAttack;
+            public float HardAttack => Division.HardAttack;
+            public int Defense => Division.Defense;
+            public int Toughness => Division.Toughness;
+            public float Softness => Division.Softness;
+            public int CombatWidth => Division.CombatWidth;
+            public float DefensePoints { get; set; }
         }
     }
 }

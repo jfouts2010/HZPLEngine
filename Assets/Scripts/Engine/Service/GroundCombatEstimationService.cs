@@ -50,10 +50,6 @@ namespace Engine.Models.Ground
 
     public static class GroundCombatEstimationService
     {
-        private const float MultiOriginWidthMultiplier = 1.5f;
-        private const float ProtectedShotMissChance = 0.9f;
-        private const float ExposedShotMissChance = 0.6f;
-        private const float MinimumTargetWeight = 0.01f;
         private const float LikelyVictoryThreshold = 0.55f;
         private const float AverageStrengthDamagePerHit = 0.05f;
         private const float AverageOrganizationDamagePerHit = 0.106f;
@@ -79,7 +75,7 @@ namespace Engine.Models.Ground
 
             var defenders = gameManager.divisionSystem
                 .GetDivisionsOnTile(defendingTileId)
-                .Where(division => IsCombatReady(division)
+                .Where(division => GroundTacticalCombatRules.IsCombatReady(division)
                                    && GroundSystemUtility.TryGetDivisionAlliance(
                                        gameManager,
                                        division,
@@ -88,7 +84,9 @@ namespace Engine.Models.Ground
                 .ToList();
 
             estimate = Estimate(
-                (attackerDivisions ?? Enumerable.Empty<Division>()).Where(IsCombatReady).ToList(),
+                (attackerDivisions ?? Enumerable.Empty<Division>())
+                .Where(GroundTacticalCombatRules.IsCombatReady)
+                .ToList(),
                 defenders,
                 terrain,
                 assaultIntent,
@@ -144,15 +142,17 @@ namespace Engine.Models.Ground
             float damageScale)
         {
             var attackers = (attackerDivisions ?? Array.Empty<Division>())
-                .Where(IsCombatReady)
+                .Where(GroundTacticalCombatRules.IsCombatReady)
                 .ToList();
             var defenders = (defenderDivisions ?? Array.Empty<Division>())
-                .Where(IsCombatReady)
+                .Where(GroundTacticalCombatRules.IsCombatReady)
                 .ToList();
 
-            var combatWidth = GetCombatWidth(terrain, attackers);
-            var attackerFrontLine = AssignFrontLine(attackers, combatWidth, true);
-            var defenderFrontLine = AssignFrontLine(defenders, combatWidth, false);
+            var attackerSide = attackers.Select(division => new EstimatedCombatant(division)).ToList();
+            var defenderSide = defenders.Select(division => new EstimatedCombatant(division)).ToList();
+            var combatWidth = GroundTacticalCombatRules.GetCombatWidth(terrain, attackerSide);
+            var attackerFrontLine = GroundTacticalCombatRules.AssignFrontLine(attackerSide, combatWidth, true);
+            var defenderFrontLine = GroundTacticalCombatRules.AssignFrontLine(defenderSide, combatWidth, false);
 
             var attackerPower = SumExpectedOrganizationDamage(
                 attackerFrontLine,
@@ -185,12 +185,12 @@ namespace Engine.Models.Ground
 
         public static float CalculateDivisionCombatPower(Division division)
         {
-            if (!IsCombatReady(division))
+            if (!GroundTacticalCombatRules.IsCombatReady(division))
                 return 0f;
 
-            var strengthPercent = GetStrengthPercent(division);
+            var strengthPercent = GroundTacticalCombatRules.GetStrengthPercent(new EstimatedCombatant(division));
             var genericSoftTargetShots = division.SoftAttack * 0.5f + division.HardAttack * 0.5f;
-            var protectedHitChance = 1f - ProtectedShotMissChance;
+            var protectedHitChance = 1f - GroundTacticalCombatRules.ProtectedShotMissChance;
             var expectedDamage = Mathf.Max(0f, genericSoftTargetShots) * strengthPercent * protectedHitChance;
             var widthEfficiency = division.CombatWidth <= 0 ? 1f : 20f / division.CombatWidth;
             return expectedDamage * Mathf.Clamp(widthEfficiency, 0.25f, 2f);
@@ -208,61 +208,6 @@ namespace Engine.Models.Ground
             return true;
         }
 
-        private static int GetCombatWidth(TileTerrain terrain, IReadOnlyList<Division> attackers)
-        {
-            var width = GetBaseCombatWidth(terrain);
-            if (attackers.Select(attacker => attacker.TileId).Distinct().Count() > 1)
-                width = Mathf.FloorToInt(width * MultiOriginWidthMultiplier);
-
-            return Mathf.Max(1, width);
-        }
-
-        private static int GetBaseCombatWidth(TileTerrain terrain)
-        {
-            return terrain switch
-            {
-                TileTerrain.Mountain => 50,
-                TileTerrain.Hills => 70,
-                TileTerrain.Tundra => 70,
-                _ => 80
-            };
-        }
-
-        private static float GetAttackerFireMultiplier(TileTerrain terrain)
-        {
-            return terrain switch
-            {
-                TileTerrain.Mountain => 0.6f,
-                TileTerrain.Hills => 0.8f,
-                _ => 1f
-            };
-        }
-
-        private static List<EstimatedCombatant> AssignFrontLine(
-            IReadOnlyList<Division> combatants,
-            int combatWidth,
-            bool useToughness)
-        {
-            var frontLine = new List<EstimatedCombatant>();
-            var usedWidth = 0;
-
-            foreach (var division in combatants)
-            {
-                var width = Mathf.Max(0, division.CombatWidth);
-                if (usedWidth + width > combatWidth)
-                    continue;
-
-                frontLine.Add(new EstimatedCombatant(division, useToughness));
-                usedWidth += width;
-            }
-
-            if (frontLine.Count != 0 || combatants.Count == 0)
-                return frontLine;
-
-            frontLine.Add(new EstimatedCombatant(combatants[0], useToughness));
-            return frontLine;
-        }
-
         private static float EstimateVictoryLikelihood(
             IReadOnlyList<Division> attackers,
             IReadOnlyList<Division> defenders,
@@ -275,16 +220,16 @@ namespace Engine.Models.Ground
             if (defenders.Count == 0)
                 return 1f;
 
-            var combatWidth = GetCombatWidth(terrain, attackers);
-            var attackerSide = attackers.Select(division => new EstimatedCombatant(division, true)).ToList();
-            var defenderSide = defenders.Select(division => new EstimatedCombatant(division, false)).ToList();
+            var attackerSide = attackers.Select(division => new EstimatedCombatant(division)).ToList();
+            var defenderSide = defenders.Select(division => new EstimatedCombatant(division)).ToList();
+            var combatWidth = GroundTacticalCombatRules.GetCombatWidth(terrain, attackerSide);
             var attackerBreakRound = EstimateSimulationRounds + 1f;
             var defenderBreakRound = EstimateSimulationRounds + 1f;
 
             for (var round = 1; round <= EstimateSimulationRounds; round++)
             {
-                var attackerFront = AssignFrontLine(attackerSide, combatWidth, true);
-                var defenderFront = AssignFrontLine(defenderSide, combatWidth, false);
+                var attackerFront = GroundTacticalCombatRules.AssignFrontLine(attackerSide, combatWidth, true);
+                var defenderFront = GroundTacticalCombatRules.AssignFrontLine(defenderSide, combatWidth, false);
 
                 if (attackerFront.Count == 0)
                 {
@@ -301,8 +246,8 @@ namespace Engine.Models.Ground
                 ApplyExpectedFire(attackerFront, defenderFront, terrain, true, damageScale);
                 ApplyExpectedFire(defenderFront, attackerFront, terrain, false, damageScale);
 
-                attackerSide = attackerSide.Where(IsEstimatedCombatReady).ToList();
-                defenderSide = defenderSide.Where(IsEstimatedCombatReady).ToList();
+                attackerSide = attackerSide.Where(GroundTacticalCombatRules.IsCombatReady).ToList();
+                defenderSide = defenderSide.Where(GroundTacticalCombatRules.IsCombatReady).ToList();
 
                 if (attackerSide.Count == 0)
                 {
@@ -350,14 +295,14 @@ namespace Engine.Models.Ground
         {
             foreach (var shooter in shooters)
             {
-                var totalTargetWeight = GetTotalTargetWeight(shooter, targets);
+                var totalTargetWeight = GroundTacticalCombatRules.GetTotalTargetWeight(shooter, targets);
                 if (totalTargetWeight <= 0f)
                     continue;
 
                 foreach (var target in targets)
                 {
-                    var targetShare = GetTargetWeight(shooter, target) / totalTargetWeight;
-                    var shots = CalculateShotCount(shooter, target, terrain, shootersAreAttackers) * targetShare;
+                    var targetShare = GroundTacticalCombatRules.GetTargetWeight(shooter, target) / totalTargetWeight;
+                    var shots = GroundTacticalCombatRules.CalculateShotCount(shooter, target, terrain, shootersAreAttackers) * targetShare;
                     ApplyExpectedShots(target, shots, damageScale);
                 }
             }
@@ -373,15 +318,15 @@ namespace Engine.Models.Ground
             var total = 0f;
             foreach (var shooter in shooters)
             {
-                var totalTargetWeight = GetTotalTargetWeight(shooter, targets);
+                var totalTargetWeight = GroundTacticalCombatRules.GetTotalTargetWeight(shooter, targets);
                 if (totalTargetWeight <= 0f)
                     continue;
 
                 foreach (var target in targets)
                 {
-                    var targetShare = GetTargetWeight(shooter, target) / totalTargetWeight;
-                    var shots = CalculateShotCount(shooter, target, terrain, shootersAreAttackers) * targetShare;
-                    total += CalculateExpectedHits(target.DefensePoints, shots)
+                    var targetShare = GroundTacticalCombatRules.GetTargetWeight(shooter, target) / totalTargetWeight;
+                    var shots = GroundTacticalCombatRules.CalculateShotCount(shooter, target, terrain, shootersAreAttackers) * targetShare;
+                    total += GroundTacticalCombatRules.CalculateExpectedHits(target.DefensePoints, shots)
                              * AverageOrganizationDamagePerHit
                              * damageScale;
                 }
@@ -392,7 +337,7 @@ namespace Engine.Models.Ground
 
         private static void ApplyExpectedShots(EstimatedCombatant target, float shots, float damageScale)
         {
-            var expectedHits = CalculateExpectedHits(target.DefensePoints, shots);
+            var expectedHits = GroundTacticalCombatRules.CalculateExpectedHits(target.DefensePoints, shots);
             target.DefensePoints = Mathf.Max(0f, target.DefensePoints - shots);
             target.Strength = Mathf.Max(
                 0f,
@@ -402,136 +347,32 @@ namespace Engine.Models.Ground
                 target.Organization - (expectedHits * AverageOrganizationDamagePerHit * damageScale));
         }
 
-        private static float CalculateExpectedHits(float defensePoints, float shots)
+        private sealed class EstimatedCombatant : IGroundTacticalCombatant
         {
-            if (shots <= 0f)
-                return 0f;
-
-            var protectedShots = Mathf.Min(Mathf.Max(0f, defensePoints), shots);
-            var exposedShots = shots - protectedShots;
-            return protectedShots * (1f - ProtectedShotMissChance)
-                   + exposedShots * (1f - ExposedShotMissChance);
-        }
-
-        private static int CalculateShotCount(
-            EstimatedCombatant shooter,
-            EstimatedCombatant target,
-            TileTerrain terrain,
-            bool shooterIsAttacker)
-        {
-            var targetSoftness = Mathf.Clamp01(target.Softness);
-            var shots = shooter.SoftAttack * targetSoftness
-                        + shooter.HardAttack * (1f - targetSoftness);
-            shots *= shooter.StrengthPercent;
-
-            if (shooterIsAttacker)
-                shots *= GetAttackerFireMultiplier(terrain);
-
-            return Mathf.Max(0, Mathf.FloorToInt(shots));
-        }
-
-        private static float GetTotalTargetWeight(
-            EstimatedCombatant shooter,
-            IReadOnlyList<EstimatedCombatant> targets)
-        {
-            var total = 0f;
-            foreach (var target in targets)
-                total += GetTargetWeight(shooter, target);
-
-            return total;
-        }
-
-        private static float GetTargetWeight(EstimatedCombatant shooter, EstimatedCombatant target)
-        {
-            var preferSoftTargets = shooter.SoftAttack >= shooter.HardAttack;
-            var weight = preferSoftTargets
-                ? Mathf.Clamp01(target.Softness)
-                : 1f - Mathf.Clamp01(target.Softness);
-            return Mathf.Max(MinimumTargetWeight, weight);
-        }
-
-        private static List<EstimatedCombatant> AssignFrontLine(
-            IReadOnlyList<EstimatedCombatant> combatants,
-            int combatWidth,
-            bool useToughness)
-        {
-            var frontLine = new List<EstimatedCombatant>();
-            var usedWidth = 0;
-
-            foreach (var combatant in combatants)
-            {
-                var width = Mathf.Max(0, combatant.CombatWidth);
-                if (usedWidth + width > combatWidth)
-                    continue;
-
-                combatant.ResetDefensePoints(useToughness);
-                frontLine.Add(combatant);
-                usedWidth += width;
-            }
-
-            if (frontLine.Count != 0 || combatants.Count == 0)
-                return frontLine;
-
-            combatants[0].ResetDefensePoints(useToughness);
-            frontLine.Add(combatants[0]);
-            return frontLine;
-        }
-
-        private static bool IsEstimatedCombatReady(EstimatedCombatant combatant)
-        {
-            return combatant.Strength >= 1f && combatant.Organization >= 1f;
-        }
-
-        private static float GetStrengthPercent(Division division)
-        {
-            return division.MaxStrength <= 0
-                ? 0f
-                : Mathf.Clamp01(division.Strength / division.MaxStrength);
-        }
-
-        private static bool IsCombatReady(Division division)
-        {
-            return division != null
-                   && division.Strength >= 1f
-                   && division.Organization >= 1f
-                   && !GroundSystemUtility.IsRetreating(division);
-        }
-
-        private sealed class EstimatedCombatant
-        {
-            private readonly int defense;
-            private readonly int toughness;
-            private readonly int maxStrength;
-
-            public float Strength;
-            public float Organization;
-            public float DefensePoints;
+            public float Strength { get; set; }
+            public float Organization { get; set; }
+            public float DefensePoints { get; set; }
             public float SoftAttack { get; }
             public float HardAttack { get; }
             public float Softness { get; }
+            public Vector3Int TileId { get; }
+            public int MaxStrength { get; }
+            public int Defense { get; }
+            public int Toughness { get; }
             public int CombatWidth { get; }
 
-            public EstimatedCombatant(Division division, bool useToughness)
+            public EstimatedCombatant(Division division)
             {
-                maxStrength = division.MaxStrength;
+                TileId = division.TileId;
+                MaxStrength = division.MaxStrength;
                 Strength = division.Strength;
                 Organization = division.Organization;
                 SoftAttack = division.SoftAttack;
                 HardAttack = division.HardAttack;
-                defense = division.Defense;
-                toughness = division.Toughness;
+                Defense = division.Defense;
+                Toughness = division.Toughness;
                 Softness = division.Softness;
                 CombatWidth = division.CombatWidth;
-                ResetDefensePoints(useToughness);
-            }
-
-            public float StrengthPercent => maxStrength <= 0
-                ? 0f
-                : Mathf.Clamp01(Strength / maxStrength);
-
-            public void ResetDefensePoints(bool useToughness)
-            {
-                DefensePoints = useToughness ? toughness : defense;
             }
         }
     }
