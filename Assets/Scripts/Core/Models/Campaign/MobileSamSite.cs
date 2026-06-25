@@ -5,7 +5,7 @@ using UnityEngine;
 namespace Models.Gameplay.Campaign
 {
     [Serializable]
-    public class MobileSamSite
+    public class MobileSamSite : IAirDefenseSite
     {
         public Guid MobileSamSiteId;
         public Guid SamSiteTemplateId;
@@ -14,6 +14,12 @@ namespace Models.Gameplay.Campaign
         public bool IsDestroyed;
         public bool IsSuppressed;
         [SerializeReference] public List<AirDefenseComponent> Components = new List<AirDefenseComponent>();
+
+        Guid IAirDefenseSite.SiteId => MobileSamSiteId;
+
+        Guid IAirDefenseSite.SamSiteTemplateId => SamSiteTemplateId;
+
+        IReadOnlyList<AirDefenseComponent> IAirDefenseSite.Components => Components;
 
         public MobileSamSite()
         {

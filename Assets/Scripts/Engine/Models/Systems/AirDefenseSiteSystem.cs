@@ -20,6 +20,68 @@ namespace Models.Gameplay.Campaign
                 : buildingSystem.GetBuildings<AirDefenseBuilding>();
         }
 
+        public IEnumerable<IAirDefenseSite> GetAirDefenseSites(BuildingSystem buildingSystem)
+        {
+            foreach (var site in GetStaticSamSites(buildingSystem))
+                yield return site;
+
+            foreach (var site in MobileSamSites ?? Enumerable.Empty<MobileSamSite>())
+            {
+                if (site != null)
+                    yield return site;
+            }
+        }
+
+        public Alliance GetEffectiveAlliance(
+            IAirDefenseSite site,
+            Func<Guid, Alliance> getCountryAlliance)
+        {
+            return site switch
+            {
+                AirDefenseBuilding building => getCountryAlliance?.Invoke(building.CountryId) ?? Alliance.Neutral,
+                MobileSamSite mobileSite => mobileSite.Alliance,
+                _ => Alliance.Neutral
+            };
+        }
+
+        public bool TryGetTileId(
+            IAirDefenseSite site,
+            DivisionSystem divisionSystem,
+            out Vector3Int tileId)
+        {
+            switch (site)
+            {
+                case AirDefenseBuilding building:
+                    tileId = building.TileId;
+                    return true;
+                case MobileSamSite mobileSite:
+                    if (divisionSystem != null
+                        && divisionSystem.TryGetDivision(mobileSite.HostDivisionId, out var hostDivision))
+                    {
+                        tileId = hostDivision.TileId;
+                        return true;
+                    }
+
+                    break;
+            }
+
+            tileId = default;
+            return false;
+        }
+
+        public List<AirDefenseComponent> GetAvailableComponents(IAirDefenseSite site)
+        {
+            switch (site)
+            {
+                case AirDefenseBuilding building when !building.IsAirDefenseDisabled && !building.IsSuppressed:
+                    return building.Components;
+                case MobileSamSite mobileSite when !mobileSite.IsDestroyed && !mobileSite.IsSuppressed:
+                    return mobileSite.Components;
+                default:
+                    return new List<AirDefenseComponent>();
+            }
+        }
+
         public List<MobileSamSite> GetMobileSamSitesForDivision(Guid divisionId)
         {
             EnsureIndex();
@@ -91,5 +153,6 @@ namespace Models.Gameplay.Campaign
             if (mobileSitesById == null || mobileSitesByHostDivisionId == null)
                 RebuildIndex();
         }
+
     }
 }

@@ -42,7 +42,11 @@ namespace Models.Gameplay.Campaign
         public void RefreshTracks(
             IEnumerable<CampaignAircraft> activeAircraft,
             IReadOnlyDictionary<Guid, Alliance> aircraftAllianceById,
-            IEnumerable<RadarContributionSource> radarSources,
+            IEnumerable<IAirDefenseSite> airDefenseSites,
+            Func<IAirDefenseSite, Alliance> getEffectiveAlliance,
+            Func<IAirDefenseSite, Vector3Int?> getTileId,
+            Func<IAirDefenseSite, IEnumerable<AirDefenseComponent>> getAvailableComponents,
+            IReadOnlyDictionary<Guid, RadarAirDefenseComponentDefinition> radarDefinitionLookup,
             IReadOnlyDictionary<Guid, AircraftTypeDefinition> aircraftTypeDefinitions,
             float tileDistanceKm)
         {
@@ -64,8 +68,10 @@ namespace Models.Gameplay.Campaign
             RemoveInactiveTracks(activeHostileAircraft);
 
             var refreshedAircraftIds = new HashSet<Guid>();
-            var availableRadars = (radarSources ?? Enumerable.Empty<RadarContributionSource>())
-                .Where(source => source != null && source.Alliance == Alliance && source.CanContribute)
+            var availableSites = (airDefenseSites ?? Enumerable.Empty<IAirDefenseSite>())
+                .Where(site => site != null
+                               && getEffectiveAlliance != null
+                               && getEffectiveAlliance(site) == Alliance)
                 .ToList();
 
             foreach (var aircraft in activeHostileAircraft.Values)
@@ -78,7 +84,10 @@ namespace Models.Gameplay.Campaign
                 var contributions = CalculateRadarContributions(
                         aircraft,
                         aircraftTypeDefinition,
-                        availableRadars,
+                        availableSites,
+                        getTileId,
+                        getAvailableComponents,
+                        radarDefinitionLookup,
                         tileDistanceKm)
                     .OrderByDescending(contribution => contribution.QualityIncrease)
                     .ToList();
@@ -129,28 +138,48 @@ namespace Models.Gameplay.Campaign
         private IEnumerable<RadarContribution> CalculateRadarContributions(
             CampaignAircraft aircraft,
             AircraftTypeDefinition aircraftTypeDefinition,
-            IEnumerable<RadarContributionSource> radarSources,
+            IEnumerable<IAirDefenseSite> airDefenseSites,
+            Func<IAirDefenseSite, Vector3Int?> getTileId,
+            Func<IAirDefenseSite, IEnumerable<AirDefenseComponent>> getAvailableComponents,
+            IReadOnlyDictionary<Guid, RadarAirDefenseComponentDefinition> radarDefinitionLookup,
             float tileDistanceKm)
         {
-            foreach (var radarSource in radarSources)
+            if (getTileId == null || getAvailableComponents == null)
+                yield break;
+
+            foreach (var site in airDefenseSites ?? Enumerable.Empty<IAirDefenseSite>())
             {
-                var definition = radarSource.RadarDefinition;
-                if (definition == null || definition.DetectionRangeKm <= 0f)
+                var siteTileId = getTileId(site);
+                if (!siteTileId.HasValue)
                     continue;
 
-                var distanceKm = CalculateDistanceKm(radarSource.TileId, aircraft.CurrentTileId, tileDistanceKm);
-                if (distanceKm > definition.DetectionRangeKm)
-                    continue;
+                foreach (var radarComponent in (getAvailableComponents(site) ?? Enumerable.Empty<AirDefenseComponent>())
+                             .OfType<RadarAirDefenseComponent>())
+                {
+                    if (radarComponent == null
+                        || radarComponent.IsDamaged
+                        || radarDefinitionLookup == null
+                        || !radarDefinitionLookup.TryGetValue(
+                            radarComponent.SamComponentDefinitionId,
+                            out var definition)
+                        || definition == null
+                        || definition.DetectionRangeKm <= 0f)
+                        continue;
 
-                var rangeFactor = Mathf.Clamp01(1f - distanceKm / definition.DetectionRangeKm);
-                var detectabilityFactor = Mathf.Clamp01(aircraftTypeDefinition.RadarQuality);
-                var qualityCap = Mathf.Clamp01(definition.TrackQuality * detectabilityFactor * (0.5f + 0.5f * rangeFactor));
-                var qualityIncrease = Mathf.Clamp01(BaseTrackBuildRatePerTurn * definition.TrackQuality * detectabilityFactor * rangeFactor);
+                    var distanceKm = CalculateDistanceKm(siteTileId.Value, aircraft.CurrentTileId, tileDistanceKm);
+                    if (distanceKm > definition.DetectionRangeKm)
+                        continue;
 
-                if (qualityCap <= 0f || qualityIncrease <= 0f)
-                    continue;
+                    var rangeFactor = Mathf.Clamp01(1f - distanceKm / definition.DetectionRangeKm);
+                    var detectabilityFactor = Mathf.Clamp01(aircraftTypeDefinition.RadarQuality);
+                    var qualityCap = Mathf.Clamp01(definition.TrackQuality * detectabilityFactor * (0.5f + 0.5f * rangeFactor));
+                    var qualityIncrease = Mathf.Clamp01(BaseTrackBuildRatePerTurn * definition.TrackQuality * detectabilityFactor * rangeFactor);
 
-                yield return new RadarContribution(qualityIncrease, qualityCap);
+                    if (qualityCap <= 0f || qualityIncrease <= 0f)
+                        continue;
+
+                    yield return new RadarContribution(qualityIncrease, qualityCap);
+                }
             }
         }
 
@@ -225,23 +254,4 @@ namespace Models.Gameplay.Campaign
         }
     }
 
-    public sealed class RadarContributionSource
-    {
-        public Alliance Alliance { get; }
-        public Vector3Int TileId { get; }
-        public RadarAirDefenseComponentDefinition RadarDefinition { get; }
-        public bool CanContribute { get; }
-
-        public RadarContributionSource(
-            Alliance alliance,
-            Vector3Int tileId,
-            RadarAirDefenseComponentDefinition radarDefinition,
-            bool canContribute)
-        {
-            Alliance = alliance;
-            TileId = tileId;
-            RadarDefinition = radarDefinition;
-            CanContribute = canContribute;
-        }
-    }
 }

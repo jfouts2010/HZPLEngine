@@ -5,6 +5,7 @@ using Engine.Monobehaviours.Managers;
 using Models.Gameplay.Campaign;
 using Models.Module;
 using Monobehaviours.Singletons;
+using UnityEngine;
 
 namespace Engine.Models
 {
@@ -46,21 +47,40 @@ namespace Engine.Models
             var radarDefinitionLookup = activeModule.SamComponentDefinitions
                 .OfType<RadarAirDefenseComponentDefinition>()
                 .ToDictionary(definition => definition.SamComponentDefinitionId);
-            var radarSources = BuildRadarContributionSources(radarDefinitionLookup).ToList();
+            var airDefenseSites = gameManager.airDefenseSiteSystem
+                .GetAirDefenseSites(gameManager.buildingSystem)
+                .ToList();
             var tileDistanceKm = gameManager.SimulationSettings?.TileDistanceKM ?? 0f;
             var activeAircraft = GetActiveSortieAircraft().ToList();
             var aircraftAllianceById = BuildAircraftAllianceLookup(activeAircraft);
+            Vector3Int? GetAirDefenseSiteTileId(IAirDefenseSite site)
+            {
+                return gameManager.airDefenseSiteSystem.TryGetTileId(
+                    site,
+                    gameManager.divisionSystem,
+                    out var tileId)
+                    ? tileId
+                    : null;
+            }
 
             blueforIads.RefreshTracks(
                 activeAircraft,
                 aircraftAllianceById,
-                radarSources,
+                airDefenseSites,
+                site => gameManager.airDefenseSiteSystem.GetEffectiveAlliance(site, GetCountryAlliance),
+                GetAirDefenseSiteTileId,
+                gameManager.airDefenseSiteSystem.GetAvailableComponents,
+                radarDefinitionLookup,
                 aircraftTypeDefinitions,
                 tileDistanceKm);
             redforIads.RefreshTracks(
                 activeAircraft,
                 aircraftAllianceById,
-                radarSources,
+                airDefenseSites,
+                site => gameManager.airDefenseSiteSystem.GetEffectiveAlliance(site, GetCountryAlliance),
+                GetAirDefenseSiteTileId,
+                gameManager.airDefenseSiteSystem.GetAvailableComponents,
+                radarDefinitionLookup,
                 aircraftTypeDefinitions,
                 tileDistanceKm);
         }
@@ -93,75 +113,6 @@ namespace Engine.Models
             }
 
             return allianceByAircraftId;
-        }
-
-        private IEnumerable<RadarContributionSource> BuildRadarContributionSources(
-            IReadOnlyDictionary<Guid, RadarAirDefenseComponentDefinition> radarDefinitionLookup)
-        {
-            foreach (var source in BuildStaticRadarContributionSources(radarDefinitionLookup))
-                yield return source;
-
-            foreach (var source in BuildMobileRadarContributionSources(radarDefinitionLookup))
-                yield return source;
-        }
-
-        private IEnumerable<RadarContributionSource> BuildStaticRadarContributionSources(
-            IReadOnlyDictionary<Guid, RadarAirDefenseComponentDefinition> radarDefinitionLookup)
-        {
-            foreach (var site in gameManager.airDefenseSiteSystem.GetStaticSamSites(gameManager.buildingSystem))
-            {
-                if (site == null || site.IsAirDefenseDisabled || site.IsSuppressed)
-                    continue;
-
-                var alliance = GetCountryAlliance(site.CountryId);
-                if (alliance == Alliance.Neutral)
-                    continue;
-
-                foreach (var component in site.Components.OfType<RadarAirDefenseComponent>())
-                {
-                    if (component == null
-                        || component.IsDamaged
-                        || !radarDefinitionLookup.TryGetValue(
-                            component.SamComponentDefinitionId,
-                            out var radarDefinition))
-                        continue;
-
-                    yield return new RadarContributionSource(
-                        alliance,
-                        site.TileId,
-                        radarDefinition,
-                        true);
-                }
-            }
-        }
-
-        private IEnumerable<RadarContributionSource> BuildMobileRadarContributionSources(
-            IReadOnlyDictionary<Guid, RadarAirDefenseComponentDefinition> radarDefinitionLookup)
-        {
-            foreach (var site in gameManager.airDefenseSiteSystem.MobileSamSites ?? Enumerable.Empty<MobileSamSite>())
-            {
-                if (site == null || site.IsDestroyed || site.IsSuppressed || site.Alliance == Alliance.Neutral)
-                    continue;
-
-                if (!gameManager.divisionSystem.TryGetDivision(site.HostDivisionId, out var hostDivision))
-                    continue;
-
-                foreach (var component in site.Components.OfType<RadarAirDefenseComponent>())
-                {
-                    if (component == null
-                        || component.IsDamaged
-                        || !radarDefinitionLookup.TryGetValue(
-                            component.SamComponentDefinitionId,
-                            out var radarDefinition))
-                        continue;
-
-                    yield return new RadarContributionSource(
-                        site.Alliance,
-                        hostDivision.TileId,
-                        radarDefinition,
-                        true);
-                }
-            }
         }
 
         private Alliance GetCountryAlliance(Guid countryId)
