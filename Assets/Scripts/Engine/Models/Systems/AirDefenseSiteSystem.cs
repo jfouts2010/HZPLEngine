@@ -8,151 +8,157 @@ namespace Models.Gameplay.Campaign
     [Serializable]
     public class AirDefenseSiteSystem
     {
-        [SerializeReference] public List<MobileSamSite> MobileSamSites = new List<MobileSamSite>();
+        [SerializeReference] public List<SamSite> Sites = new List<SamSite>();
 
-        private Dictionary<Guid, MobileSamSite> mobileSitesById;
-        private Dictionary<Guid, List<MobileSamSite>> mobileSitesByHostDivisionId;
+        private Dictionary<Guid, SamSite> sitesById;
+        private Dictionary<Guid, List<SamSite>> sitesByHostId;
+        private BuildingSystem buildingSystem;
+        private DivisionSystem divisionSystem;
+        private Func<Guid, Alliance> getCountryAlliance;
 
-        public List<AirDefenseBuilding> GetStaticSamSites(BuildingSystem buildingSystem)
+        public void Configure(
+            BuildingSystem buildings,
+            DivisionSystem divisions,
+            Func<Guid, Alliance> countryAllianceResolver)
         {
-            return buildingSystem == null
-                ? new List<AirDefenseBuilding>()
-                : buildingSystem.GetBuildings<AirDefenseBuilding>();
+            buildingSystem = buildings;
+            divisionSystem = divisions;
+            getCountryAlliance = countryAllianceResolver;
         }
 
-        public IEnumerable<IAirDefenseSite> GetAirDefenseSites(BuildingSystem buildingSystem)
+        public IEnumerable<SamSite> GetAirDefenseSites()
         {
-            foreach (var site in GetStaticSamSites(buildingSystem))
-                yield return site;
+            return Sites ?? Enumerable.Empty<SamSite>();
+        }
 
-            foreach (var site in MobileSamSites ?? Enumerable.Empty<MobileSamSite>())
+        public Alliance GetEffectiveAlliance(SamSite site)
+        {
+            if (site == null)
+                return Alliance.Neutral;
+
+            if (site.HostType == SamSiteHostType.MobileDivision)
+                return site.Alliance;
+
+            if (buildingSystem != null
+                && buildingSystem.TryGetBuilding(site.HostId, out var building)
+                && building is AirDefenseBuilding airDefenseBuilding)
             {
-                if (site != null)
-                    yield return site;
+                return getCountryAlliance?.Invoke(airDefenseBuilding.CountryId) ?? Alliance.Neutral;
             }
+
+            return Alliance.Neutral;
         }
 
-        public Alliance GetEffectiveAlliance(
-            IAirDefenseSite site,
-            Func<Guid, Alliance> getCountryAlliance)
+        public bool TryGetTileId(SamSite site, out Vector3Int tileId)
         {
-            return site switch
+            if (site != null)
             {
-                AirDefenseBuilding building => getCountryAlliance?.Invoke(building.CountryId) ?? Alliance.Neutral,
-                MobileSamSite mobileSite => mobileSite.Alliance,
-                _ => Alliance.Neutral
-            };
-        }
-
-        public bool TryGetTileId(
-            IAirDefenseSite site,
-            DivisionSystem divisionSystem,
-            out Vector3Int tileId)
-        {
-            switch (site)
-            {
-                case AirDefenseBuilding building:
+                if (site.HostType == SamSiteHostType.StaticBuilding
+                    && buildingSystem != null
+                    && buildingSystem.TryGetBuilding(site.HostId, out var building))
+                {
                     tileId = building.TileId;
                     return true;
-                case MobileSamSite mobileSite:
-                    if (divisionSystem != null
-                        && divisionSystem.TryGetDivision(mobileSite.HostDivisionId, out var hostDivision))
-                    {
-                        tileId = hostDivision.TileId;
-                        return true;
-                    }
+                }
 
-                    break;
+                if (site.HostType == SamSiteHostType.MobileDivision
+                    && divisionSystem != null
+                    && divisionSystem.TryGetDivision(site.HostId, out var division))
+                {
+                    tileId = division.TileId;
+                    return true;
+                }
             }
 
             tileId = default;
             return false;
         }
 
-        public List<AirDefenseComponent> GetAvailableComponents(IAirDefenseSite site)
+        public IEnumerable<AirDefenseComponent> GetAvailableComponents(SamSite site)
         {
-            switch (site)
+            if (site == null
+                || site.IsDisabled
+                || site.IsDestroyed
+                || site.IsSuppressed)
             {
-                case AirDefenseBuilding building when !building.IsAirDefenseDisabled && !building.IsSuppressed:
-                    return building.Components;
-                case MobileSamSite mobileSite when !mobileSite.IsDestroyed && !mobileSite.IsSuppressed:
-                    return mobileSite.Components;
-                default:
-                    return new List<AirDefenseComponent>();
+                return Enumerable.Empty<AirDefenseComponent>();
             }
+
+            return site.Components ?? Enumerable.Empty<AirDefenseComponent>();
         }
 
-        public List<MobileSamSite> GetMobileSamSitesForDivision(Guid divisionId)
+        public List<SamSite> GetSitesForHost(Guid hostId)
         {
             EnsureIndex();
-            return mobileSitesByHostDivisionId.TryGetValue(divisionId, out var sites)
+            return sitesByHostId.TryGetValue(hostId, out var sites)
                 ? sites
-                : new List<MobileSamSite>();
+                : new List<SamSite>();
         }
 
-        public bool TryGetMobileSamSite(Guid mobileSamSiteId, out MobileSamSite mobileSamSite)
+        public bool TryGetSite(Guid siteId, out SamSite site)
         {
             EnsureIndex();
-            return mobileSitesById.TryGetValue(mobileSamSiteId, out mobileSamSite);
+            return sitesById.TryGetValue(siteId, out site);
         }
 
-        public bool DamageStaticComponent(BuildingSystem buildingSystem, Guid buildingId, Guid componentId)
+        public bool DamageComponent(Guid siteId, Guid componentId)
         {
-            if (buildingSystem == null || !buildingSystem.TryGetBuilding(buildingId, out var building))
-                return false;
-
-            if (building is AirDefenseBuilding staticSamBuilding)
-                return staticSamBuilding.DamageComponent(componentId);
-
-            return false;
+            return TryGetSite(siteId, out var site) && site.DamageComponent(componentId);
         }
 
-        public bool DamageMobileSamSite(Guid mobileSamSiteId)
+        public bool DestroySite(Guid siteId)
         {
-            if (!TryGetMobileSamSite(mobileSamSiteId, out var mobileSamSite))
+            if (!TryGetSite(siteId, out var site))
                 return false;
 
-            mobileSamSite.Destroy();
+            site.Destroy();
             return true;
         }
 
-        public void DisableAirDefenseOnTileCapture(BuildingSystem buildingSystem, Vector3Int tileId)
+        public void DisableSitesOnTileCapture(Vector3Int tileId)
         {
-            if (buildingSystem == null)
-                return;
-
-            foreach (var building in buildingSystem.GetBuildingsOnTile(tileId))
+            foreach (var site in Sites ?? Enumerable.Empty<SamSite>())
             {
-                if (building is AirDefenseBuilding staticSamBuilding)
-                    staticSamBuilding.IsAirDefenseDisabled = true;
+                if (site == null
+                    || site.HostType != SamSiteHostType.StaticBuilding
+                    || !TryGetTileId(site, out var siteTileId)
+                    || siteTileId != tileId)
+                {
+                    continue;
+                }
+
+                site.IsDisabled = true;
             }
         }
 
-        public void DestroyMobileSamSitesForOverrun(Guid hostDivisionId)
+        public void DestroySitesForOverrun(Guid hostDivisionId)
         {
-            foreach (var site in GetMobileSamSitesForDivision(hostDivisionId))
-                site?.Destroy();
+            foreach (var site in GetSitesForHost(hostDivisionId))
+            {
+                if (site?.HostType == SamSiteHostType.MobileDivision)
+                    site.Destroy();
+            }
         }
 
         public void RebuildIndex()
         {
-            var mobileSites = (MobileSamSites ?? new List<MobileSamSite>())
+            var sites = (Sites ?? new List<SamSite>())
+                .Where(site => site != null)
                 .ToList();
 
-            mobileSitesById = mobileSites
-                .GroupBy(site => site.MobileSamSiteId)
+            sitesById = sites
+                .GroupBy(site => site.SiteId)
                 .ToDictionary(group => group.Key, group => group.First());
 
-            mobileSitesByHostDivisionId = mobileSites
-                .GroupBy(site => site.HostDivisionId)
+            sitesByHostId = sites
+                .GroupBy(site => site.HostId)
                 .ToDictionary(group => group.Key, group => group.ToList());
         }
 
         private void EnsureIndex()
         {
-            if (mobileSitesById == null || mobileSitesByHostDivisionId == null)
+            if (sitesById == null || sitesByHostId == null)
                 RebuildIndex();
         }
-
     }
 }

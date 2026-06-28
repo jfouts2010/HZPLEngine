@@ -108,8 +108,12 @@ namespace Engine.Monobehaviours.Managers
             squadronSystem.RebuildIndex();
             airDefenseSiteSystem = new AirDefenseSiteSystem
             {
-                MobileSamSites = CreateRuntimeMobileSamSites(template.MobileSamSiteStartingConditions, activeModule)
+                Sites = CreateRuntimeSamSites(
+                    template.BuildingStartingConditions,
+                    template.MobileSamSiteStartingConditions,
+                    activeModule)
             };
+            airDefenseSiteSystem.Configure(buildingSystem, divisionSystem, GetCountryAlliance);
             airDefenseSiteSystem.RebuildIndex();
             _AISystem = new AISystem(this);
             _IADSSystem = new IADSSystem(this);
@@ -136,6 +140,13 @@ namespace Engine.Monobehaviours.Managers
                 return null;
 
             return _IADSSystem.GetAllianceIADS(alliance);
+        }
+
+        public Alliance GetCountryAlliance(Guid countryId)
+        {
+            var assignment = CampaignTemplate?.CountryAllianceAssignments?
+                .FirstOrDefault(candidate => candidate.CountryId == countryId);
+            return assignment?.Alliance ?? Alliance.Neutral;
         }
 
         public bool IsDivisionEngagedInGroundCombat(Guid divisionId)
@@ -338,24 +349,12 @@ namespace Engine.Monobehaviours.Managers
             if (module == null)
                 throw new ArgumentNullException(nameof(module));
 
-            var samSiteTemplates = module.SamSiteTemplates
-                .ToDictionary(template => template.SamSiteTemplateId);
-
-            var samComponentDefinitions = module.SamComponentDefinitions
-                .ToDictionary(definition => definition.SamComponentDefinitionId);
-
             return (startingConditions ?? new List<BuildingStartingCondition>())
-                .Select(startingCondition => CreateRuntimeBuilding(
-                    startingCondition,
-                    samSiteTemplates,
-                    samComponentDefinitions))
+                .Select(CreateRuntimeBuilding)
                 .ToList();
         }
 
-        private static Building CreateRuntimeBuilding(
-            BuildingStartingCondition startingCondition,
-            IReadOnlyDictionary<Guid, SamSiteTemplate> samSiteTemplates,
-            IReadOnlyDictionary<Guid, AirDefenseComponentDefinition> samComponentDefinitions)
+        private static Building CreateRuntimeBuilding(BuildingStartingCondition startingCondition)
         {
             switch (startingCondition.Type)
             {
@@ -376,21 +375,16 @@ namespace Engine.Monobehaviours.Managers
                 case BuildingType.PowerPlant:
                     return new PowerPlant(startingCondition);
                 case BuildingType.AirDefense:
-                    return new AirDefenseBuilding(
-                        startingCondition,
-                        CreateAirDefenseComponentsFromTemplate(
-                            startingCondition.SamSiteTemplateId,
-                            samSiteTemplates,
-                            samComponentDefinitions,
-                            SamSiteHostConstraint.MobileOnly));
+                    return new AirDefenseBuilding(startingCondition);
                 default:
                     throw new ArgumentOutOfRangeException(nameof(startingCondition.Type), startingCondition.Type,
                         "Unknown building type.");
             }
         }
 
-        private static List<MobileSamSite> CreateRuntimeMobileSamSites(
-            List<MobileSamSiteStartingCondition> startingConditions,
+        private static List<SamSite> CreateRuntimeSamSites(
+            List<BuildingStartingCondition> buildingStartingConditions,
+            List<MobileSamSiteStartingCondition> mobileStartingConditions,
             ModuleDefinition module)
         {
             if (module == null)
@@ -402,26 +396,26 @@ namespace Engine.Monobehaviours.Managers
             var samComponentDefinitions = module.SamComponentDefinitions
                 .ToDictionary(definition => definition.SamComponentDefinitionId);
 
-            return (startingConditions ?? new List<MobileSamSiteStartingCondition>())
-                .Select(startingCondition => CreateRuntimeMobileSamSite(
+            var staticSites = (buildingStartingConditions ?? new List<BuildingStartingCondition>())
+                .Where(startingCondition => startingCondition.Type == BuildingType.AirDefense)
+                .Select(startingCondition => new SamSite(
                     startingCondition,
-                    samSiteTemplates,
-                    samComponentDefinitions))
-                .ToList();
-        }
+                    CreateAirDefenseComponentsFromTemplate(
+                        startingCondition.SamSiteTemplateId,
+                        samSiteTemplates,
+                        samComponentDefinitions,
+                        SamSiteHostConstraint.MobileOnly)));
 
-        private static MobileSamSite CreateRuntimeMobileSamSite(
-            MobileSamSiteStartingCondition startingCondition,
-            IReadOnlyDictionary<Guid, SamSiteTemplate> samSiteTemplates,
-            IReadOnlyDictionary<Guid, AirDefenseComponentDefinition> samComponentDefinitions)
-        {
-            return new MobileSamSite(
-                startingCondition,
-                CreateAirDefenseComponentsFromTemplate(
-                    startingCondition.SamSiteTemplateId,
-                    samSiteTemplates,
-                    samComponentDefinitions,
-                    SamSiteHostConstraint.StaticOnly));
+            var mobileSites = (mobileStartingConditions ?? new List<MobileSamSiteStartingCondition>())
+                .Select(startingCondition => new SamSite(
+                    startingCondition,
+                    CreateAirDefenseComponentsFromTemplate(
+                        startingCondition.SamSiteTemplateId,
+                        samSiteTemplates,
+                        samComponentDefinitions,
+                        SamSiteHostConstraint.StaticOnly)));
+
+            return staticSites.Concat(mobileSites).ToList();
         }
 
         private static List<AirDefenseComponent> CreateAirDefenseComponentsFromTemplate(

@@ -48,28 +48,16 @@ namespace Engine.Models
                 .OfType<RadarAirDefenseComponentDefinition>()
                 .ToDictionary(definition => definition.SamComponentDefinitionId);
             var airDefenseSites = gameManager.airDefenseSiteSystem
-                .GetAirDefenseSites(gameManager.buildingSystem)
+                .GetAirDefenseSites()
                 .ToList();
             var tileDistanceKm = gameManager.SimulationSettings?.TileDistanceKM ?? 0f;
             var activeAircraft = GetActiveSortieAircraft().ToList();
             var aircraftAllianceById = BuildAircraftAllianceLookup(activeAircraft);
-            Vector3Int? GetAirDefenseSiteTileId(IAirDefenseSite site)
-            {
-                return gameManager.airDefenseSiteSystem.TryGetTileId(
-                    site,
-                    gameManager.divisionSystem,
-                    out var tileId)
-                    ? tileId
-                    : null;
-            }
-
             blueforIads.RefreshTracks(
                 activeAircraft,
                 aircraftAllianceById,
                 airDefenseSites,
-                site => gameManager.airDefenseSiteSystem.GetEffectiveAlliance(site, GetCountryAlliance),
-                GetAirDefenseSiteTileId,
-                gameManager.airDefenseSiteSystem.GetAvailableComponents,
+                gameManager.airDefenseSiteSystem,
                 radarDefinitionLookup,
                 aircraftTypeDefinitions,
                 tileDistanceKm);
@@ -77,9 +65,7 @@ namespace Engine.Models
                 activeAircraft,
                 aircraftAllianceById,
                 airDefenseSites,
-                site => gameManager.airDefenseSiteSystem.GetEffectiveAlliance(site, GetCountryAlliance),
-                GetAirDefenseSiteTileId,
-                gameManager.airDefenseSiteSystem.GetAvailableComponents,
+                gameManager.airDefenseSiteSystem,
                 radarDefinitionLookup,
                 aircraftTypeDefinitions,
                 tileDistanceKm);
@@ -109,17 +95,12 @@ namespace Engine.Models
                     || !squadronById.TryGetValue(campaignAircraft.SquadronId, out var squadron))
                     continue;
 
-                allianceByAircraftId[campaignAircraft.AircraftId] = GetCountryAlliance(squadron.CountryId);
+                allianceByAircraftId[campaignAircraft.AircraftId] =
+                    gameManager.GetCountryAlliance(squadron.CountryId);
             }
 
             return allianceByAircraftId;
         }
 
-        private Alliance GetCountryAlliance(Guid countryId)
-        {
-            var assignment = gameManager.CampaignTemplate?.CountryAllianceAssignments?
-                .FirstOrDefault(candidate => candidate.CountryId == countryId);
-            return assignment?.Alliance ?? Alliance.Neutral;
-        }
     }
 }

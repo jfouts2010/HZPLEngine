@@ -42,10 +42,8 @@ namespace Models.Gameplay.Campaign
         public void RefreshTracks(
             IEnumerable<CampaignAircraft> activeAircraft,
             IReadOnlyDictionary<Guid, Alliance> aircraftAllianceById,
-            IEnumerable<IAirDefenseSite> airDefenseSites,
-            Func<IAirDefenseSite, Alliance> getEffectiveAlliance,
-            Func<IAirDefenseSite, Vector3Int?> getTileId,
-            Func<IAirDefenseSite, IEnumerable<AirDefenseComponent>> getAvailableComponents,
+            IEnumerable<SamSite> airDefenseSites,
+            AirDefenseSiteSystem siteQuery,
             IReadOnlyDictionary<Guid, RadarAirDefenseComponentDefinition> radarDefinitionLookup,
             IReadOnlyDictionary<Guid, AircraftTypeDefinition> aircraftTypeDefinitions,
             float tileDistanceKm)
@@ -68,10 +66,10 @@ namespace Models.Gameplay.Campaign
             RemoveInactiveTracks(activeHostileAircraft);
 
             var refreshedAircraftIds = new HashSet<Guid>();
-            var availableSites = (airDefenseSites ?? Enumerable.Empty<IAirDefenseSite>())
+            var availableSites = (airDefenseSites ?? Enumerable.Empty<SamSite>())
                 .Where(site => site != null
-                               && getEffectiveAlliance != null
-                               && getEffectiveAlliance(site) == Alliance)
+                               && siteQuery != null
+                               && siteQuery.GetEffectiveAlliance(site) == Alliance)
                 .ToList();
 
             foreach (var aircraft in activeHostileAircraft.Values)
@@ -85,8 +83,7 @@ namespace Models.Gameplay.Campaign
                         aircraft,
                         aircraftTypeDefinition,
                         availableSites,
-                        getTileId,
-                        getAvailableComponents,
+                        siteQuery,
                         radarDefinitionLookup,
                         tileDistanceKm)
                     .OrderByDescending(contribution => contribution.QualityIncrease)
@@ -138,22 +135,20 @@ namespace Models.Gameplay.Campaign
         private IEnumerable<RadarContribution> CalculateRadarContributions(
             CampaignAircraft aircraft,
             AircraftTypeDefinition aircraftTypeDefinition,
-            IEnumerable<IAirDefenseSite> airDefenseSites,
-            Func<IAirDefenseSite, Vector3Int?> getTileId,
-            Func<IAirDefenseSite, IEnumerable<AirDefenseComponent>> getAvailableComponents,
+            IEnumerable<SamSite> airDefenseSites,
+            AirDefenseSiteSystem siteQuery,
             IReadOnlyDictionary<Guid, RadarAirDefenseComponentDefinition> radarDefinitionLookup,
             float tileDistanceKm)
         {
-            if (getTileId == null || getAvailableComponents == null)
+            if (siteQuery == null)
                 yield break;
 
-            foreach (var site in airDefenseSites ?? Enumerable.Empty<IAirDefenseSite>())
+            foreach (var site in airDefenseSites ?? Enumerable.Empty<SamSite>())
             {
-                var siteTileId = getTileId(site);
-                if (!siteTileId.HasValue)
+                if (!siteQuery.TryGetTileId(site, out var siteTileId))
                     continue;
 
-                foreach (var radarComponent in (getAvailableComponents(site) ?? Enumerable.Empty<AirDefenseComponent>())
+                foreach (var radarComponent in (siteQuery.GetAvailableComponents(site) ?? Enumerable.Empty<AirDefenseComponent>())
                              .OfType<RadarAirDefenseComponent>())
                 {
                     if (radarComponent == null
@@ -166,7 +161,7 @@ namespace Models.Gameplay.Campaign
                         || definition.DetectionRangeKm <= 0f)
                         continue;
 
-                    var distanceKm = CalculateDistanceKm(siteTileId.Value, aircraft.CurrentTileId, tileDistanceKm);
+                    var distanceKm = CalculateDistanceKm(siteTileId, aircraft.CurrentTileId, tileDistanceKm);
                     if (distanceKm > definition.DetectionRangeKm)
                         continue;
 
