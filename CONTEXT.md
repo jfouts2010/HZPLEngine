@@ -180,7 +180,9 @@ _Avoid_: using a projected incoming defender to justify pulling the last physica
 
 ### Air formations
 
-**Aircraft type** — reusable authored identity data for one aircraft model or variant in a Module catalog. Aircraft type definitions are not country-scoped; a campaign template gives an aircraft type to a country by creating a squadron for that country that uses the aircraft type. In v1, an aircraft type carries only its definition ID, name, and an opaque string third-party ID.
+**Aircraft type** — reusable authored identity and capability data for one aircraft model or variant in a Module catalog. Aircraft type definitions are not country-scoped; a campaign template gives an aircraft type to a country by creating a squadron for that country that uses the aircraft type.
+
+Aircraft type capability data includes flight performance, range and endurance, sensors and defensive qualities, ordnance capacity and compatibility, and explicit support capabilities where applicable. The third-party ID remains an opaque export mapping rather than a source of campaign capability.
 
 _Avoid_: using "airframe" for the Module catalog concept; in this project, airframe can sound like a physical aircraft body, a flight-model implementation, or an individual tail.
 
@@ -189,6 +191,14 @@ _Avoid_: using "airframe" for the Module catalog concept; in this project, airfr
 **Squadron starting condition** — a campaign-template entry that creates one starting squadron at turn zero. It references a module country, aircraft type, and starting airport building ID, and records the squadron's starting aircraft count. Starting squadrons are assumed to have all aircraft ready; missing, damaged, or unavailable aircraft belong to later runtime state.
 
 _Avoid_: adding air wings before a rule or authoring workflow needs an organizational layer above squadrons.
+
+**Air mission capability** — an aircraft type's authored ability to contribute to a requested air effect. Airborne C2 and aerial refueling require explicit support capabilities; air-to-air and future DEAD suitability are evaluated from relevant aircraft performance, sensors, survivability, and compatible ordnance.
+
+One aircraft type may provide multiple air mission capabilities. Capability does not permanently assign an aircraft type to a mission role; the air planner evaluates suitability for the current request and situation.
+
+In v1, AWACS and tanker aircraft are dedicated support aircraft: an AWACS-capable aircraft fulfills airborne-C2 requests, a tanker-capable aircraft fulfills aerial-refueling requests, and combat aircraft do not substitute for either capability.
+
+_Avoid_: fixed DCA, OCA, or DEAD aircraft-role labels when suitability can be derived from capabilities and loadout.
 
 ### Ordnance
 
@@ -229,6 +239,10 @@ In v1, ordnance availability rules are not enforced. If ordnance is allowed for 
 
 **Campaign aircraft** — one persistent runtime aircraft instance owned by a squadron. A campaign aircraft has a status such as ready, damaged, assigned, or lost, and carries an **aircraft loadout** describing what it can employ now.
 
+Air tasking allocates individual campaign aircraft to flights. An aircraft is available for planning only when it is ready, unassigned, located at its operating base, and capable of the proposed route and loadout. Assignment to a committed flight reserves that aircraft from every other package.
+
+Squadron ready, damaged, assigned, and lost counts are summaries derived from the squadron's campaign aircraft; they are not a second source of allocation truth.
+
 Loading and unloading ordnance onto a campaign aircraft is instant in v1. There is no rearm duration, transit time, or separate arming workflow yet.
 
 Campaign aircraft start empty in v1. They receive a loadout when assigned to a sortie because sortie purpose determines what ordnance should be carried.
@@ -261,7 +275,7 @@ When multiple compatible and allowed ordnance types can satisfy a target categor
 
 _Avoid_: per-ordnance maximum counts on an aircraft type as the primary mixing rule; they cannot express tradeoffs between store types.
 
-_Avoid_: treating squadron aggregate aircraft counts as a substitute for loadout state; two ready aircraft of the same type may carry different stores.
+_Avoid_: treating squadron aggregate aircraft counts as a substitute for aircraft availability or loadout state; two ready aircraft of the same type may carry different stores, and one may already be reserved by a committed flight.
 
 ### Campaign template
 
@@ -318,6 +332,14 @@ The gameplay faction that controls territory and participates in the war at the 
 Countries may exist as lightweight political or content metadata. A campaign template assigns countries to alliances, but tile control belongs to alliances in v1.
 
 Neutral can control tiles the same way Bluefor and Redfor can. Neutral is not an active war participant by default, and Bluefor/Redfor cannot use neutral-controlled tiles or buildings unless future access rules explicitly allow it.
+
+**Ground tasking commander** — the per-alliance command authority that evaluates the land situation and assigns ground orders and offensive plans. It is represented in code by `GroundTaskingCommander`.
+
+**Alliance air tasking commander** — the per-alliance command authority that owns alliance air doctrine, current mission requests, packages, flights, projected effects, and support-demand history. Bluefor and Redfor each have one; Neutral has none by default.
+
+Ground tasking, air tasking, and IADS use separate per-alliance command state while operating under shared core-engine rules.
+
+_Avoid_: using one generic alliance AI object as the owner of every ground, air-tasking, and IADS responsibility.
 
 ### Tile control
 
@@ -481,15 +503,264 @@ Within each simulation tick, resolution order should stay deterministic. Air pic
 
 Supply recalculation happens after ground movement and tile capture for the game turn, and supply recovery or decay uses that freshly recalculated supply state.
 
+Air-tasking planning runs after the tick's current air, ground, and campaign effects resolve so it evaluates the freshest stable state. It then refreshes projected air effects, performs global priority rebuilding when the tick crosses an operational-cadence boundary, and runs support fulfillment before combat fulfillment.
+
+In v1, each alliance may evaluate at most eight mission requests and create at most four packages per simulation tick. Request and alliance processing use stable ordering so the planning budget does not make seeded results nondeterministic.
+
 ### Air planning cadence
 
-How often the air tasking layer performs heavy planning — mission request generation, package building, route and TOT planning, and wing or squadron tasking.
+How often the air-tasking layer performs global planning and lightweight local planning.
 
-Full air planning runs on a longer cadence aligned with ground operational cadence — template-configurable within engine bounds (**one to six hours**; **default six hours**) — and may also run when significant campaign events trigger replanning, such as major airbase loss or a collapsed SAM belt.
+Global air planning runs on a longer cadence aligned with ground operational cadence — template-configurable within engine bounds (**one to six hours**; **default six hours**). It recalculates theater-wide mission priorities and purges unfulfilled requests from the previous planning cycle.
 
-Air **execution** (sortie movement, IADS refresh, engagement assignment, SAM launch resolution, and air-to-ground effects) runs every simulation tick. Tick-level **adjustments** to already-active air operations — scrubbing packages, rerouting en-route sorties, immediate reactions to new threats — may run without a full replan.
+Every simulation tick, lightweight planning updates projected effects, detects urgent coverage gaps, validates existing commitments, and may make bounded local adjustments. Significant events such as loss of supporting coverage, a major airbase loss, a newly detected raid, target destruction, or a collapsed SAM belt may trigger local replanning before the next global cadence.
+
+Air **execution** (sortie movement, IADS refresh, engagement assignment, SAM launch resolution, and air-to-ground effects) also runs every simulation tick. Tick-level adjustments may scrub or retask pre-takeoff committed sorties in response to new threats or invalid plans. Active sorties are not cancelled, retasked, or rerouted by the air-planning layer.
 
 _Avoid_: full theater-wide air replanning every simulation tick.
+
+### Committed sortie
+
+A **committed sortie** is one aircraft's planned employment after that aircraft and its flight mission have been assigned but before it has taken off. It survives later air-planning cycles, although the alliance AI may cancel or retask it before takeoff.
+
+### Active sortie
+
+An **active sortie** is one aircraft's employment after it has taken off. Takeoff locks its assigned mission and target: later planning may neither cancel nor retask it.
+
+An active sortie may still end unsuccessfully because its aircraft are lost, fuel or package-integrity rules force an abort and return to base, or the assigned effect can no longer be achieved. Such outcomes are execution results, not air-planning cancellations or retasking.
+
+_Avoid_: using an operational replan to change an airborne sortie's assigned mission or target.
+
+### Sortie
+
+A **sortie** is one campaign aircraft's employment from takeoff through landing, loss, or another terminal outcome. It is the individual-aircraft unit of air activity, not necessarily a separately persisted planning object; its assignment and state may be represented by the aircraft's membership in a flight.
+
+### Flight
+
+A **flight** is a persistent air-planning formation containing one or more campaign aircraft that share a mission role, route, and timing. Flights are the aircraft-assignment and execution groups coordinated by packages.
+
+Every flight draws its aircraft from exactly one squadron and therefore has one aircraft type and one operating base. A package may coordinate flights from multiple squadrons and bases.
+
+Each flight belongs to exactly one owning package. A supporting flight may additionally be referenced by other packages that use its service, but those references do not give the flight multiple owning packages.
+
+Flight size is adaptive. The package builder chooses the smallest aircraft allocation expected to produce the requested effect at acceptable risk, with alliance doctrine able to add a force or redundancy margin. Support-flight size reflects required service capacity, while combat-flight size reflects expected opposition and desired advantage.
+
+_Avoid_: using sortie for a multi-aircraft formation.
+
+_Avoid_: fixed flight sizes based only on mission category or assigning excess aircraft simply because they are available.
+
+### Package
+
+A **package** is the persistent coordination boundary for flights intended to achieve a shared objective. It aligns participating flights around timing, route, roles, and dependencies so they execute as one operational effort.
+
+A mission request may be fulfilled by one or more packages, and each package traces back to exactly one originating mission request. A package may depend on a supporting flight owned by another package.
+
+Packages and flights use the following lifecycle:
+
+- **Committed** — planned with aircraft reserved, but no assigned aircraft has taken off; still cancellable or retaskable.
+- **Active** — at least one assigned aircraft has taken off; the assigned mission and target are locked.
+- **Completed** — execution ended after achieving the intended effect.
+- **Failed** — active execution ended without achieving the intended effect.
+- **Cancelled** — planning stopped before any assigned aircraft took off.
+- **Aborted** — an active package or flight stopped its assigned execution and directed surviving aircraft to return to base without accepting another mission.
+
+Flights carry their own lifecycle state. Package state is derived from the states of its flights rather than maintained as a competing source of truth.
+
+A package identifies which owning flights are required for its coordinated effect. If a required flight is cancelled or cannot launch, the whole package stops: before activation it is cancelled; after activation it is aborted, and every airborne package flight returns to base. Aircraft in flights that have not launched are released.
+
+_Avoid_: continuing a coordinated package after a required flight becomes unavailable or describing an RTB abort as airborne retasking.
+
+**Package preparation delay** — in v1, a newly created package requires a fixed 30 minutes of campaign time before any assigned flight may take off. Aircraft are reserved when the package is committed; the delay is a minimum launch lead time, after which route timing may schedule takeoff later.
+
+The fixed delay is separate from transit time and does not introduce detailed arming, taxi, runway, or airport-throughput simulation.
+
+**Package effect window** — the time interval during which a package's coordinated flights are intended to produce the requested effect. Each flight calculates its takeoff time from its operating base, route, speed, and the package's timing so required flights can synchronize.
+
+**Package rendezvous** — a shared waypoint and time where required flights converge before conducting their coordinated mission. Required supporting coverage must be active when the package reaches the portion of its route or effect window that depends on that support.
+
+When suitable aircraft are otherwise comparable, package building prefers flights from squadrons at the same airport to reduce coordination and transit cost. This is a preference rather than a requirement; one package may still combine flights from different operating bases.
+
+Detailed route construction and the rules that conduct each mission are deferred beyond the air-tasking foundation. Foundation planning may preserve timing and rendezvous intent without yet resolving a complete flight route or mission execution.
+
+_Avoid_: creating independent strike, escort, and support flights without recording the operational effort that coordinates them.
+
+### Supporting flight
+
+A **supporting flight** provides an airborne service, such as AWACS coverage or aerial refueling, that may support multiple packages during its mission. It belongs to the package created for its own mission request, while other packages reference the service it provides without taking ownership of the flight.
+
+_Avoid_: duplicating an AWACS or tanker flight for every package that uses the same available coverage.
+
+### Package feasibility
+
+**Package feasibility** is the alliance AI's situation- and doctrine-dependent judgment that a proposed package can acceptably pursue its mission request with the aircraft, support coverage, and risk conditions available to it.
+
+The absence of a supporting flight is not universally blocking or universally acceptable. Depending on the mission request, enemy capability, expected risk, and alliance doctrine, the same lack of AWACS or tanker support may make one package infeasible while another may commit without it.
+
+_Avoid_: declaring a support type mandatory or optional solely from the package's mission category.
+
+### Alliance air doctrine
+
+**Alliance air doctrine** is the per-alliance policy through which an alliance AI evaluates air priorities, acceptable risk, force preservation, support needs, and commitment thresholds. Each alliance begins with a default doctrine authored in the campaign template.
+
+All alliances use the same core air-planning rules; doctrine lets separate alliance AIs reach different decisions from comparable circumstances without requiring alliance-specific rule implementations.
+
+The minimum v1 doctrine profile contains risk tolerance, desired air-combat advantage, a priority weight for each mission-request type, and baseline AWACS and tanker capacity demand.
+
+In v1, doctrine remains fixed during campaign play. The runtime model should permit future doctrine changes, but the rules and triggers for changing it are deferred.
+
+_Avoid_: implementing separate Bluefor and Redfor air-planning algorithms.
+
+### Air-planning intelligence
+
+**Air-planning intelligence** is the alliance-scoped view of friendly readiness, enemy threats, and potential targets available to an alliance AI when it creates and evaluates mission requests.
+
+In v1, air-planning intelligence provides perfect knowledge of relevant campaign state. This is temporary: future intelligence and fog-of-war rules will replace perfect enemy knowledge without changing the air planner's mission-request, package, and flight concepts.
+
+_Avoid_: treating v1 perfect intelligence as permanent alliance knowledge.
+
+### Alliance air plan
+
+An **alliance air plan** is an alliance AI's prioritized statement of its current operational air needs for one air-planning cycle. It coordinates competing demands such as airspace defense, air superiority, strike activity, and supporting-aircraft coverage before individual aircraft are committed.
+
+_Avoid_: allowing independent sortie generators to consume aircraft without first reconciling alliance-wide priorities.
+
+### Mission request
+
+A **mission request** is a prioritized demand within an alliance air plan for a desired air effect against a target, area, or supported operation. Mission requests express what the alliance needs and why; feasible requests are fulfilled by assigning aircraft to sorties.
+
+Mission requests remain distinct from sorties: a request may go unfulfilled when suitable aircraft or support are unavailable. Unfulfilled requests are purged at the next air-planning cadence rather than carried as a backlog; the alliance AI evaluates the new campaign situation and generates a fresh prioritized request set. Purging mission requests does not cancel sorties already created to fulfill them.
+
+The current request collection contains actionable requests for the active planning cycle. A request with committed or active packages is retained until all of its packages reach a terminal state, even when a new global planning cycle begins. Packages reference their originating request through a stable identity.
+
+Terminal packages and snapshots of their originating requests move to bounded campaign history for diagnostics and AI explanation. They do not remain in the actionable request collection indefinitely.
+
+_Avoid_: treating a sortie as the source of operational demand, assuming every mission request must produce a sortie, or carrying unfulfilled requests across full planning cycles.
+
+_Avoid_: deleting a request while a package still depends on its identity or retaining an unbounded active planning graph.
+
+### Mission request priority
+
+**Mission request priority** is an alliance AI's situation-dependent estimate of which requested air effect should receive scarce aircraft and support first. Within its applicable fulfillment pass and resource pool, every mission request competes by priority; no combat mission category receives aircraft solely because it is defensive or offensive.
+
+Priority may reflect current threat, operational value, expected effect, risk, doctrine, and dependencies on other missions. A defensive request may outrank every offensive request during an immediate threat or receive no aircraft when the alliance judges another effect more valuable.
+
+Each request retains its total priority and a diagnostic breakdown of the contributing factors so the decision can be reproduced and explained.
+
+_Avoid_: fixed aircraft reservations or guaranteed fulfillment based only on mission category.
+
+### Air superiority
+
+**Air superiority** is an assessed campaign condition describing an alliance's degree of air control in a particular area and time. It is an operational objective that drives concrete mission requests, not a mission category assigned directly to a package or flight.
+
+Defensive counter-air, offensive counter-air, airborne C2, aerial refueling, and DEAD may preserve or improve air superiority through distinct requested effects.
+
+Air superiority is assessed from relative projected **air-combat power**, not raw aircraft counts. Air-combat power reflects active and committed fighter coverage, ready fighters able to reach the area, aircraft capability and loadout, available support, expected hostile forces, losses, and alliance doctrine for the relevant area and time.
+
+_Avoid_: air superiority mission.
+
+_Avoid_: measuring local air control only by counting aircraft without considering their capability or ability to affect the area.
+
+### Initial air-tasking mission requests
+
+**Defensive counter-air patrol** is a request to protect an area from hostile aircraft through planned fighter presence. An intercept may use an available defensive patrol as a tick-level execution response rather than requiring a new full-cadence mission request.
+
+**Offensive counter-air sweep** is a request to contest hostile air activity in an area using fighter aircraft.
+
+**Provide airborne C2** is a request to establish shared airborne command-and-control and surveillance coverage through an AWACS-capable supporting flight.
+
+**Provide aerial refueling** is a request to establish shared refueling coverage through a tanker-capable supporting flight.
+
+These four requests form the initial air-tasking backbone. DEAD is the next target-attack capability intended to build on that backbone.
+
+### Air mission area
+
+An **air mission area** is the dynamic geographic area affected by an area-based mission request, defined in v1 by a center campaign tile and a radius. Defensive patrols and offensive sweeps operate within an air mission area; supporting coverage and risk may be evaluated relative to it.
+
+Mission areas are derived from current campaign needs rather than authored as fixed zones in a campaign template. The actual routes, patrol stations, and support orbits used by flights are derived from the mission area rather than being the mission area itself.
+
+_Avoid_: pre-authoring fixed mission areas, or treating a single target point, a flight route, or a support orbit as the whole area whose air effect was requested.
+
+### Coverage window
+
+A **coverage window** is the bounded interval during which an area-based mission request asks the alliance to maintain an air effect. A request may create multiple sequential packages or flights when one flight cannot cover the interval because of endurance or other execution limits.
+
+Coverage planning uses a rolling handoff across air-planning cadences. A window may extend beyond the next cadence boundary long enough for the following planning cycle to prepare, launch, and position replacement coverage, preventing a gap while the new alliance air plan is being fulfilled.
+
+The following planning cycle reassesses the need. It may cancel no-longer-needed committed rotations before takeoff, but an active sortie continues its locked mission through its planned coverage.
+
+In v1, handoff does not calculate geometric equivalence between the previous and newly desired mission areas. Existing active coverage finishes in its originally planned area even when the new plan wants coverage elsewhere; the next packages and flights are planned against the new desired area.
+
+_Avoid_: infinite coverage requests, ending coverage exactly at a planning-cadence boundary without allowing for replacement lead time, or adding spatial-overlap optimization to v1 handoff.
+
+### Projected air effect
+
+A **projected air effect** is an effect expected from an active or committed package or flight but not necessarily completed yet. Air planning credits projected effects before generating or fulfilling new demand so that existing commitments are not duplicated.
+
+Outside the v1 cross-cadence handoff simplification, coverage effects apply within their actual mission area and time window. A committed attack projects its intended effect against its target so a later planning pass does not create a duplicate attack merely because the first package is still en route.
+
+_Avoid_: treating only already-completed effects as fulfilled demand.
+
+### Mission request fulfillment pattern
+
+A **sustained mission request** asks for an effect to remain available throughout a coverage window. Tick-level fulfillment checks projected coverage and creates replacement packages only for gaps, such as rotating AWACS, tanker, or defensive patrol flights.
+
+A **discrete mission request** asks for one bounded effect, such as one attack against a target. Once a package is committed to that effect, tick-level fulfillment treats it as in progress and does not repeatedly create packages for the same request.
+
+A discrete request whose package is cancelled before takeoff becomes unfulfilled and may receive a replacement package during the same planning cycle. Once its package becomes active, failure does not automatically create repeated replacement packages; the effect is reconsidered at the next global prioritization unless that failure triggers an explicit urgent local replan.
+
+Support requests accept partial capacity: when the desired number of support slots cannot be provided, the support pass commits whatever useful capacity is available and continues to seek the remaining capacity.
+
+Combat requests require their full desired force strength before a package may commit. Sustained combat coverage may be fulfilled for only part of its desired window when resources are scarce, but each committed rotation must meet the requested force strength. For example, four DCA aircraft for two hours is preferable to two aircraft for four hours when four are required; an OCA sweep requiring four aircraft does not launch with only two.
+
+_Avoid_: interpreting sustained as "create a package every tick" or repeatedly fulfilling a discrete request while its package is still committed.
+
+_Avoid_: stretching combat coverage by launching understrength packages that do not meet the requested effect.
+
+### Tick-level air fulfillment
+
+**Tick-level air fulfillment** is the bounded, deterministic process that turns prioritized unmet mission requests into packages during simulation ticks. It considers requests in priority order, builds the smallest feasible package, reserves the selected campaign aircraft, credits the resulting projected effects, and then continues within that tick's planning budget.
+
+Tick-level fulfillment runs a support pass before a combat pass. The support pass prioritizes airborne-C2 and aerial-refueling requests and allocates their dedicated aircraft. The combat pass then evaluates its requests against the support capacity already active or projected. This ordering coordinates non-substitutable resource pools; it does not give every support request an unconditional priority over every combat effect.
+
+An infeasible request remains available for a later tick in the same planning cycle. Stable tie-breakers are used when priorities are equal so seeded campaign behavior remains reproducible.
+
+_Avoid_: solving a theater-wide global allocation optimization every simulation tick or allowing separate package builders to reserve the same aircraft.
+
+### Air-tasking diagnostics
+
+**Air-tasking diagnostics** are the persisted or inspectable reasons behind autonomous planning decisions. They explain why a mission request exists, how its priority was calculated, whether it was fulfilled, partially fulfilled, deferred, or purged, why a proposed package was feasible or infeasible, and why aircraft or support were selected or rejected.
+
+Diagnostics are part of the foundation's observable behavior rather than optional console noise. They should make deterministic planning decisions testable without requiring a debugger.
+
+_Avoid_: recording only the final package while discarding the reasons competing requests or aircraft were rejected.
+
+### Support capacity
+
+**Support capacity** is the bounded number of friendly aircraft that an AWACS or tanker flight can support within its coverage area and time window. In v1 it is measured in abstract **support slots**: each support-capable aircraft type provides a configured number of simultaneous slots, and each supported combat aircraft reserves one compatible slot during the relevant overlap.
+
+A sustained support request asks for enough projected capacity to meet the area's demand. Multiple packages may share one supporting flight only while their overlapping reservations remain within its available slots; additional packages and flights are created only when existing capacity is insufficient.
+
+Future AWACS control-channel rules and tanker fuel-transfer rules may specialize capacity without changing the shared support-capacity concept.
+
+**Airborne-C2 effect** — in v1, AWACS coverage has no numerical effect on air-combat power, mission risk, or air-planning knowledge because the air planner temporarily uses perfect intelligence and detailed airborne C2 interaction is not yet modeled. Baseline demand authored through the campaign template or alliance doctrine still causes the planner to create airborne-C2 requests, packages, flights, coverage windows, and support-slot reservations so the support-tasking backbone exists.
+
+Observed and forecast mission demand do not escalate AWACS coverage until its operational effect exists. Future AWACS behavior is intended to contribute through alliance IADS and intelligence rules, where its help may not reduce cleanly to one numerical benefit. Do not add a placeholder combat multiplier that would compete with that future model.
+
+**Abstract aerial-refueling effect** — tanker support extends a receiver flight's usable range, endurance, and time on station without modeling continuous fuel quantity, transfer rate, boom queues, or partial offloads. Each supported receiver aircraft consumes a tanker support slot during the relevant refueling window.
+
+In v1, an aircraft type explicitly states whether it can receive aerial refueling. Confirmed compatible tanker coverage doubles a receiver flight's range and endurance, does not stack when multiple tankers are available, and cannot extend total flight duration beyond six hours. The planned route must intersect the supporting tanker's coverage.
+
+For sustained missions such as DCA, aerial refueling can reduce the number of flight rotations needed to cover a window. For future strike missions, it can make otherwise unreachable targets feasible. Future airport-throughput rules may also value the reduced number of takeoffs and landings caused by longer on-station time.
+
+Support demand blends three inputs:
+
+- **Baseline support demand** — template- or doctrine-defined coverage that prevents support from requiring prior usage before it can be requested.
+- **Observed support demand** — recent support usage requested by missions in an area, allowing coverage to follow sustained campaign activity.
+- **Forecast support demand** — expected usage from current prioritized combat requests, allowing support to prepare before their packages exist.
+
+Global air planning uses the blended demand to adjust future support coverage, such as reinforcing heavily used northern tanker coverage while retaining lower southern coverage.
+
+_Avoid_: treating the presence of one support aircraft as unlimited support for every package in its area.
 
 ### Exported scenario
 

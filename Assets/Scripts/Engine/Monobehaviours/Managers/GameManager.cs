@@ -36,7 +36,8 @@ namespace Engine.Monobehaviours.Managers
         public List<Tile> CampaignTiles = new List<Tile>();
         [SerializeReference] public List<TileData> Tiles = new List<TileData>();
         public List<SupplyCapitalStartingCondition> SupplyCapitals = new List<SupplyCapitalStartingCondition>();
-        private AISystem _AISystem;
+        private GroundTaskingSystem _groundTaskingSystem;
+        private AirTaskingSystem _airTaskingSystem;
         private IADSSystem _IADSSystem;
         private GroundCombatSystem _groundCombatSystem;
         private GroundOperationsSystem _groundOperationsSystem;
@@ -115,23 +116,33 @@ namespace Engine.Monobehaviours.Managers
             };
             airDefenseSiteSystem.Configure(buildingSystem, divisionSystem, GetCountryAlliance);
             airDefenseSiteSystem.RebuildIndex();
-            _AISystem = new AISystem(this);
+            _groundTaskingSystem = new GroundTaskingSystem(this);
             _IADSSystem = new IADSSystem(this);
+            _airTaskingSystem = new AirTaskingSystem(this, activeModule);
             _groundOperationsSystem = new GroundOperationsSystem(this);
             _groundCombatSystem = new GroundCombatSystem(this, _groundOperationsSystem);
             _supplySystem = new SupplySystem(this);
             _supplySystem.GameTurn();
-            _AISystem.OperationalCadenceTurn();
+            _groundTaskingSystem.OperationalCadenceTurn();
+            _airTaskingSystem.Initialize();
             IsGamePaused = false;
             _campaignStarted = true;
         }
 
-        public AllianceAI GetAllianceAI(Alliance alliance)
+        public GroundTaskingCommander GetGroundTaskingCommander(Alliance alliance)
         {
-            if (!_campaignStarted || _AISystem == null)
+            if (!_campaignStarted || _groundTaskingSystem == null)
                 return null;
 
-            return _AISystem.GetAllianceAI(alliance);
+            return _groundTaskingSystem.GetCommander(alliance);
+        }
+
+        public AllianceAirTaskingCommander GetAllianceAirTaskingCommander(Alliance alliance)
+        {
+            if (!_campaignStarted || _airTaskingSystem == null)
+                return null;
+
+            return _airTaskingSystem.GetCommander(alliance);
         }
 
         public AllianceIADS GetAllianceIADS(Alliance alliance)
@@ -211,13 +222,15 @@ namespace Engine.Monobehaviours.Managers
             var previousTime = CurrentTime;
             CurrentTime = CurrentTime.AddMinutes(SimulationSettings.SimulationTickMinutes);
 
-            if (SimulationSettings.CrossedOperationalCadenceBoundary(
+            var crossedOperationalCadenceBoundary =
+                SimulationSettings.CrossedOperationalCadenceBoundary(
                     _campaignStartTime,
                     previousTime,
                     CurrentTime,
-                    SimulationSettings.OperationalCadenceHours))
+                    SimulationSettings.OperationalCadenceHours);
+            if (crossedOperationalCadenceBoundary)
             {
-                _AISystem.OperationalCadenceTurn();
+                _groundTaskingSystem.OperationalCadenceTurn();
             }
 
             var resolveCombatRound = SimulationSettings.CrossedOperationalCadenceBoundary(
@@ -226,12 +239,13 @@ namespace Engine.Monobehaviours.Managers
                 CurrentTime,
                 1);
             if (resolveCombatRound)
-                _AISystem.CombatCadenceTurn();
+                _groundTaskingSystem.CombatCadenceTurn();
 
             _groundCombatSystem.GameTurn(resolveCombatRound);
             _groundOperationsSystem.GameTurn(elapsedHours);
             _IADSSystem.TacticalTurn();
             _supplySystem.GameTurn(elapsedHours);
+            _airTaskingSystem.GameTurn(crossedOperationalCadenceBoundary);
             divisionSystem.ApplyCombatSupplyPenalties(
                 elapsedHours,
                 _groundCombatSystem.IsDivisionEngagedInCombat,

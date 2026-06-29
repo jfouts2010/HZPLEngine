@@ -19,6 +19,8 @@ namespace Models.Gameplay.Campaign
         public List<CountryAllianceAssignment> CountryAllianceAssignments = new List<CountryAllianceAssignment>();
         public Dictionary<Alliance, List<Guid>> OrdnanceAllowances = new Dictionary<Alliance, List<Guid>>();
         public Dictionary<Alliance, List<Guid>> SamSiteTemplateAllowances = new Dictionary<Alliance, List<Guid>>();
+        public Dictionary<Alliance, AllianceAirDoctrine> AirDoctrineByAlliance =
+            CreateDefaultAirDoctrineByAlliance();
         public List<Tile> Tiles = new List<Tile>();
         [SerializeReference] public List<TileData> StartingTileData = new List<TileData>();
         public List<SupplyCapitalStartingCondition> SupplyCapitals = new List<SupplyCapitalStartingCondition>();
@@ -48,6 +50,15 @@ namespace Models.Gameplay.Campaign
         public void RebuildDerivedData()
         {
             HexGridTopology.AssignNeighbors(Tiles);
+        }
+
+        private static Dictionary<Alliance, AllianceAirDoctrine> CreateDefaultAirDoctrineByAlliance()
+        {
+            return new Dictionary<Alliance, AllianceAirDoctrine>
+            {
+                { Alliance.Bluefor, AllianceAirDoctrine.CreateDefault() },
+                { Alliance.Redfor, AllianceAirDoctrine.CreateDefault() }
+            };
         }
     }
 }

@@ -17,6 +17,10 @@ namespace Models.Gameplay.Campaign
         private static readonly Guid RedDivisionId = Guid.Parse("713f4192-5ed1-4cb5-b399-8d5c5786dc0a");
         private static readonly Guid BlueSquadronId = Guid.Parse("375ea7d0-87ba-4487-b3a3-30484ff65dca");
         private static readonly Guid RedSquadronId = Guid.Parse("f4ed5ed1-af8b-4cf6-8e76-6ec555d1dd42");
+        private static readonly Guid BlueAwacsSquadronId = Guid.Parse("98245707-af31-442c-967f-802b57c865ab");
+        private static readonly Guid BlueTankerSquadronId = Guid.Parse("cee8e590-6cc7-480f-9f86-8935d2059509");
+        private static readonly Guid RedAwacsSquadronId = Guid.Parse("880cb670-8a5d-404c-a229-8c1fcf0bf20b");
+        private static readonly Guid RedTankerSquadronId = Guid.Parse("6bcc7496-2c5b-4d84-98a1-718f9c83cf87");
         private static readonly Guid BlueCapitalAirportBuildingId = Guid.Parse("6ffcc54e-747e-487e-9885-dfdb60add354");
         private static readonly Guid RedMountainAirportBuildingId = Guid.Parse("b4b155a0-f165-478d-9805-05a29baabf07");
         private static readonly Guid RedSa2BuildingId = Guid.Parse("504a1c37-bb02-4d7e-9db1-dcc6d03f8c49");
@@ -321,6 +325,42 @@ namespace Models.Gameplay.Campaign
                     StartingAirportBuildingId = RedMountainAirportBuildingId,
                     AircraftCount = 16,
                     Name = "1st Red Fighter Squadron"
+                },
+                new SquadronStartingCondition
+                {
+                    SquadronId = BlueAwacsSquadronId,
+                    CountryId = BlueCountryId,
+                    AircraftTypeDefinitionId = TestModule.E3AircraftTypeId,
+                    StartingAirportBuildingId = BlueCapitalAirportBuildingId,
+                    AircraftCount = 1,
+                    Name = "Blue Airborne C2 Squadron"
+                },
+                new SquadronStartingCondition
+                {
+                    SquadronId = BlueTankerSquadronId,
+                    CountryId = BlueCountryId,
+                    AircraftTypeDefinitionId = TestModule.Kc135AircraftTypeId,
+                    StartingAirportBuildingId = BlueCapitalAirportBuildingId,
+                    AircraftCount = 2,
+                    Name = "Blue Tanker Squadron"
+                },
+                new SquadronStartingCondition
+                {
+                    SquadronId = RedAwacsSquadronId,
+                    CountryId = RedCountryId,
+                    AircraftTypeDefinitionId = TestModule.A50AircraftTypeId,
+                    StartingAirportBuildingId = RedMountainAirportBuildingId,
+                    AircraftCount = 1,
+                    Name = "Red Airborne C2 Squadron"
+                },
+                new SquadronStartingCondition
+                {
+                    SquadronId = RedTankerSquadronId,
+                    CountryId = RedCountryId,
+                    AircraftTypeDefinitionId = TestModule.Il78AircraftTypeId,
+                    StartingAirportBuildingId = RedMountainAirportBuildingId,
+                    AircraftCount = 2,
+                    Name = "Red Tanker Squadron"
                 }
             };
         }

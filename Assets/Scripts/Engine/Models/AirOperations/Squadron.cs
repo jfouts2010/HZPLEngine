@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace Models.Gameplay.Campaign
 {
@@ -11,11 +12,12 @@ namespace Models.Gameplay.Campaign
         public Guid CountryId;
         public Guid AirportBuildingId;
         public string Name = string.Empty;
-        public int ReadyAircraft;
-        public int DamagedAircraft;
-        public int LostAircraft;
-        public int AssignedAircraft;
         public List<CampaignAircraft> Aircraft = new List<CampaignAircraft>();
+
+        public int ReadyAircraft => Aircraft?.Count(aircraft => aircraft.Status == CampaignAircraftStatus.Ready) ?? 0;
+        public int DamagedAircraft => Aircraft?.Count(aircraft => aircraft.Status == CampaignAircraftStatus.Damaged) ?? 0;
+        public int LostAircraft => Aircraft?.Count(aircraft => aircraft.Status == CampaignAircraftStatus.Lost) ?? 0;
+        public int AssignedAircraft => Aircraft?.Count(aircraft => aircraft.Status == CampaignAircraftStatus.Assigned) ?? 0;
 
         public Squadron()
         {
@@ -31,11 +33,7 @@ namespace Models.Gameplay.Campaign
             CountryId = startingCondition.CountryId;
             AirportBuildingId = startingCondition.StartingAirportBuildingId;
             Name = startingCondition.Name ?? string.Empty;
-            ReadyAircraft = Math.Max(0, startingCondition.AircraftCount);
-            DamagedAircraft = 0;
-            LostAircraft = 0;
-            AssignedAircraft = 0;
-            Aircraft = CreateAircraft(ReadyAircraft);
+            Aircraft = CreateAircraft(Math.Max(0, startingCondition.AircraftCount));
         }
 
         private List<CampaignAircraft> CreateAircraft(int aircraftCount)

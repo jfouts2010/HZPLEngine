@@ -16,6 +16,22 @@ namespace Models.Gameplay.Campaign
         private static readonly Guid BlueCountryId = TestModule.BlueCountryId;
         private static readonly Guid RedCountryId = TestModule.RedCountryId;
         private static readonly Guid NeutralCountryId = TestModule.NeutralCountryId;
+        private static readonly Guid BlueCapitalAirportBuildingId =
+            Guid.Parse("d2b0a5f3-9e4c-4d28-b701-3f8ca2e5d419");
+        private static readonly Guid RedCapitalAirportBuildingId =
+            Guid.Parse("83579abc-3953-4381-b0b8-cee7b0280505");
+        private static readonly Guid BlueFighterSquadronId =
+            Guid.Parse("a5e8370f-b340-4070-8269-4d0f8095aa02");
+        private static readonly Guid BlueAwacsSquadronId =
+            Guid.Parse("c371bed7-5d5b-4f6e-9028-9ef91a5b4a0f");
+        private static readonly Guid BlueTankerSquadronId =
+            Guid.Parse("1c23f0c2-8dc6-4e35-b6aa-d82864cdfe7c");
+        private static readonly Guid RedFighterSquadronId =
+            Guid.Parse("f5a98443-9c5f-4e74-a371-5a089e950cba");
+        private static readonly Guid RedAwacsSquadronId =
+            Guid.Parse("7088f0da-cf99-46f8-b177-d7e266a4abfa");
+        private static readonly Guid RedTankerSquadronId =
+            Guid.Parse("ab56abe6-261f-483d-8a1a-fcda7d7e61a8");
         private static readonly Guid[] BlueFrontDivisionIds =
         {
             Guid.Parse("a4c2e8f1-3b7d-4e91-9f06-1d5a8c2b0473"),
@@ -78,7 +94,8 @@ namespace Models.Gameplay.Campaign
                 StartingTileData = CreateStartingTileData(),
                 SupplyCapitals = CreateSupplyCapitals(),
                 BuildingStartingConditions = CreateBuildingStartingConditions(),
-                DivisionStartingConditions = CreateDivisionStartingConditions()
+                DivisionStartingConditions = CreateDivisionStartingConditions(),
+                SquadronStartingConditions = CreateSquadronStartingConditions()
             };
 
             template.RebuildDerivedData();
@@ -213,7 +230,7 @@ namespace Models.Gameplay.Campaign
             return new List<BuildingStartingCondition>
             {
                 CreateBuilding("c1a9f4e2-8d3b-4c17-a6f0-2e7b91d4c308", BlueCapitalTileId, BuildingType.Factory, 7),
-                CreateBuilding("d2b0a5f3-9e4c-4d28-b701-3f8ca2e5d419", BlueCapitalTileId, BuildingType.Airport, 5),
+                CreateBuilding(BlueCapitalAirportBuildingId.ToString(), BlueCapitalTileId, BuildingType.Airport, 5),
                 CreateBuilding("6c69a6d3-1b42-4f3a-8b42-06b5f601e86f", BlueCapitalTileId, BuildingType.Railroad, 8),
                 CreateBuilding("3bf75c64-7ba8-4ed6-9f9e-1c4d9c2266ce", BlueCapitalTileId, BuildingType.SupplyHub, 8),
                 CreateBuilding("e3c1b6a4-0f5d-4e39-c812-4a9db3f6e52a", BluePortTileId, BuildingType.Port, 4),
@@ -226,6 +243,7 @@ namespace Models.Gameplay.Campaign
                 CreateBuilding("f4d2c7b5-1a6e-4f4a-d923-5b0ec407f63b", NeutralHubTileId, BuildingType.SupplyHub, 5),
                 CreateBuilding("a5e3d8c6-2b7f-405b-e034-6c1fd518074c", BlueFrontTileIds[1], BuildingType.Fort, 3),
                 CreateBuilding("b6f4e9d7-3c8a-416c-f145-7d2ae629185d", RedCapitalTileId, BuildingType.PowerPlant, 4),
+                CreateBuilding(RedCapitalAirportBuildingId.ToString(), RedCapitalTileId, BuildingType.Airport, 5),
                 CreateBuilding("8f6b7125-5ab8-4791-93be-a3ccdcf823ad", RedCapitalTileId, BuildingType.Railroad, 8),
                 CreateBuilding("8ef77ba7-1ca4-4898-8f8e-afbcbe173d11", RedCapitalTileId, BuildingType.SupplyHub, 8),
                 CreateBuilding("c7a5f0e8-4d9b-427d-0256-8e3bf73a296e", RedRefineryTileId, BuildingType.Refinery, 3),
@@ -235,6 +253,67 @@ namespace Models.Gameplay.Campaign
                 CreateBuilding("d8b6a1f9-5e0c-438e-1367-9f4c084b3a7f", RedFrontTileIds[1], BuildingType.Railroad, 4),
                 CreateBuilding("b8056bb0-5fb5-4d09-b9d4-a4585c43f0f7", RedFrontTileIds[1], BuildingType.SupplyHub, 4),
                 CreateBuilding("2f40d216-7eb7-4362-8f31-d519a6a2d585", RedFrontTileIds[2], BuildingType.Railroad, 3)
+            };
+        }
+
+        private static List<SquadronStartingCondition> CreateSquadronStartingConditions()
+        {
+            return new List<SquadronStartingCondition>
+            {
+                new SquadronStartingCondition
+                {
+                    SquadronId = BlueFighterSquadronId,
+                    CountryId = BlueCountryId,
+                    AircraftTypeDefinitionId = TestModule.F16AircraftTypeId,
+                    StartingAirportBuildingId = BlueCapitalAirportBuildingId,
+                    AircraftCount = 18,
+                    Name = "Advanced Blue Fighter Squadron"
+                },
+                new SquadronStartingCondition
+                {
+                    SquadronId = BlueAwacsSquadronId,
+                    CountryId = BlueCountryId,
+                    AircraftTypeDefinitionId = TestModule.E3AircraftTypeId,
+                    StartingAirportBuildingId = BlueCapitalAirportBuildingId,
+                    AircraftCount = 1,
+                    Name = "Advanced Blue Airborne C2 Squadron"
+                },
+                new SquadronStartingCondition
+                {
+                    SquadronId = BlueTankerSquadronId,
+                    CountryId = BlueCountryId,
+                    AircraftTypeDefinitionId = TestModule.Kc135AircraftTypeId,
+                    StartingAirportBuildingId = BlueCapitalAirportBuildingId,
+                    AircraftCount = 2,
+                    Name = "Advanced Blue Tanker Squadron"
+                },
+                new SquadronStartingCondition
+                {
+                    SquadronId = RedFighterSquadronId,
+                    CountryId = RedCountryId,
+                    AircraftTypeDefinitionId = TestModule.Mig29AircraftTypeId,
+                    StartingAirportBuildingId = RedCapitalAirportBuildingId,
+                    AircraftCount = 16,
+                    Name = "Advanced Red Fighter Squadron"
+                },
+                new SquadronStartingCondition
+                {
+                    SquadronId = RedAwacsSquadronId,
+                    CountryId = RedCountryId,
+                    AircraftTypeDefinitionId = TestModule.A50AircraftTypeId,
+                    StartingAirportBuildingId = RedCapitalAirportBuildingId,
+                    AircraftCount = 1,
+                    Name = "Advanced Red Airborne C2 Squadron"
+                },
+                new SquadronStartingCondition
+                {
+                    SquadronId = RedTankerSquadronId,
+                    CountryId = RedCountryId,
+                    AircraftTypeDefinitionId = TestModule.Il78AircraftTypeId,
+                    StartingAirportBuildingId = RedCapitalAirportBuildingId,
+                    AircraftCount = 2,
+                    Name = "Advanced Red Tanker Squadron"
+                }
             };
         }
 

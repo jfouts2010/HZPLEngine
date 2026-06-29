@@ -17,6 +17,10 @@ namespace Models.Module
 
         public static readonly Guid F16AircraftTypeId = Guid.Parse("5084422f-4014-46be-88aa-215a927fc48e");
         public static readonly Guid Mig29AircraftTypeId = Guid.Parse("12e89ecf-ac2e-4329-a21e-55f0fb0666f0");
+        public static readonly Guid E3AircraftTypeId = Guid.Parse("c5196101-8f48-45ce-9762-8124ce4503dc");
+        public static readonly Guid Kc135AircraftTypeId = Guid.Parse("94bf002d-7a23-48f2-b68a-ad8c655419da");
+        public static readonly Guid A50AircraftTypeId = Guid.Parse("bca85d49-3ba3-432f-a9e3-559521f4e120");
+        public static readonly Guid Il78AircraftTypeId = Guid.Parse("05863902-90d7-41b0-b0b2-a7871017ae82");
 
         public static readonly Guid Aim120OrdnanceTypeId = Guid.Parse("7486758d-565b-4a19-8d26-29dd717b0e22");
         public static readonly Guid Aim9OrdnanceTypeId = Guid.Parse("5e7975e2-09a8-46f4-bb2d-05de209b60b8");
@@ -88,7 +92,8 @@ namespace Models.Module
                         Agm88OrdnanceTypeId,
                         Gbu38OrdnanceTypeId,
                         Agm65OrdnanceTypeId
-                    }),
+                    },
+                    canReceiveAerialRefueling: true),
                 new AircraftTypeDefinition(
                     Mig29AircraftTypeId,
                     "MiG-29 Fulcrum",
@@ -105,7 +110,60 @@ namespace Models.Module
                     {
                         R27OrdnanceTypeId,
                         R73OrdnanceTypeId
-                    })
+                    },
+                    canReceiveAerialRefueling: true),
+                new AircraftTypeDefinition(
+                    E3AircraftTypeId,
+                    "E-3 Sentry",
+                    cruiseSpeedKph: 800f,
+                    combatSpeedKph: 800f,
+                    rangeKm: 7400f,
+                    enduranceHours: 8f,
+                    preferredAltitudeBand: AircraftPreferredAltitudeBand.High,
+                    radarQuality: 1f,
+                    ecmQuality: 0.6f,
+                    survivability: 0.35f,
+                    supportCapability: AirSupportCapability.AirborneC2,
+                    supportSlotCapacity: 12),
+                new AircraftTypeDefinition(
+                    Kc135AircraftTypeId,
+                    "KC-135 Stratotanker",
+                    cruiseSpeedKph: 850f,
+                    combatSpeedKph: 850f,
+                    rangeKm: 5500f,
+                    enduranceHours: 10f,
+                    preferredAltitudeBand: AircraftPreferredAltitudeBand.High,
+                    radarQuality: 0.1f,
+                    ecmQuality: 0.35f,
+                    survivability: 0.3f,
+                    supportCapability: AirSupportCapability.AerialRefueling,
+                    supportSlotCapacity: 8),
+                new AircraftTypeDefinition(
+                    A50AircraftTypeId,
+                    "A-50 Mainstay",
+                    cruiseSpeedKph: 800f,
+                    combatSpeedKph: 800f,
+                    rangeKm: 5500f,
+                    enduranceHours: 7f,
+                    preferredAltitudeBand: AircraftPreferredAltitudeBand.High,
+                    radarQuality: 0.95f,
+                    ecmQuality: 0.5f,
+                    survivability: 0.35f,
+                    supportCapability: AirSupportCapability.AirborneC2,
+                    supportSlotCapacity: 10),
+                new AircraftTypeDefinition(
+                    Il78AircraftTypeId,
+                    "Il-78 Midas",
+                    cruiseSpeedKph: 780f,
+                    combatSpeedKph: 780f,
+                    rangeKm: 7300f,
+                    enduranceHours: 8f,
+                    preferredAltitudeBand: AircraftPreferredAltitudeBand.High,
+                    radarQuality: 0.1f,
+                    ecmQuality: 0.3f,
+                    survivability: 0.3f,
+                    supportCapability: AirSupportCapability.AerialRefueling,
+                    supportSlotCapacity: 8)
             };
         }
 

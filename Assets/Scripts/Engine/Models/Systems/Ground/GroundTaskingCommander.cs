@@ -9,7 +9,7 @@ using Random = UnityEngine.Random;
 
 namespace Engine.Models
 {
-    public class AllianceAI
+    public class GroundTaskingCommander
     {
         private const int MaxDefensivePathLength = 10;
         private const int MaxOffensivePathLength = 12;
@@ -32,7 +32,7 @@ namespace Engine.Models
 
         public IReadOnlyCollection<Vector3Int> FrontTileIds => _frontTileIds;
 
-        public AllianceAI(GameManager gameManager, Alliance alliance)
+        public GroundTaskingCommander(GameManager gameManager, Alliance alliance)
         {
             _gameManager = gameManager;
             Alliance = alliance;

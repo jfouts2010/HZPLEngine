@@ -11,7 +11,8 @@ namespace Models.Gameplay.Campaign
         public Guid SquadronId;
         public Guid AircraftTypeDefinitionId;
         public CampaignAircraftStatus Status = CampaignAircraftStatus.Ready;
-        //placeholder code, IsActiveInSortie, HasCurrentTileId, CurrentTileId will be replaced once we add sortie system
+        public Guid AssignedFlightId;
+        // Legacy execution bridge. The future mission-execution system will derive these from flight state.
         public bool IsActiveInSortie;
         public bool HasCurrentTileId;
         public Vector3Int CurrentTileId;
@@ -31,6 +32,29 @@ namespace Models.Gameplay.Campaign
         public void ClearLoadout()
         {
             Loadout.Clear();
+        }
+
+        public bool TryAssignToFlight(Guid flightId)
+        {
+            if (flightId == Guid.Empty
+                || Status != CampaignAircraftStatus.Ready
+                || AssignedFlightId != Guid.Empty)
+                return false;
+
+            AssignedFlightId = flightId;
+            Status = CampaignAircraftStatus.Assigned;
+            return true;
+        }
+
+        public bool ReleaseFromFlight(Guid flightId)
+        {
+            if (flightId == Guid.Empty || AssignedFlightId != flightId)
+                return false;
+
+            AssignedFlightId = Guid.Empty;
+            if (Status == CampaignAircraftStatus.Assigned)
+                Status = CampaignAircraftStatus.Ready;
+            return true;
         }
     }
 }
