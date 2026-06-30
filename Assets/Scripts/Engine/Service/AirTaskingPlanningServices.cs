@@ -453,13 +453,20 @@ namespace Engine.Service
         }
     }
 
+    public enum AirPackageBuildOutcome
+    {
+        Built,
+        AlreadySatisfied,
+        EquivalentCommitment,
+        Deferred
+    }
+
     public sealed class AirPackageBuilder
     {
         private const double MaximumFlightDurationHours = 6d;
         private const float AerialRefuelingRangeMultiplier = 2f;
 
         private readonly GameManager gameManager;
-        private readonly ModuleDefinition module;
         private readonly ProjectedAirEffectService projectedEffects;
         private readonly AirMissionPriorityService priorityService;
         private readonly IReadOnlyDictionary<Guid, AircraftTypeDefinition> aircraftTypes;
@@ -471,7 +478,8 @@ namespace Engine.Service
             AirMissionPriorityService priorityService)
         {
             this.gameManager = gameManager ?? throw new ArgumentNullException(nameof(gameManager));
-            this.module = module ?? throw new ArgumentNullException(nameof(module));
+            if (module == null)
+                throw new ArgumentNullException(nameof(module));
             this.projectedEffects = projectedEffects
                                     ?? throw new ArgumentNullException(nameof(projectedEffects));
             this.priorityService = priorityService
@@ -481,7 +489,7 @@ namespace Engine.Service
                 .ToDictionary(definition => definition.AircraftTypeDefinitionId);
         }
 
-        public bool TryBuild(
+        public AirPackageBuildOutcome TryBuild(
             AllianceAirTaskingCommander commander,
             AirMissionRequest request,
             DateTime currentTime,
@@ -493,7 +501,7 @@ namespace Engine.Service
             if (commander == null || request == null)
             {
                 reason = "Commander and request are required.";
-                return false;
+                return AirPackageBuildOutcome.Deferred;
             }
 
             return request.IsSupportRequest
@@ -501,40 +509,7 @@ namespace Engine.Service
                 : TryBuildCombatPackage(commander, request, currentTime, out package, out reason);
         }
 
-        public void CancelPackage(
-            AllianceAirTaskingCommander commander,
-            AirPackage package,
-            DateTime currentTime,
-            string reason)
-        {
-            if (commander == null || package == null || package.IsTerminal)
-                return;
-
-            var active = package.LifecycleState == AirTaskingLifecycleState.Active;
-            foreach (var flight in package.Flights ?? new List<AirFlight>())
-            {
-                if (flight == null || flight.IsTerminal)
-                    continue;
-
-                var wasActive = flight.LifecycleState == AirTaskingLifecycleState.Active;
-                flight.LifecycleState = active
-                    ? AirTaskingLifecycleState.Aborted
-                    : AirTaskingLifecycleState.Cancelled;
-                if (!wasActive)
-                    ReleaseAircraft(flight);
-            }
-
-            commander.AddDiagnostic(new AirTaskingDiagnostic
-            {
-                RecordedAt = currentTime,
-                MissionRequestId = package.MissionRequestId,
-                PackageId = package.PackageId,
-                Code = active ? "package-aborted" : "package-cancelled",
-                Message = reason ?? string.Empty
-            });
-        }
-
-        private bool TryBuildSupportPackage(
+        private AirPackageBuildOutcome TryBuildSupportPackage(
             AllianceAirTaskingCommander commander,
             AirMissionRequest request,
             DateTime currentTime,
@@ -551,9 +526,8 @@ namespace Engine.Service
                     out var gapStart,
                     out var projectedSlots))
             {
-                request.State = AirMissionRequestState.Fulfilled;
                 reason = "Desired support capacity is already projected.";
-                return false;
+                return AirPackageBuildOutcome.AlreadySatisfied;
             }
 
             var requiredCapability = request.RequestType == AirMissionRequestType.ProvideAirborneC2
@@ -578,7 +552,7 @@ namespace Engine.Service
             if (candidates == null)
             {
                 reason = $"No ready {requiredCapability} aircraft are available.";
-                return false;
+                return AirPackageBuildOutcome.Deferred;
             }
 
             var aircraftCount = Math.Min(
@@ -607,18 +581,11 @@ namespace Engine.Service
                 selectedAircraft.Count * candidates.AircraftType.SupportSlotCapacity;
             package.Flights.Add(flight);
 
-            if (!TryReserveAircraft(flight, selectedAircraft))
-            {
-                package = null;
-                reason = "Aircraft availability changed while the support package was being committed.";
-                return false;
-            }
-
-            reason = $"Committed {flight.ProvidedSupportSlots} support slots.";
-            return true;
+            reason = $"Proposed {flight.ProvidedSupportSlots} support slots.";
+            return AirPackageBuildOutcome.Built;
         }
 
-        private bool TryBuildCombatPackage(
+        private AirPackageBuildOutcome TryBuildCombatPackage(
             AllianceAirTaskingCommander commander,
             AirMissionRequest request,
             DateTime currentTime,
@@ -630,9 +597,8 @@ namespace Engine.Service
             if (request.FulfillmentPattern == AirMissionRequestFulfillmentPattern.Discrete
                 && projectedEffects.HasEquivalentDiscreteCommitment(commander, request))
             {
-                request.State = AirMissionRequestState.InProgress;
                 reason = "An equivalent discrete effect is already committed.";
-                return false;
+                return AirPackageBuildOutcome.EquivalentCommitment;
             }
 
             var planningStart = currentTime + AirPackage.PreparationDelay;
@@ -646,9 +612,8 @@ namespace Engine.Service
                         out effectStart,
                         out _))
                 {
-                    request.State = AirMissionRequestState.Fulfilled;
                     reason = "Desired combat coverage is already projected.";
-                    return false;
+                    return AirPackageBuildOutcome.AlreadySatisfied;
                 }
             }
             else
@@ -685,7 +650,7 @@ namespace Engine.Service
             {
                 reason = $"Only {selectedCandidates.Sum(candidate => candidate.Aircraft.Count)}"
                          + $" of {desiredStrength} required combat aircraft are feasible.";
-                return false;
+                return AirPackageBuildOutcome.Deferred;
             }
 
             var shortestEndurance = selectedCandidates
@@ -697,7 +662,6 @@ namespace Engine.Service
                 : Min(request.EffectEnd, effectStart + TimeSpan.FromHours(Math.Min(2d, shortestEndurance)));
             package = CreatePackage(request, currentTime, effectStart, effectEnd);
 
-            var reservedFlights = new List<AirFlight>();
             foreach (var selected in selectedCandidates)
             {
                 var flight = CreateFlight(
@@ -707,44 +671,16 @@ namespace Engine.Service
                     selected.Aircraft,
                     effectStart,
                     effectEnd);
-                if (!TryReserveAircraft(flight, selected.Aircraft))
-                {
-                    foreach (var reservedFlight in reservedFlights)
-                        ReleaseAircraft(reservedFlight);
-                    package = null;
-                    reason = "Aircraft availability changed while the combat package was being committed.";
-                    return false;
-                }
-
-                reservedFlights.Add(flight);
                 package.Flights.Add(flight);
             }
 
             if (tankerFlight != null)
             {
-                var requiredSlots = selectedCandidates.Sum(candidate => candidate.Aircraft.Count);
-                tankerFlight.SupportReservations.Add(new AirSupportReservation
-                {
-                    SupportingFlightId = tankerFlight.FlightId,
-                    ConsumingPackageId = package.PackageId,
-                    SlotCount = requiredSlots,
-                    StartTime = effectStart,
-                    EndTime = effectEnd
-                });
                 package.SupportingFlightIds.Add(tankerFlight.FlightId);
-                commander.AddSupportDemand(new SupportDemandSample
-                {
-                    RecordedAt = currentTime,
-                    SupportType = AirMissionRequestType.ProvideAerialRefueling,
-                    MissionArea = new AirMissionArea(
-                        request.MissionArea.CenterTileId,
-                        request.MissionArea.RadiusTiles),
-                    RequestedSlots = requiredSlots
-                });
             }
 
-            reason = $"Committed {desiredStrength} combat aircraft.";
-            return true;
+            reason = $"Proposed {desiredStrength} combat aircraft.";
+            return AirPackageBuildOutcome.Built;
         }
 
         private List<SelectedCombatAircraft> SelectCombatAircraft(
@@ -867,35 +803,6 @@ namespace Engine.Service
                     request.MissionArea.CenterTileId,
                     request.MissionArea.RadiusTiles)
             };
-        }
-
-        private static bool TryReserveAircraft(
-            AirFlight flight,
-            IReadOnlyCollection<CampaignAircraft> aircraft)
-        {
-            var reserved = new List<CampaignAircraft>();
-            foreach (var campaignAircraft in aircraft)
-            {
-                if (!campaignAircraft.TryAssignToFlight(flight.FlightId))
-                {
-                    foreach (var reservedAircraft in reserved)
-                        reservedAircraft.ReleaseFromFlight(flight.FlightId);
-                    return false;
-                }
-
-                reserved.Add(campaignAircraft);
-            }
-
-            return true;
-        }
-
-        private void ReleaseAircraft(AirFlight flight)
-        {
-            if (!gameManager.squadronSystem.TryGetSquadron(flight.SquadronId, out var squadron))
-                return;
-
-            foreach (var aircraft in squadron.Aircraft ?? new List<CampaignAircraft>())
-                aircraft.ReleaseFromFlight(flight.FlightId);
         }
 
         private List<Squadron> GetFriendlySquadrons(Alliance alliance)
