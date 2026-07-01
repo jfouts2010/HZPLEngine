@@ -63,6 +63,9 @@ namespace Engine.Monobehaviours.Managers
             var panPressed = mouse.middleButton.isPressed || mouse.rightButton.isPressed;
             if (mouse.middleButton.wasPressedThisFrame || mouse.rightButton.wasPressedThisFrame)
             {
+                if (PlaySceneCampaignRenderer.IsPointerOverCampaignUi)
+                    return;
+
                 isPanning = true;
                 panCameraStartPosition = targetCamera.transform.position;
                 panPointerStartWorldPosition = ScreenToWorld(mouse.position.ReadValue());
@@ -84,7 +87,7 @@ namespace Engine.Monobehaviours.Managers
         private void HandleZoom()
         {
             var mouse = Mouse.current;
-            if (mouse == null)
+            if (mouse == null || PlaySceneCampaignRenderer.IsPointerOverCampaignUi)
                 return;
 
             var scrollDelta = mouse.scroll.ReadValue().y;

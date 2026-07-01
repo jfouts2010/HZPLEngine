@@ -1,17 +1,77 @@
 <ui:UXML xmlns:ui="UnityEngine.UIElements">
     <Style src="PlaySceneCampaignHud.uss" />
     <ui:VisualElement name="campaign-hud-root" class="campaign-hud-root" picking-mode="Ignore">
-        <ui:VisualElement name="campaign-hud-panel" class="campaign-hud-panel" picking-mode="Position" style="width: 320px; padding-left: 14px; padding-right: 14px; padding-top: 12px; padding-bottom: 12px; background-color: rgba(18, 20, 23, 0.86); border-top-left-radius: 6px; border-top-right-radius: 6px; border-bottom-left-radius: 6px; border-bottom-right-radius: 6px;">
+        <ui:VisualElement name="simulation-controls" class="simulation-controls" picking-mode="Position">
+            <ui:Label name="simulation-state-label" text="RUNNING" class="simulation-state-label" />
+            <ui:VisualElement class="simulation-control-buttons">
+                <ui:Button name="pause-button" text="Pause" class="simulation-control-button simulation-control-button--primary" />
+                <ui:Button name="next-turn-button" text="Next Turn" class="simulation-control-button" />
+            </ui:VisualElement>
+        </ui:VisualElement>
+        <ui:VisualElement name="campaign-hud-panel" class="campaign-hud-panel" picking-mode="Position">
             <ui:Label name="campaign-title" text="Campaign" class="campaign-hud-title" style="color: white; font-size: 18px; -unity-font-style: bold; margin-bottom: 6px;" />
             <ui:Label name="campaign-time" text="Time" class="campaign-hud-text" style="color: white; font-size: 13px; margin-bottom: 6px;" />
-            <ui:Label name="selected-tile" text="Select a hex" class="campaign-hud-text campaign-hud-selection" style="color: white; font-size: 13px; margin-bottom: 6px; white-space: normal;" />
-            <ui:Foldout name="neighbors-foldout" text="Neighbors" class="campaign-hud-foldout" style="margin-top: 4px; margin-bottom: 4px;">
-                <ui:VisualElement name="neighbors-list" class="campaign-hud-neighbors-list" />
-            </ui:Foldout>
-            <ui:Foldout name="units-foldout" text="Units" class="campaign-hud-foldout" style="margin-top: 4px; margin-bottom: 4px;" value="true">
-                <ui:VisualElement name="units-list" class="campaign-hud-units-list" />
-            </ui:Foldout>
-            <ui:Button name="pause-button" text="Pause" class="campaign-hud-button" style="height: 28px; margin-top: 10px; background-color: rgb(54, 86, 142); color: white; border-width: 0;" />
+            <ui:VisualElement class="campaign-hud-tabs">
+                <ui:Button name="map-tab-button" text="Map" class="campaign-hud-tab campaign-hud-tab--selected" />
+                <ui:Button name="air-ops-tab-button" text="Air Ops" class="campaign-hud-tab" />
+            </ui:VisualElement>
+            <ui:VisualElement name="map-info-content">
+                <ui:Label name="selected-tile" text="Select a hex" class="campaign-hud-text campaign-hud-selection" style="color: white; font-size: 13px; margin-bottom: 6px; white-space: normal;" />
+                <ui:Foldout name="neighbors-foldout" text="Neighbors" class="campaign-hud-foldout" style="margin-top: 4px; margin-bottom: 4px;">
+                    <ui:VisualElement name="neighbors-list" class="campaign-hud-neighbors-list" />
+                </ui:Foldout>
+                <ui:Foldout name="units-foldout" text="Units" class="campaign-hud-foldout" style="margin-top: 4px; margin-bottom: 4px;" value="true">
+                    <ui:VisualElement name="units-list" class="campaign-hud-units-list" />
+                </ui:Foldout>
+            </ui:VisualElement>
+            <ui:ScrollView name="air-ops-content" class="campaign-air-ops-content">
+                <ui:Label text="AIR OPERATIONS PICTURE" class="campaign-air-section-kicker" />
+                <ui:Label name="air-ops-summary" text="Air operations" class="campaign-air-ops-summary" />
+                <ui:VisualElement class="campaign-air-stats">
+                    <ui:VisualElement class="campaign-air-stat">
+                        <ui:Label name="air-request-count" text="0" class="campaign-air-stat-value" />
+                        <ui:Label text="REQUESTS" class="campaign-air-stat-label" />
+                    </ui:VisualElement>
+                    <ui:VisualElement class="campaign-air-stat">
+                        <ui:Label name="air-package-count" text="0" class="campaign-air-stat-value" />
+                        <ui:Label text="PACKAGES" class="campaign-air-stat-label" />
+                    </ui:VisualElement>
+                    <ui:VisualElement class="campaign-air-stat">
+                        <ui:Label name="air-airborne-count" text="0" class="campaign-air-stat-value" />
+                        <ui:Label text="AIRBORNE" class="campaign-air-stat-label" />
+                    </ui:VisualElement>
+                </ui:VisualElement>
+                <ui:VisualElement class="campaign-air-view-tabs">
+                    <ui:Button name="air-requests-button" text="Requests" class="campaign-air-view-tab" />
+                    <ui:Button name="air-packages-button" text="Packages" class="campaign-air-view-tab" />
+                    <ui:Button name="air-flights-button" text="Flights" class="campaign-air-view-tab campaign-air-view-tab--selected" />
+                </ui:VisualElement>
+                <ui:Label name="air-inspection-status" text="" class="campaign-air-inspection-status" />
+                <ui:Label name="air-list-title" text="CURRENT FLIGHTS" class="campaign-air-list-title" />
+                <ui:VisualElement name="air-alliance-filter" class="campaign-air-alliance-filter">
+                    <ui:Button name="air-blue-flights-button" text="Blue flights" class="campaign-air-alliance-tab campaign-air-alliance-tab--blue campaign-air-alliance-tab--selected" />
+                    <ui:Button name="air-red-flights-button" text="Red flights" class="campaign-air-alliance-tab campaign-air-alliance-tab--red" />
+                </ui:VisualElement>
+                <ui:VisualElement name="air-requests-list" class="campaign-air-list campaign-air-list--hidden" />
+                <ui:VisualElement name="air-packages-list" class="campaign-air-list campaign-air-list--hidden" />
+                <ui:VisualElement name="air-flights-list" class="campaign-air-list" />
+                <ui:Label text="Left-click: flight details  •  Right-click while paused: inspect route on map" class="campaign-air-help" />
+            </ui:ScrollView>
+        </ui:VisualElement>
+        <ui:VisualElement name="flight-detail-backdrop" class="flight-detail-backdrop" picking-mode="Position">
+            <ui:VisualElement name="flight-detail-popup" class="flight-detail-popup" picking-mode="Position">
+                <ui:VisualElement class="flight-detail-header">
+                    <ui:VisualElement class="flight-detail-heading">
+                        <ui:Label text="FLIGHT EXECUTION RECORD" class="campaign-air-section-kicker" />
+                        <ui:Label name="flight-detail-title" text="Flight" class="flight-detail-title" />
+                        <ui:Label name="flight-detail-subtitle" text="Mission" class="flight-detail-subtitle" />
+                    </ui:VisualElement>
+                    <ui:Button name="flight-detail-close" text="Close" class="flight-detail-close" />
+                </ui:VisualElement>
+                <ui:ScrollView name="flight-detail-scroll" class="flight-detail-scroll">
+                    <ui:VisualElement name="flight-detail-content" class="flight-detail-content" />
+                </ui:ScrollView>
+            </ui:VisualElement>
         </ui:VisualElement>
     </ui:VisualElement>
 </ui:UXML>

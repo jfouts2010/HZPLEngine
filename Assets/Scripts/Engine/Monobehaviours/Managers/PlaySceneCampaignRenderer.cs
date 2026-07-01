@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using Engine.Models.Ground;
+using Engine.Service;
 using Models.Gameplay.Campaign;
 using UnityEngine;
 using UnityEngine.EventSystems;
@@ -18,6 +19,8 @@ namespace Engine.Monobehaviours.Managers
     [RequireComponent(typeof(GameManager))]
     public class PlaySceneCampaignRenderer : MonoBehaviour
     {
+        public static bool IsPointerOverCampaignUi { get; private set; }
+
         [SerializeField] private GameManager gameManager;
         [SerializeField] private Grid grid;
         [SerializeField] private Tilemap tilemap;
@@ -60,6 +63,8 @@ namespace Engine.Monobehaviours.Managers
         private const float MovementArrowHeadWorldWidth = 0.18f;
         private const int MovementArrowHeadPixelSize = 18;
         private const float RailwayLineWidth = 0.05f;
+        private const float AirRouteLineWidth = 0.025f;
+        private const float AirMarkerRadius = 0.12f;
         private static readonly Color RailwayLineColor = new Color(0.38f, 0.32f, 0.24f);
         private static readonly Color SupplyHubMarkerColor = new Color(0.88f, 0.58f, 0.10f);
         private static readonly Color SupplyHubMarkerBorderColor = new Color(0.98f, 0.92f, 0.78f);
@@ -87,6 +92,8 @@ namespace Engine.Monobehaviours.Managers
         private Transform combatBubbleRoot;
         private Transform movementArrowRoot;
         private Transform railwayRoot;
+        private Transform airOverlayRoot;
+        private Transform airInspectionRoot;
         private Label titleLabel;
         private Label timeLabel;
         private Label selectedTileLabel;
@@ -95,10 +102,50 @@ namespace Engine.Monobehaviours.Managers
         private Foldout unitsFoldout;
         private VisualElement unitsList;
         private Button pauseButton;
+        private Button nextTurnButton;
+        private Label simulationStateLabel;
+        private VisualElement simulationControls;
+        private Button mapTabButton;
+        private Button airOpsTabButton;
         private VisualElement hudRoot;
         private VisualElement hudPanel;
+        private VisualElement mapInfoContent;
+        private ScrollView airOpsContent;
+        private Label airOpsSummary;
+        private Label airRequestCount;
+        private Label airPackageCount;
+        private Label airAirborneCount;
+        private Button airRequestsButton;
+        private Button airPackagesButton;
+        private Button airFlightsButton;
+        private Label airListTitle;
+        private VisualElement airAllianceFilter;
+        private Button airBlueFlightsButton;
+        private Button airRedFlightsButton;
+        private Label airInspectionStatus;
+        private VisualElement airRequestsList;
+        private VisualElement airPackagesList;
+        private VisualElement airFlightsList;
+        private VisualElement flightDetailBackdrop;
+        private Label flightDetailTitle;
+        private Label flightDetailSubtitle;
+        private Button flightDetailClose;
+        private ScrollView flightDetailScroll;
+        private VisualElement flightDetailContent;
         private Font runtimeFont;
         private Vector3Int? selectedCell;
+        private Guid selectedFlightId;
+        private Guid inspectedFlightId;
+        private bool showingAirOps;
+        private AirOperationsView airOperationsView = AirOperationsView.Flights;
+        private Alliance airFlightAlliance = Alliance.Bluefor;
+
+        private enum AirOperationsView
+        {
+            Requests,
+            Packages,
+            Flights
+        }
 
         private IEnumerator Start()
         {
@@ -119,6 +166,7 @@ namespace Engine.Monobehaviours.Managers
 
         private void OnDestroy()
         {
+            IsPointerOverCampaignUi = false;
             if (gameManager != null)
                 gameManager.GameTurnCompleted -= RefreshCampaignAfterGameTurn;
         }
@@ -134,7 +182,9 @@ namespace Engine.Monobehaviours.Managers
 
         private void RefreshCampaignAfterGameTurn()
         {
+            inspectedFlightId = Guid.Empty;
             RenderCampaign(false, true);
+            SetAirInspectionStatus(string.Empty);
         }
 
         private void RenderCampaign(bool frameCamera = true, bool preserveSelection = false)
@@ -161,6 +211,8 @@ namespace Engine.Monobehaviours.Managers
             ClearCombatBubbles();
             ClearMovementArrows();
             ClearRailwayLines();
+            ClearAirOverlays();
+            ClearAirInspection();
 
             foreach (var campaignTile in gameManager.CampaignTiles)
             {
@@ -184,6 +236,8 @@ namespace Engine.Monobehaviours.Managers
             CreateRailwayLines();
             CreateMovementArrows();
             CreateCombatBubbles();
+            CreateAirOverlays();
+            CreateAirInspection();
 
             tilemap.RefreshAllTiles();
             if (frameCamera)
@@ -200,6 +254,7 @@ namespace Engine.Monobehaviours.Managers
             }
 
             UpdateSummaryUi();
+            UpdateAirOperationsUi();
         }
 
         private void EnsureTilemap()
@@ -256,6 +311,20 @@ namespace Engine.Monobehaviours.Managers
                 var railwayObject = new GameObject("Campaign Railways");
                 railwayObject.transform.SetParent(grid.transform, false);
                 railwayRoot = railwayObject.transform;
+            }
+
+            if (airOverlayRoot == null)
+            {
+                var airObject = new GameObject("Campaign Air Operations");
+                airObject.transform.SetParent(grid.transform, false);
+                airOverlayRoot = airObject.transform;
+            }
+
+            if (airInspectionRoot == null)
+            {
+                var inspectionObject = new GameObject("Campaign Air Route Inspection");
+                inspectionObject.transform.SetParent(grid.transform, false);
+                airInspectionRoot = inspectionObject.transform;
             }
         }
 
@@ -318,19 +387,81 @@ namespace Engine.Monobehaviours.Managers
             unitsFoldout = root.Q<Foldout>("units-foldout");
             unitsList = root.Q<VisualElement>("units-list");
             pauseButton = root.Q<Button>("pause-button");
+            nextTurnButton = root.Q<Button>("next-turn-button");
+            simulationStateLabel = root.Q<Label>("simulation-state-label");
+            simulationControls = root.Q<VisualElement>("simulation-controls");
+            mapTabButton = root.Q<Button>("map-tab-button");
+            airOpsTabButton = root.Q<Button>("air-ops-tab-button");
             hudRoot = root.Q<VisualElement>("campaign-hud-root");
             hudPanel = root.Q<VisualElement>("campaign-hud-panel");
+            mapInfoContent = root.Q<VisualElement>("map-info-content");
+            airOpsContent = root.Q<ScrollView>("air-ops-content");
+            airOpsSummary = root.Q<Label>("air-ops-summary");
+            airRequestCount = root.Q<Label>("air-request-count");
+            airPackageCount = root.Q<Label>("air-package-count");
+            airAirborneCount = root.Q<Label>("air-airborne-count");
+            airRequestsButton = root.Q<Button>("air-requests-button");
+            airPackagesButton = root.Q<Button>("air-packages-button");
+            airFlightsButton = root.Q<Button>("air-flights-button");
+            airListTitle = root.Q<Label>("air-list-title");
+            airAllianceFilter = root.Q<VisualElement>("air-alliance-filter");
+            airBlueFlightsButton = root.Q<Button>("air-blue-flights-button");
+            airRedFlightsButton = root.Q<Button>("air-red-flights-button");
+            airInspectionStatus = root.Q<Label>("air-inspection-status");
+            airRequestsList = root.Q<VisualElement>("air-requests-list");
+            airPackagesList = root.Q<VisualElement>("air-packages-list");
+            airFlightsList = root.Q<VisualElement>("air-flights-list");
+            flightDetailBackdrop = root.Q<VisualElement>("flight-detail-backdrop");
+            flightDetailTitle = root.Q<Label>("flight-detail-title");
+            flightDetailSubtitle = root.Q<Label>("flight-detail-subtitle");
+            flightDetailClose = root.Q<Button>("flight-detail-close");
+            flightDetailScroll = root.Q<ScrollView>("flight-detail-scroll");
+            flightDetailContent = root.Q<VisualElement>("flight-detail-content");
 
             ApplyRuntimeFont(titleLabel);
             ApplyRuntimeFont(timeLabel);
             ApplyRuntimeFont(selectedTileLabel);
             ApplyRuntimeFont(pauseButton);
+            ApplyRuntimeFont(nextTurnButton);
+            ApplyRuntimeFont(simulationStateLabel);
+            ApplyRuntimeFont(mapTabButton);
+            ApplyRuntimeFont(airOpsTabButton);
+            ApplyRuntimeFont(airOpsSummary);
+            ApplyRuntimeFont(airRequestCount);
+            ApplyRuntimeFont(airPackageCount);
+            ApplyRuntimeFont(airAirborneCount);
+            ApplyRuntimeFont(airRequestsButton);
+            ApplyRuntimeFont(airPackagesButton);
+            ApplyRuntimeFont(airFlightsButton);
+            ApplyRuntimeFont(airListTitle);
+            ApplyRuntimeFont(airBlueFlightsButton);
+            ApplyRuntimeFont(airRedFlightsButton);
+            ApplyRuntimeFont(airInspectionStatus);
+            ApplyRuntimeFont(flightDetailTitle);
+            ApplyRuntimeFont(flightDetailSubtitle);
+            ApplyRuntimeFont(flightDetailClose);
 
             if (hudRoot != null)
                 hudRoot.pickingMode = PickingMode.Ignore;
 
             if (hudPanel != null)
+            {
                 hudPanel.pickingMode = PickingMode.Position;
+                hudPanel.RegisterCallback<PointerEnterEvent>(_ => IsPointerOverCampaignUi = true);
+                hudPanel.RegisterCallback<PointerLeaveEvent>(_ => IsPointerOverCampaignUi = false);
+            }
+
+            if (simulationControls != null)
+            {
+                simulationControls.pickingMode = PickingMode.Position;
+                simulationControls.RegisterCallback<PointerEnterEvent>(_ => IsPointerOverCampaignUi = true);
+                simulationControls.RegisterCallback<PointerLeaveEvent>(_ => IsPointerOverCampaignUi = false);
+            }
+
+            if (airOpsContent != null)
+                airOpsContent.verticalScrollerVisibility = ScrollerVisibility.AlwaysVisible;
+            if (flightDetailScroll != null)
+                flightDetailScroll.verticalScrollerVisibility = ScrollerVisibility.AlwaysVisible;
 
             if (neighborsFoldout != null)
             {
@@ -351,7 +482,60 @@ namespace Engine.Monobehaviours.Managers
                 pauseButton.clicked += TogglePause;
             }
 
-            if (titleLabel == null || timeLabel == null || selectedTileLabel == null || pauseButton == null)
+            if (nextTurnButton != null)
+            {
+                nextTurnButton.pickingMode = PickingMode.Position;
+                nextTurnButton.clicked += AdvanceOneGameTurn;
+            }
+
+            if (mapTabButton != null)
+            {
+                mapTabButton.pickingMode = PickingMode.Position;
+                mapTabButton.clicked += () => ShowAirOperations(false);
+            }
+
+            if (airOpsTabButton != null)
+            {
+                airOpsTabButton.pickingMode = PickingMode.Position;
+                airOpsTabButton.clicked += () => ShowAirOperations(true);
+            }
+
+            if (airRequestsButton != null)
+                airRequestsButton.clicked += () => ShowAirOperationsView(AirOperationsView.Requests);
+            if (airPackagesButton != null)
+                airPackagesButton.clicked += () => ShowAirOperationsView(AirOperationsView.Packages);
+            if (airFlightsButton != null)
+                airFlightsButton.clicked += () => ShowAirOperationsView(AirOperationsView.Flights);
+            if (airBlueFlightsButton != null)
+                airBlueFlightsButton.clicked += () => ShowAirFlightAlliance(Alliance.Bluefor);
+            if (airRedFlightsButton != null)
+                airRedFlightsButton.clicked += () => ShowAirFlightAlliance(Alliance.Redfor);
+
+            if (flightDetailClose != null)
+            {
+                flightDetailClose.pickingMode = PickingMode.Position;
+                flightDetailClose.clicked += CloseFlightDetails;
+            }
+            if (flightDetailBackdrop != null)
+            {
+                flightDetailBackdrop.RegisterCallback<PointerEnterEvent>(_ => IsPointerOverCampaignUi = true);
+                flightDetailBackdrop.RegisterCallback<PointerLeaveEvent>(_ => IsPointerOverCampaignUi = false);
+                flightDetailBackdrop.RegisterCallback<ClickEvent>(evt =>
+                {
+                    if (evt.target == flightDetailBackdrop)
+                        CloseFlightDetails();
+                });
+            }
+
+            ShowAirOperations(false);
+            ShowAirOperationsView(AirOperationsView.Flights);
+            CloseFlightDetails();
+
+            if (titleLabel == null
+                || timeLabel == null
+                || selectedTileLabel == null
+                || pauseButton == null
+                || nextTurnButton == null)
             {
                 Debug.LogError("PlaySceneCampaignRenderer could not find one or more required elements in the Campaign HUD UXML.");
                 return false;
@@ -371,7 +555,6 @@ namespace Engine.Monobehaviours.Managers
             else
                 Debug.LogWarning("PlaySceneCampaignRenderer could not load Unity's LegacyRuntime.ttf font.");
 
-            textElement.style.color = Color.white;
         }
 
         private void UpdateSummaryUi()
@@ -386,6 +569,728 @@ namespace Engine.Monobehaviours.Managers
             UpdateSelectedTileUi();
         }
 
+        private void ShowAirOperations(bool showAirOperations)
+        {
+            showingAirOps = showAirOperations;
+            if (mapInfoContent != null)
+                mapInfoContent.style.display = showingAirOps ? DisplayStyle.None : DisplayStyle.Flex;
+            if (airOpsContent != null)
+                airOpsContent.style.display = showingAirOps ? DisplayStyle.Flex : DisplayStyle.None;
+
+            hudPanel?.EnableInClassList("campaign-hud-panel--air-ops", showingAirOps);
+            mapTabButton?.EnableInClassList("campaign-hud-tab--selected", !showingAirOps);
+            airOpsTabButton?.EnableInClassList("campaign-hud-tab--selected", showingAirOps);
+            if (showingAirOps)
+                UpdateAirOperationsUi();
+        }
+
+        private void ShowAirOperationsView(AirOperationsView view)
+        {
+            airOperationsView = view;
+            airRequestsList?.EnableInClassList(
+                "campaign-air-list--hidden",
+                view != AirOperationsView.Requests);
+            airPackagesList?.EnableInClassList(
+                "campaign-air-list--hidden",
+                view != AirOperationsView.Packages);
+            airFlightsList?.EnableInClassList(
+                "campaign-air-list--hidden",
+                view != AirOperationsView.Flights);
+            airAllianceFilter?.EnableInClassList(
+                "campaign-air-alliance-filter--hidden",
+                view != AirOperationsView.Flights);
+
+            airRequestsButton?.EnableInClassList(
+                "campaign-air-view-tab--selected",
+                view == AirOperationsView.Requests);
+            airPackagesButton?.EnableInClassList(
+                "campaign-air-view-tab--selected",
+                view == AirOperationsView.Packages);
+            airFlightsButton?.EnableInClassList(
+                "campaign-air-view-tab--selected",
+                view == AirOperationsView.Flights);
+
+            if (airListTitle != null)
+            {
+                airListTitle.text = view switch
+                {
+                    AirOperationsView.Requests => "CURRENT MISSION REQUESTS",
+                    AirOperationsView.Packages => "CURRENT AIR PACKAGES",
+                    _ => "CURRENT FLIGHTS — SELECT A ROW FOR DETAILS"
+                };
+            }
+
+            if (airOpsContent != null)
+                airOpsContent.scrollOffset = Vector2.zero;
+        }
+
+        private void ShowAirFlightAlliance(Alliance alliance)
+        {
+            if (alliance != Alliance.Bluefor && alliance != Alliance.Redfor)
+                return;
+
+            airFlightAlliance = alliance;
+            airBlueFlightsButton?.EnableInClassList(
+                "campaign-air-alliance-tab--selected",
+                alliance == Alliance.Bluefor);
+            airRedFlightsButton?.EnableInClassList(
+                "campaign-air-alliance-tab--selected",
+                alliance == Alliance.Redfor);
+            if (airOpsContent != null)
+                airOpsContent.scrollOffset = Vector2.zero;
+            UpdateAirOperationsUi();
+        }
+
+        private void UpdateAirOperationsUi()
+        {
+            if (gameManager == null || airOpsSummary == null)
+                return;
+
+            var commanders = new[]
+                {
+                    gameManager.GetAllianceAirTaskingCommander(Alliance.Bluefor),
+                    gameManager.GetAllianceAirTaskingCommander(Alliance.Redfor)
+                }
+                .Where(commander => commander != null)
+                .ToList();
+            var requests = commanders
+                .SelectMany(commander => commander.MissionRequests ?? Array.Empty<AirMissionRequest>())
+                .Where(request => request != null && !request.IsTerminal)
+                .OrderBy(request => request.Alliance)
+                .ThenByDescending(request => request.Priority)
+                .ToList();
+            var packages = commanders
+                .SelectMany(commander => commander.Packages ?? Array.Empty<AirPackage>())
+                .Where(package => package != null && !package.HasPhysicallyEnded)
+                .OrderBy(package => package.Alliance)
+                .ThenBy(package => package.EarliestTakeoffTime)
+                .ToList();
+            var flights = packages
+                .SelectMany(package => package.Flights ?? new List<AirFlight>())
+                .Where(flight => flight != null && !flight.HasPhysicallyEnded)
+                .OrderBy(flight => flight.PlannedTakeoffTime)
+                .ToList();
+            var airborneCount = flights.Count(flight => flight.IsAirborne);
+
+            airOpsSummary.text =
+                $"Planning cycle {commanders.Select(commander => commander.PlanningCycle).DefaultIfEmpty().Max()}  •  " +
+                $"{flights.Count} current flights\n" +
+                "Airborne flight positions and remaining routes are drawn on the map.";
+            ApplyRuntimeFont(airOpsSummary);
+            if (airRequestCount != null)
+                airRequestCount.text = requests.Count.ToString();
+            if (airPackageCount != null)
+                airPackageCount.text = packages.Count.ToString();
+            if (airAirborneCount != null)
+                airAirborneCount.text = airborneCount.ToString();
+
+            if (airRequestsButton != null)
+                airRequestsButton.text = $"Requests  {requests.Count}";
+            if (airPackagesButton != null)
+                airPackagesButton.text = $"Packages  {packages.Count}";
+            if (airFlightsButton != null)
+                airFlightsButton.text = $"Flights  {flights.Count}";
+            if (airBlueFlightsButton != null)
+                airBlueFlightsButton.text =
+                    $"Blue flights  {flights.Count(flight => GetFlightAlliance(flight, packages) == Alliance.Bluefor)}";
+            if (airRedFlightsButton != null)
+                airRedFlightsButton.text =
+                    $"Red flights  {flights.Count(flight => GetFlightAlliance(flight, packages) == Alliance.Redfor)}";
+
+            RebuildAirRequestsList(requests);
+            RebuildAirPackagesList(packages, commanders);
+            RebuildAirFlightsList(
+                flights.Where(flight => GetFlightAlliance(flight, packages) == airFlightAlliance).ToList(),
+                packages);
+            if (selectedFlightId != Guid.Empty)
+                RefreshFlightDetails();
+        }
+
+        private void RebuildAirRequestsList(IReadOnlyList<AirMissionRequest> requests)
+        {
+            if (airRequestsList == null)
+                return;
+
+            airRequestsList.Clear();
+            if (requests.Count == 0)
+            {
+                airRequestsList.Add(CreateAirEmptyLabel("No current mission requests."));
+                return;
+            }
+
+            foreach (var request in requests)
+            {
+                var title = $"{GetAllianceLabel(request.Alliance)} {GetMissionLabel(request.RequestType)}  •  {request.State}";
+                var fields = new List<AirCardField>
+                {
+                    new AirCardField("Request ID", ShortId(request.MissionRequestId)),
+                    new AirCardField("Priority", request.Priority.ToString("0.0")),
+                    new AirCardField("Mission area", $"Hex {FormatTile(request.MissionArea?.CenterTileId ?? default)}"),
+                    new AirCardField("Effect window", $"{request.EffectStart:MM-dd HH:mm} – {request.EffectEnd:MM-dd HH:mm}"),
+                    new AirCardField(
+                        "Demand",
+                        $"{request.DesiredAircraftStrength} aircraft" +
+                        (request.DesiredSupportSlots > 0
+                            ? $" / {request.DesiredSupportSlots} support slots"
+                            : string.Empty))
+                };
+                if (!string.IsNullOrWhiteSpace(request.Rationale))
+                    fields.Add(new AirCardField("Intent", request.Rationale));
+                airRequestsList.Add(CreateAirCard(request.Alliance, title, fields));
+            }
+        }
+
+        private void RebuildAirPackagesList(
+            IReadOnlyList<AirPackage> packages,
+            IReadOnlyList<AllianceAirTaskingCommander> commanders)
+        {
+            if (airPackagesList == null)
+                return;
+
+            airPackagesList.Clear();
+            if (packages.Count == 0)
+            {
+                airPackagesList.Add(CreateAirEmptyLabel("No current packages."));
+                return;
+            }
+
+            foreach (var package in packages)
+            {
+                var request = commanders
+                    .FirstOrDefault(commander => commander.Alliance == package.Alliance)?
+                    .MissionRequests?
+                    .FirstOrDefault(candidate => candidate.MissionRequestId == package.MissionRequestId);
+                var aircraftCount = (package.Flights ?? new List<AirFlight>())
+                    .Where(flight => flight != null)
+                    .Sum(flight => flight.AircraftIds?.Count ?? 0);
+                var title =
+                    $"{GetAllianceLabel(package.Alliance)} PKG {ShortId(package.PackageId)}  •  {package.LifecycleState}";
+                var fields = new List<AirCardField>
+                {
+                    new AirCardField(
+                        "Mission",
+                        GetMissionLabel(request?.RequestType ?? package.Flights?.FirstOrDefault()?.MissionType ?? default)),
+                    new AirCardField("Composition", $"{package.Flights?.Count ?? 0} flights / {aircraftCount} aircraft"),
+                    new AirCardField("Earliest launch", package.EarliestTakeoffTime.ToString("MM-dd HH:mm")),
+                    new AirCardField("Effect window", $"{package.EffectStart:MM-dd HH:mm} – {package.EffectEnd:MM-dd HH:mm}"),
+                    new AirCardField("Source request", ShortId(package.MissionRequestId))
+                };
+                if (package.HasRendezvous)
+                    fields.Add(new AirCardField("Rendezvous", $"Hex {FormatTile(package.RendezvousTileId)}"));
+                if (!string.IsNullOrWhiteSpace(package.Rationale))
+                    fields.Add(new AirCardField("Intent", package.Rationale));
+                airPackagesList.Add(CreateAirCard(package.Alliance, title, fields));
+            }
+        }
+
+        private void RebuildAirFlightsList(
+            IReadOnlyList<AirFlight> flights,
+            IReadOnlyList<AirPackage> packages)
+        {
+            if (airFlightsList == null)
+                return;
+
+            airFlightsList.Clear();
+            if (flights.Count == 0)
+            {
+                airFlightsList.Add(CreateAirEmptyLabel("No current flights."));
+                return;
+            }
+
+            foreach (var flight in flights)
+            {
+                var package = packages.FirstOrDefault(candidate => candidate.PackageId == flight.OwningPackageId);
+                var alliance = package?.Alliance ?? Alliance.Neutral;
+                var squadron = gameManager.squadronSystem?.Squadrons?
+                    .FirstOrDefault(candidate => candidate.SquadronId == flight.SquadronId);
+                var nextWaypoint = flight.Route != null
+                                   && flight.CurrentWaypointIndex >= 0
+                                   && flight.CurrentWaypointIndex < flight.Route.Count
+                    ? flight.Route[flight.CurrentWaypointIndex]
+                    : null;
+                var altitude = flight.HasPosition ? $"{flight.PositionFeet.y:0} ft" : "not airborne";
+                var title =
+                    $"{GetAllianceLabel(alliance)} {GetFlightName(flight, squadron)}  •  {flight.ExecutionPhase}";
+                var fields = new List<AirCardField>
+                {
+                    new AirCardField("Mission", GetMissionLabel(flight.MissionType)),
+                    new AirCardField("Aircraft", (flight.AircraftIds?.Count ?? 0).ToString()),
+                    new AirCardField("Execution", $"{flight.LifecycleState} / {flight.ExecutionPhase}"),
+                    new AirCardField(
+                        "Position",
+                        altitude + (flight.HasPosition ? $" / heading {flight.HeadingDegrees:0}°" : string.Empty)),
+                    new AirCardField(
+                        "Next action",
+                        nextWaypoint == null ? "—" : GetWaypointLabel(nextWaypoint.Action)),
+                    new AirCardField("Package", ShortId(flight.OwningPackageId))
+                };
+                airFlightsList.Add(CreateAirCard(
+                    alliance,
+                    title,
+                    fields,
+                    () => OpenFlightDetails(flight.FlightId),
+                    () => InspectFlightRoute(flight.FlightId)));
+            }
+        }
+
+        private VisualElement CreateAirCard(
+            Alliance alliance,
+            string title,
+            IReadOnlyList<AirCardField> fields,
+            Action onClick = null,
+            Action onRightClick = null)
+        {
+            VisualElement card;
+            if (onClick == null)
+            {
+                card = new VisualElement();
+            }
+            else
+            {
+                var button = new Button(onClick) { text = string.Empty };
+                button.pickingMode = PickingMode.Position;
+                button.AddToClassList("campaign-air-card--clickable");
+                if (onRightClick != null)
+                {
+                    button.RegisterCallback<PointerDownEvent>(evt =>
+                    {
+                        if (evt.button != 1)
+                            return;
+
+                        onRightClick();
+                        evt.StopImmediatePropagation();
+                    });
+                }
+                card = button;
+            }
+            card.AddToClassList("campaign-air-card");
+            if (alliance == Alliance.Bluefor)
+                card.AddToClassList("campaign-air-card--blue");
+            else if (alliance == Alliance.Redfor)
+                card.AddToClassList("campaign-air-card--red");
+
+            var titleLabelElement = new Label(title);
+            titleLabelElement.AddToClassList("campaign-air-card-title");
+            titleLabelElement.pickingMode = PickingMode.Ignore;
+            ApplyRuntimeFont(titleLabelElement);
+            card.Add(titleLabelElement);
+
+            foreach (var field in fields ?? Array.Empty<AirCardField>())
+            {
+                var row = new VisualElement();
+                row.AddToClassList("campaign-air-field-row");
+                row.pickingMode = PickingMode.Ignore;
+
+                var fieldLabel = new Label(field.Label);
+                fieldLabel.AddToClassList("campaign-air-field-label");
+                fieldLabel.pickingMode = PickingMode.Ignore;
+                ApplyRuntimeFont(fieldLabel);
+                row.Add(fieldLabel);
+
+                var fieldValue = new Label(field.Value);
+                fieldValue.AddToClassList("campaign-air-field-value");
+                fieldValue.pickingMode = PickingMode.Ignore;
+                ApplyRuntimeFont(fieldValue);
+                row.Add(fieldValue);
+                card.Add(row);
+            }
+
+            card.style.minHeight = 48f + Math.Max(1, fields?.Count ?? 0) * 24f;
+            return card;
+        }
+
+        private void OpenFlightDetails(Guid flightId)
+        {
+            selectedFlightId = flightId;
+            if (flightDetailBackdrop != null)
+            {
+                flightDetailBackdrop.style.display = DisplayStyle.Flex;
+                flightDetailBackdrop.BringToFront();
+            }
+            RefreshFlightDetails();
+        }
+
+        private void CloseFlightDetails()
+        {
+            selectedFlightId = Guid.Empty;
+            if (flightDetailBackdrop != null)
+                flightDetailBackdrop.style.display = DisplayStyle.None;
+            flightDetailContent?.Clear();
+        }
+
+        private void InspectFlightRoute(Guid flightId)
+        {
+            if (gameManager == null || !gameManager.IsGamePaused)
+            {
+                SetAirInspectionStatus("Pause the campaign before inspecting a flight route.");
+                return;
+            }
+
+            if (!TryFindFlight(flightId, out var flight, out _, out _))
+            {
+                SetAirInspectionStatus("That flight is no longer available for inspection.");
+                return;
+            }
+
+            if (!flight.HasPosition && (flight.Route == null || flight.Route.Count == 0))
+            {
+                SetAirInspectionStatus("This flight has no position or planned route to display.");
+                return;
+            }
+
+            inspectedFlightId = flightId;
+            ClearAirInspection();
+            CreateAirInspection();
+            FrameAirInspection(flight);
+
+            var squadron = gameManager.squadronSystem?.Squadrons?
+                .FirstOrDefault(candidate => candidate.SquadronId == flight.SquadronId);
+            SetAirInspectionStatus(
+                $"Inspecting {GetFlightName(flight, squadron)}. Route highlight clears on the next game turn.");
+        }
+
+        private void SetAirInspectionStatus(string message)
+        {
+            if (airInspectionStatus == null)
+                return;
+
+            airInspectionStatus.text = message ?? string.Empty;
+            airInspectionStatus.EnableInClassList(
+                "campaign-air-inspection-status--visible",
+                !string.IsNullOrWhiteSpace(message));
+        }
+
+        private void RefreshFlightDetails()
+        {
+            if (selectedFlightId == Guid.Empty || flightDetailContent == null)
+                return;
+
+            if (!TryFindFlight(selectedFlightId, out var flight, out var package, out var commander))
+            {
+                CloseFlightDetails();
+                return;
+            }
+
+            var alliance = package?.Alliance ?? commander?.Alliance ?? Alliance.Neutral;
+            var squadron = gameManager.squadronSystem?.Squadrons?
+                .FirstOrDefault(candidate => candidate.SquadronId == flight.SquadronId);
+            var nextWaypoint = flight.Route != null
+                               && flight.CurrentWaypointIndex >= 0
+                               && flight.CurrentWaypointIndex < flight.Route.Count
+                ? flight.Route[flight.CurrentWaypointIndex]
+                : null;
+
+            flightDetailTitle.text = GetFlightName(flight, squadron);
+            flightDetailSubtitle.text =
+                $"{GetAllianceLabel(alliance)}  •  {GetMissionLabel(flight.MissionType)}  •  " +
+                $"{flight.ExecutionPhase}";
+            var previousScrollOffset = flightDetailScroll?.scrollOffset ?? Vector2.zero;
+            flightDetailContent.Clear();
+
+            AddFlightDetailSection(
+                "IDENTITY & TASKING",
+                $"Flight ID: {flight.FlightId:N}",
+                $"Squadron: {(string.IsNullOrWhiteSpace(squadron?.Name) ? "Unknown" : squadron.Name)}",
+                $"Package: {(package == null ? "Unknown" : package.PackageId.ToString("N"))}",
+                $"Mission: {GetMissionLabel(flight.MissionType)}",
+                $"Role in package: {(flight.IsRequired ? "Required" : "Supporting")}",
+                $"Assigned aircraft: {flight.AircraftIds?.Count ?? 0}");
+
+            AddFlightDetailSection(
+                "EXECUTION STATE",
+                $"Lifecycle: {flight.LifecycleState}",
+                $"Phase: {flight.ExecutionPhase}",
+                $"Mission achieved: {(flight.MissionAchieved ? "Yes" : "No")}",
+                $"Rendezvous hold: {(flight.IsWaitingAtRendezvous ? "Waiting" : "No")}",
+                $"Route progress: {Mathf.Clamp(flight.CurrentWaypointIndex + 1, 0, flight.Route?.Count ?? 0)} of {flight.Route?.Count ?? 0}",
+                $"Next action: {(nextWaypoint == null ? "None" : GetWaypointLabel(nextWaypoint.Action))}");
+
+            AddFlightDetailSection(
+                "POSITION & SCHEDULE",
+                flight.HasPosition
+                    ? $"Position: X {flight.PositionFeet.x:0} ft / Y {flight.PositionFeet.z:0} ft"
+                    : "Position: Not yet established",
+                flight.HasPosition
+                    ? $"Altitude: {flight.PositionFeet.y:0} ft"
+                    : "Altitude: Ground",
+                $"Heading: {flight.HeadingDegrees:0}°",
+                $"Planned takeoff: {flight.PlannedTakeoffTime:yyyy-MM-dd HH:mm}",
+                $"Effect window: {flight.EffectStart:yyyy-MM-dd HH:mm} – {flight.EffectEnd:yyyy-MM-dd HH:mm}",
+                $"Mission area: Hex {FormatTile(flight.MissionArea?.CenterTileId ?? default)}");
+
+            AddAircraftDetailSection(flight, squadron);
+            AddRouteDetailSection(flight);
+            AddSupportDetailSection(flight);
+            AddExecutionEventSection(flight);
+            if (flightDetailScroll != null)
+            {
+                flightDetailScroll.schedule.Execute(
+                    () => flightDetailScroll.scrollOffset = previousScrollOffset);
+            }
+        }
+
+        private bool TryFindFlight(
+            Guid flightId,
+            out AirFlight flight,
+            out AirPackage package,
+            out AllianceAirTaskingCommander commander)
+        {
+            foreach (var alliance in new[] { Alliance.Bluefor, Alliance.Redfor })
+            {
+                var candidateCommander = gameManager.GetAllianceAirTaskingCommander(alliance);
+                if (candidateCommander == null)
+                    continue;
+
+                foreach (var candidatePackage in candidateCommander.Packages ?? Array.Empty<AirPackage>())
+                {
+                    var candidateFlight = candidatePackage?.Flights?
+                        .FirstOrDefault(item => item != null && item.FlightId == flightId);
+                    if (candidateFlight == null)
+                        continue;
+
+                    flight = candidateFlight;
+                    package = candidatePackage;
+                    commander = candidateCommander;
+                    return true;
+                }
+            }
+
+            flight = null;
+            package = null;
+            commander = null;
+            return false;
+        }
+
+        private void AddFlightDetailSection(string title, params string[] lines)
+        {
+            var section = CreateFlightDetailSection(title);
+            section.style.minHeight = 43f + lines.Count(line => !string.IsNullOrWhiteSpace(line)) * 23f;
+            foreach (var line in lines.Where(line => !string.IsNullOrWhiteSpace(line)))
+            {
+                var label = new Label(line);
+                label.AddToClassList("flight-detail-line");
+                ApplyRuntimeFont(label);
+                section.Add(label);
+            }
+
+            flightDetailContent.Add(section);
+        }
+
+        private void AddAircraftDetailSection(AirFlight flight, Squadron squadron)
+        {
+            var section = CreateFlightDetailSection("ASSIGNED AIRCRAFT");
+            var aircraftById = (squadron?.Aircraft ?? new List<CampaignAircraft>())
+                .Where(aircraft => aircraft != null)
+                .ToDictionary(aircraft => aircraft.AircraftId);
+            var aircraftIds = flight.AircraftIds ?? new List<Guid>();
+            if (aircraftIds.Count == 0)
+            {
+                AddFlightDetailMessage(section, "No aircraft assigned.");
+            }
+            else
+            {
+                for (var index = 0; index < aircraftIds.Count; index++)
+                {
+                    aircraftById.TryGetValue(aircraftIds[index], out var aircraft);
+                    var loadoutCount = aircraft?.Loadout?.Sum(item => item?.Count ?? 0) ?? 0;
+                    AddFlightDetailMessage(
+                        section,
+                        $"{index + 1}. Aircraft {ShortId(aircraftIds[index])}  •  " +
+                        $"{aircraft?.Status.ToString() ?? "Unknown"}  •  {loadoutCount} stores");
+                }
+            }
+
+            section.style.minHeight = 43f + Math.Max(1, aircraftIds.Count) * 23f;
+            flightDetailContent.Add(section);
+        }
+
+        private void AddRouteDetailSection(AirFlight flight)
+        {
+            var section = CreateFlightDetailSection($"ROUTE ({flight.Route?.Count ?? 0} WAYPOINTS)");
+            var route = flight.Route ?? new List<AirWaypoint>();
+            if (route.Count == 0)
+            {
+                AddFlightDetailMessage(section, "No route was planned.");
+            }
+            else
+            {
+                for (var index = 0; index < route.Count; index++)
+                {
+                    var waypoint = route[index];
+                    if (waypoint == null)
+                        continue;
+
+                    var row = new Label(
+                        $"{index + 1}. {GetWaypointLabel(waypoint.Action)}  •  " +
+                        $"{waypoint.PlannedArrivalTime:MM-dd HH:mm}\n" +
+                        $"X {waypoint.PositionFeet.x:0} / Y {waypoint.PositionFeet.z:0} / " +
+                        $"ALT {waypoint.PositionFeet.y:0} ft" +
+                        (waypoint.HasRepeat ? $"  •  repeats until {waypoint.RepeatUntil:HH:mm}" : string.Empty));
+                    row.AddToClassList("flight-detail-route-row");
+                    if (index == flight.CurrentWaypointIndex)
+                        row.AddToClassList("flight-detail-route-row--current");
+                    ApplyRuntimeFont(row);
+                    section.Add(row);
+                }
+            }
+
+            section.style.minHeight = 43f + Math.Max(1, route.Count) * 54f;
+            flightDetailContent.Add(section);
+        }
+
+        private void AddSupportDetailSection(AirFlight flight)
+        {
+            var reservations = flight.SupportReservations ?? new List<AirSupportReservation>();
+            if (reservations.Count == 0 && flight.ProvidedSupportSlots <= 0)
+                return;
+
+            var section = CreateFlightDetailSection("SUPPORT COMMITMENTS");
+            AddFlightDetailMessage(section, $"Support capacity: {flight.ProvidedSupportSlots} slots");
+            foreach (var reservation in reservations)
+            {
+                if (reservation == null)
+                    continue;
+                AddFlightDetailMessage(
+                    section,
+                    $"{reservation.SlotCount} slots for PKG {ShortId(reservation.ConsumingPackageId)}  •  " +
+                    $"{reservation.StartTime:MM-dd HH:mm} – {reservation.EndTime:HH:mm}");
+            }
+            section.style.minHeight = 66f + reservations.Count * 23f;
+            flightDetailContent.Add(section);
+        }
+
+        private void AddExecutionEventSection(AirFlight flight)
+        {
+            var section = CreateFlightDetailSection($"EXECUTION LOG ({flight.ExecutionEvents?.Count ?? 0})");
+            var events = (flight.ExecutionEvents ?? new List<FlightExecutionEvent>())
+                .Where(entry => entry != null)
+                .OrderByDescending(entry => entry.OccurredAt)
+                .ToList();
+            if (events.Count == 0)
+            {
+                AddFlightDetailMessage(section, "No execution events recorded yet.");
+            }
+            else
+            {
+                foreach (var executionEvent in events)
+                {
+                    AddFlightDetailMessage(
+                        section,
+                        $"{executionEvent.OccurredAt:MM-dd HH:mm}  •  {GetWaypointLabel(executionEvent.Action)}" +
+                        (string.IsNullOrWhiteSpace(executionEvent.Detail)
+                            ? string.Empty
+                            : $"\n{executionEvent.Detail}"));
+                }
+            }
+
+            section.style.minHeight = 43f + Math.Max(1, events.Count) * 45f;
+            flightDetailContent.Add(section);
+        }
+
+        private VisualElement CreateFlightDetailSection(string title)
+        {
+            var section = new VisualElement();
+            section.AddToClassList("flight-detail-section");
+            var titleLabelElement = new Label(title);
+            titleLabelElement.AddToClassList("flight-detail-section-title");
+            ApplyRuntimeFont(titleLabelElement);
+            section.Add(titleLabelElement);
+            return section;
+        }
+
+        private void AddFlightDetailMessage(VisualElement section, string message)
+        {
+            var label = new Label(message);
+            label.AddToClassList("flight-detail-line");
+            ApplyRuntimeFont(label);
+            section.Add(label);
+        }
+
+        private Label CreateAirEmptyLabel(string text)
+        {
+            var label = new Label(text);
+            label.AddToClassList("campaign-air-empty");
+            ApplyRuntimeFont(label);
+            return label;
+        }
+
+        private static Alliance GetFlightAlliance(
+            AirFlight flight,
+            IReadOnlyList<AirPackage> packages)
+        {
+            if (flight == null || packages == null)
+                return Alliance.Neutral;
+
+            return packages
+                       .FirstOrDefault(package =>
+                           package != null && package.PackageId == flight.OwningPackageId)?
+                       .Alliance
+                   ?? Alliance.Neutral;
+        }
+
+        private static string ShortId(Guid id)
+        {
+            return id == Guid.Empty ? "——" : id.ToString("N").Substring(0, 6).ToUpperInvariant();
+        }
+
+        private static string GetAllianceLabel(Alliance alliance)
+        {
+            return alliance switch
+            {
+                Alliance.Bluefor => "BLUE",
+                Alliance.Redfor => "RED",
+                _ => "NEUTRAL"
+            };
+        }
+
+        private static string GetMissionLabel(AirMissionRequestType mission)
+        {
+            return mission switch
+            {
+                AirMissionRequestType.DefensiveCounterAirPatrol => "DCA Patrol",
+                AirMissionRequestType.OffensiveCounterAirSweep => "OCA Sweep",
+                AirMissionRequestType.ProvideAirborneC2 => "Airborne C2",
+                AirMissionRequestType.ProvideAerialRefueling => "Aerial Refueling",
+                _ => mission.ToString()
+            };
+        }
+
+        private static string GetWaypointLabel(AirWaypointAction action)
+        {
+            return action switch
+            {
+                AirWaypointAction.StationEntry => "On station",
+                AirWaypointAction.StationEndpoint => "Station end",
+                AirWaypointAction.MissionAction => "Mission action",
+                AirWaypointAction.ReturnToBase => "Return to base",
+                _ => action.ToString()
+            };
+        }
+
+        private static string GetFlightName(AirFlight flight, Squadron squadron)
+        {
+            return string.IsNullOrWhiteSpace(squadron?.Name)
+                ? $"FLT {ShortId(flight.FlightId)}"
+                : squadron.Name;
+        }
+
+        private static string FormatTile(Vector3Int tileId)
+        {
+            return $"{tileId.x},{tileId.y},{tileId.z}";
+        }
+
+        private readonly struct AirCardField
+        {
+            public readonly string Label;
+            public readonly string Value;
+
+            public AirCardField(string label, string value)
+            {
+                Label = label ?? string.Empty;
+                Value = value ?? string.Empty;
+            }
+        }
+
         private void UpdateTimeUi()
         {
             if (timeLabel == null || gameManager == null)
@@ -394,6 +1299,17 @@ namespace Engine.Monobehaviours.Managers
             timeLabel.text = $"{gameManager.GameTime:yyyy-MM-dd HH:mm} | Tiles: {gameManager.CampaignTiles.Count}";
             if (pauseButton != null)
                 pauseButton.text = gameManager.IsGamePaused ? "Resume" : "Pause";
+            if (nextTurnButton != null)
+                nextTurnButton.SetEnabled(gameManager.IsGamePaused);
+            if (simulationStateLabel != null)
+            {
+                simulationStateLabel.text = gameManager.IsGamePaused
+                    ? "SIMULATION PAUSED"
+                    : "SIMULATION RUNNING";
+                simulationStateLabel.EnableInClassList(
+                    "simulation-state-label--paused",
+                    gameManager.IsGamePaused);
+            }
         }
 
         private void UpdateSelectedTileUi()
@@ -681,6 +1597,324 @@ namespace Engine.Monobehaviours.Managers
 
             foreach (var command in GetMovementArrowCommands())
                 CreateMovementArrow(command);
+        }
+
+        private void CreateAirOverlays()
+        {
+            if (airOverlayRoot == null || gameManager == null)
+                return;
+
+            foreach (var alliance in new[] { Alliance.Bluefor, Alliance.Redfor })
+            {
+                var commander = gameManager.GetAllianceAirTaskingCommander(alliance);
+                if (commander == null)
+                    continue;
+
+                foreach (var package in commander.Packages ?? Array.Empty<AirPackage>())
+                {
+                    foreach (var flight in package?.Flights ?? new List<AirFlight>())
+                    {
+                        if (flight == null || !flight.IsAirborne || !flight.HasPosition)
+                            continue;
+
+                        CreateAirRoute(flight, alliance);
+                        CreateAirMarker(flight, alliance);
+                    }
+                }
+            }
+        }
+
+        private void CreateAirInspection()
+        {
+            if (inspectedFlightId == Guid.Empty
+                || airInspectionRoot == null
+                || !TryFindFlight(inspectedFlightId, out var flight, out var package, out var commander))
+                return;
+
+            var alliance = package?.Alliance ?? commander?.Alliance ?? Alliance.Neutral;
+            var allianceColor = GetAirAllianceColor(alliance);
+            var route = (flight.Route ?? new List<AirWaypoint>())
+                .Where(waypoint => waypoint != null)
+                .ToList();
+
+            if (route.Count >= 2)
+            {
+                var plannedColor = Color.Lerp(allianceColor, Color.white, 0.25f);
+                plannedColor.a = 0.42f;
+                CreateInspectionPolyline(
+                    "Full Planned Route",
+                    route.Select(waypoint => AirPositionToMapPosition(waypoint.PositionFeet)).ToList(),
+                    plannedColor,
+                    0.045f,
+                    34);
+            }
+
+            var remainingPoints = new List<Vector3>();
+            if (flight.HasPosition)
+                remainingPoints.Add(AirPositionToMapPosition(flight.PositionFeet));
+            remainingPoints.AddRange(route
+                .Skip(Mathf.Clamp(flight.CurrentWaypointIndex, 0, route.Count))
+                .Select(waypoint => AirPositionToMapPosition(waypoint.PositionFeet)));
+            if (remainingPoints.Count >= 2)
+            {
+                var activeColor = Color.Lerp(allianceColor, Color.white, 0.16f);
+                CreateInspectionPolyline(
+                    "Active Route",
+                    remainingPoints,
+                    activeColor,
+                    0.085f,
+                    36);
+            }
+
+            for (var index = 0; index < route.Count; index++)
+                CreateInspectionWaypoint(route[index], index, flight.CurrentWaypointIndex, allianceColor);
+
+            var focusPosition = flight.HasPosition
+                ? AirPositionToMapPosition(flight.PositionFeet)
+                : route.Count > 0
+                    ? AirPositionToMapPosition(route[0].PositionFeet)
+                    : Vector3.zero;
+            CreateInspectionCircle(
+                "Selected Flight",
+                focusPosition,
+                0.24f,
+                new Color(1f, 0.83f, 0.20f),
+                0.055f,
+                42);
+        }
+
+        private void CreateInspectionPolyline(
+            string objectName,
+            IReadOnlyList<Vector3> points,
+            Color color,
+            float width,
+            int sortingOrder)
+        {
+            if (points == null || points.Count < 2)
+                return;
+
+            var lineObject = new GameObject(objectName);
+            lineObject.transform.SetParent(airInspectionRoot, false);
+            var line = lineObject.AddComponent<LineRenderer>();
+            line.useWorldSpace = false;
+            line.positionCount = points.Count;
+            line.SetPositions(points
+                .Select(point => point + new Vector3(0f, 0f, -0.42f))
+                .ToArray());
+            line.startWidth = width;
+            line.endWidth = width;
+            line.numCapVertices = 3;
+            line.numCornerVertices = 3;
+            line.material = GetMovementArrowMaterial();
+            line.startColor = color;
+            line.endColor = color;
+            line.sortingOrder = sortingOrder;
+        }
+
+        private void CreateInspectionWaypoint(
+            AirWaypoint waypoint,
+            int index,
+            int currentWaypointIndex,
+            Color allianceColor)
+        {
+            var position = AirPositionToMapPosition(waypoint.PositionFeet);
+            var isPast = index < currentWaypointIndex;
+            var isCurrent = index == currentWaypointIndex;
+            var color = isCurrent
+                ? new Color(1f, 0.83f, 0.20f)
+                : isPast
+                    ? new Color(0.48f, 0.50f, 0.53f)
+                    : allianceColor;
+            var radius = isCurrent ? 0.15f : 0.105f;
+            CreateInspectionCircle(
+                $"Waypoint {index + 1}",
+                position,
+                radius,
+                color,
+                isCurrent ? 0.045f : 0.035f,
+                isCurrent ? 41 : 39);
+
+            var labelObject = new GameObject($"Waypoint {index + 1} Label");
+            labelObject.transform.SetParent(airInspectionRoot, false);
+            labelObject.transform.localPosition = position + new Vector3(0.15f, 0.10f, -0.48f);
+            var text = labelObject.AddComponent<TextMesh>();
+            text.anchor = TextAnchor.LowerLeft;
+            text.alignment = TextAlignment.Left;
+            text.characterSize = 0.014f;
+            text.fontSize = 22;
+            text.color = isPast ? new Color(0.70f, 0.70f, 0.70f) : Color.white;
+            text.text =
+                $"WP {index + 1}  {GetWaypointLabel(waypoint.Action)}\n" +
+                $"{waypoint.PlannedArrivalTime:MM-dd HH:mm}  •  {waypoint.PositionFeet.y / 1000f:0.#}k ft";
+            labelObject.GetComponent<MeshRenderer>().sortingOrder = 43;
+        }
+
+        private void CreateInspectionCircle(
+            string objectName,
+            Vector3 center,
+            float radius,
+            Color color,
+            float width,
+            int sortingOrder)
+        {
+            const int segmentCount = 18;
+            var markerObject = new GameObject(objectName);
+            markerObject.transform.SetParent(airInspectionRoot, false);
+            markerObject.transform.localPosition = center;
+            var line = markerObject.AddComponent<LineRenderer>();
+            line.useWorldSpace = false;
+            line.loop = true;
+            line.positionCount = segmentCount;
+            var points = new Vector3[segmentCount];
+            for (var index = 0; index < segmentCount; index++)
+            {
+                var angle = index / (float)segmentCount * Mathf.PI * 2f;
+                points[index] = new Vector3(
+                    Mathf.Cos(angle) * radius,
+                    Mathf.Sin(angle) * radius,
+                    -0.46f);
+            }
+            line.SetPositions(points);
+            line.startWidth = width;
+            line.endWidth = width;
+            line.numCornerVertices = 2;
+            line.material = GetMovementArrowMaterial();
+            line.startColor = color;
+            line.endColor = color;
+            line.sortingOrder = sortingOrder;
+        }
+
+        private void FrameAirInspection(AirFlight flight)
+        {
+            if (sceneCamera == null || flight == null)
+                return;
+
+            var points = (flight.Route ?? new List<AirWaypoint>())
+                .Where(waypoint => waypoint != null)
+                .Select(waypoint => AirPositionToMapPosition(waypoint.PositionFeet))
+                .ToList();
+            if (flight.HasPosition)
+                points.Add(AirPositionToMapPosition(flight.PositionFeet));
+            if (points.Count == 0)
+                return;
+
+            var minX = points.Min(point => point.x);
+            var maxX = points.Max(point => point.x);
+            var minY = points.Min(point => point.y);
+            var maxY = points.Max(point => point.y);
+            var center = new Vector3(
+                (minX + maxX) * 0.5f,
+                (minY + maxY) * 0.5f,
+                sceneCamera.transform.position.z);
+            sceneCamera.transform.position = center;
+
+            var verticalSize = (maxY - minY) * 0.5f + 0.9f;
+            var horizontalSize = (maxX - minX) * 0.5f / Math.Max(0.1f, sceneCamera.aspect) + 0.9f;
+            sceneCamera.orthographicSize = Mathf.Clamp(
+                Mathf.Max(verticalSize, horizontalSize),
+                2f,
+                50f);
+        }
+
+        private void CreateAirRoute(AirFlight flight, Alliance alliance)
+        {
+            var routePoints = new List<Vector3> { AirPositionToMapPosition(flight.PositionFeet) };
+            if (flight.Route != null)
+            {
+                routePoints.AddRange(flight.Route
+                    .Skip(Mathf.Clamp(flight.CurrentWaypointIndex, 0, flight.Route.Count))
+                    .Where(waypoint => waypoint != null)
+                    .Select(waypoint => AirPositionToMapPosition(waypoint.PositionFeet)));
+            }
+
+            var distinctPoints = routePoints
+                .Where((point, index) => index == 0 || Vector3.Distance(point, routePoints[index - 1]) > 0.01f)
+                .ToList();
+            if (distinctPoints.Count < 2)
+                return;
+
+            var routeObject = new GameObject($"Air Route {ShortId(flight.FlightId)}");
+            routeObject.transform.SetParent(airOverlayRoot, false);
+            var lineRenderer = routeObject.AddComponent<LineRenderer>();
+            lineRenderer.useWorldSpace = false;
+            lineRenderer.positionCount = distinctPoints.Count;
+            lineRenderer.SetPositions(distinctPoints
+                .Select(point => point + new Vector3(0f, 0f, -0.31f))
+                .ToArray());
+            lineRenderer.startWidth = AirRouteLineWidth;
+            lineRenderer.endWidth = AirRouteLineWidth;
+            lineRenderer.numCapVertices = 2;
+            lineRenderer.numCornerVertices = 2;
+            lineRenderer.material = GetMovementArrowMaterial();
+            var color = GetAirAllianceColor(alliance);
+            color.a = 0.72f;
+            lineRenderer.startColor = color;
+            lineRenderer.endColor = color;
+            lineRenderer.sortingOrder = 24;
+        }
+
+        private void CreateAirMarker(AirFlight flight, Alliance alliance)
+        {
+            var markerObject = new GameObject($"Air Flight {ShortId(flight.FlightId)}");
+            markerObject.transform.SetParent(airOverlayRoot, false);
+            markerObject.transform.localPosition = AirPositionToMapPosition(flight.PositionFeet);
+
+            var markerLine = markerObject.AddComponent<LineRenderer>();
+            markerLine.useWorldSpace = false;
+            markerLine.loop = true;
+            markerLine.positionCount = 4;
+            markerLine.SetPositions(new[]
+            {
+                new Vector3(0f, AirMarkerRadius, -0.34f),
+                new Vector3(AirMarkerRadius, 0f, -0.34f),
+                new Vector3(0f, -AirMarkerRadius, -0.34f),
+                new Vector3(-AirMarkerRadius, 0f, -0.34f)
+            });
+            markerLine.startWidth = 0.055f;
+            markerLine.endWidth = 0.055f;
+            markerLine.numCornerVertices = 2;
+            markerLine.material = GetMovementArrowMaterial();
+            markerLine.startColor = GetAirAllianceColor(alliance);
+            markerLine.endColor = GetAirAllianceColor(alliance);
+            markerLine.sortingOrder = 27;
+
+            var squadron = gameManager.squadronSystem?.Squadrons?
+                .FirstOrDefault(candidate => candidate.SquadronId == flight.SquadronId);
+            var labelObject = new GameObject("Flight Label");
+            labelObject.transform.SetParent(markerObject.transform, false);
+            labelObject.transform.localPosition = new Vector3(0.17f, 0.11f, -0.36f);
+            var text = labelObject.AddComponent<TextMesh>();
+            text.anchor = TextAnchor.LowerLeft;
+            text.alignment = TextAlignment.Left;
+            text.characterSize = 0.018f;
+            text.fontSize = 22;
+            text.color = Color.white;
+            text.text =
+                $"{GetFlightName(flight, squadron)} ×{flight.AircraftIds?.Count ?? 0}\n" +
+                $"{GetMissionLabel(flight.MissionType)} • {flight.PositionFeet.y / 1000f:0.#}k ft";
+            labelObject.GetComponent<MeshRenderer>().sortingOrder = 28;
+        }
+
+        private Vector3 AirPositionToMapPosition(Vector3 positionFeet)
+        {
+            var spacingFeet = Math.Max(
+                0.001f,
+                (gameManager.SimulationSettings?.TileDistanceKM ?? 1f)
+                * AirspaceGeometry.FeetPerKilometer);
+            return new Vector3(
+                positionFeet.x / spacingFeet * (HexHorizontalSpacing / 0.8660254f),
+                positionFeet.z / spacingFeet * HexHeight,
+                0f);
+        }
+
+        private static Color GetAirAllianceColor(Alliance alliance)
+        {
+            return alliance switch
+            {
+                Alliance.Bluefor => new Color(0.25f, 0.66f, 1f),
+                Alliance.Redfor => new Color(1f, 0.32f, 0.28f),
+                _ => new Color(0.82f, 0.82f, 0.82f)
+            };
         }
 
         private IEnumerable<MovementArrowCommand> GetMovementArrowCommands()
@@ -1084,7 +2318,11 @@ namespace Engine.Monobehaviours.Managers
         private void HandleTileSelection()
         {
             var mouse = Mouse.current;
-            if (sceneCamera == null || tilemap == null || mouse == null || !mouse.leftButton.wasPressedThisFrame)
+            if (sceneCamera == null
+                || tilemap == null
+                || mouse == null
+                || IsPointerOverCampaignUi
+                || !mouse.leftButton.wasPressedThisFrame)
                 return;
 
             var worldPosition = sceneCamera.ScreenToWorldPoint(mouse.position.ReadValue());
@@ -1108,6 +2346,15 @@ namespace Engine.Monobehaviours.Managers
             else
                 gameManager.PauseCampaign();
 
+            UpdateTimeUi();
+        }
+
+        private void AdvanceOneGameTurn()
+        {
+            if (gameManager == null || !gameManager.IsGamePaused)
+                return;
+
+            gameManager.AdvanceOneGameTurn();
             UpdateTimeUi();
         }
 
@@ -1784,6 +3031,24 @@ namespace Engine.Monobehaviours.Managers
 
             for (var i = railwayRoot.childCount - 1; i >= 0; i--)
                 Destroy(railwayRoot.GetChild(i).gameObject);
+        }
+
+        private void ClearAirOverlays()
+        {
+            if (airOverlayRoot == null)
+                return;
+
+            for (var i = airOverlayRoot.childCount - 1; i >= 0; i--)
+                Destroy(airOverlayRoot.GetChild(i).gameObject);
+        }
+
+        private void ClearAirInspection()
+        {
+            if (airInspectionRoot == null)
+                return;
+
+            for (var i = airInspectionRoot.childCount - 1; i >= 0; i--)
+                Destroy(airInspectionRoot.GetChild(i).gameObject);
         }
 
         private readonly struct MovementArrowKey

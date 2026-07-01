@@ -195,6 +195,11 @@ namespace Engine.Monobehaviours.Managers
         public void PauseCampaign()
         {
             IsGamePaused = true;
+            if (GameTurnCoroutine == null)
+                return;
+
+            StopCoroutine(GameTurnCoroutine);
+            GameTurnCoroutine = null;
         }
 
         public void ResumeCampaign()
@@ -203,6 +208,15 @@ namespace Engine.Monobehaviours.Managers
                 return;
 
             IsGamePaused = false;
+        }
+
+        public bool AdvanceOneGameTurn()
+        {
+            if (!_campaignStarted || !IsGamePaused || GameTurnCoroutine != null)
+                return false;
+
+            GameTurn();
+            return true;
         }
 
         public void Update()

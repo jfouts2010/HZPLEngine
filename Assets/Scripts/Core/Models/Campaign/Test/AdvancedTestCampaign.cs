@@ -9,9 +9,11 @@ namespace Models.Gameplay.Campaign
     {
         public const string Name = "Advanced Mechanics Test Campaign";
 
-        // Radius-3 hex disc: 37 tiles (within the 20-40 target).
-        private const int HexRadius = 3;
-        private const int DivisionsPerFrontTile = 3;
+        // Radius-7 hex disc: 169 tiles, large enough to separate rear and forward air operations.
+        private const int HexRadius = 7;
+        private const int DivisionsPerFrontTile = 1;
+        private const int RearFighterAircraftPerSquadron = 6;
+        private const int ForwardFighterAircraftPerSquadron = 3;
 
         private static readonly Guid BlueCountryId = TestModule.BlueCountryId;
         private static readonly Guid RedCountryId = TestModule.RedCountryId;
@@ -20,14 +22,42 @@ namespace Models.Gameplay.Campaign
             Guid.Parse("d2b0a5f3-9e4c-4d28-b701-3f8ca2e5d419");
         private static readonly Guid RedCapitalAirportBuildingId =
             Guid.Parse("83579abc-3953-4381-b0b8-cee7b0280505");
-        private static readonly Guid BlueFighterSquadronId =
-            Guid.Parse("a5e8370f-b340-4070-8269-4d0f8095aa02");
+        private static readonly Guid BlueDefensiveAirportBuildingId =
+            Guid.Parse("ea312787-f865-4d56-9a4a-ef97c211d32e");
+        private static readonly Guid BlueVulnerableAirportBuildingId =
+            Guid.Parse("71154e5e-ee6b-4864-a711-71e71c87dc74");
+        private static readonly Guid RedDefensiveAirportBuildingId =
+            Guid.Parse("2a6049a3-4d97-41cf-9003-7bb9b9918e16");
+        private static readonly Guid RedVulnerableAirportBuildingId =
+            Guid.Parse("2b20d683-2cd4-41c7-bca9-6cf9d438ef05");
+        private static readonly Guid[] BlueRearFighterSquadronIds =
+        {
+            Guid.Parse("a5e8370f-b340-4070-8269-4d0f8095aa02"),
+            Guid.Parse("29478271-e9b9-43df-ae1a-01c83e194549"),
+            Guid.Parse("6e990f9e-a868-43ca-be69-a5dfef2d8de8"),
+            Guid.Parse("6db4699f-bdf6-45b2-87a2-64e4be92f9ed")
+        };
+        private static readonly Guid[] BlueForwardFighterSquadronIds =
+        {
+            Guid.Parse("66a5e719-c94c-4861-a55e-a5206f57cc07"),
+            Guid.Parse("4eff0609-ebac-41c1-b90f-972f7e8072fb")
+        };
         private static readonly Guid BlueAwacsSquadronId =
             Guid.Parse("c371bed7-5d5b-4f6e-9028-9ef91a5b4a0f");
         private static readonly Guid BlueTankerSquadronId =
             Guid.Parse("1c23f0c2-8dc6-4e35-b6aa-d82864cdfe7c");
-        private static readonly Guid RedFighterSquadronId =
-            Guid.Parse("f5a98443-9c5f-4e74-a371-5a089e950cba");
+        private static readonly Guid[] RedRearFighterSquadronIds =
+        {
+            Guid.Parse("f5a98443-9c5f-4e74-a371-5a089e950cba"),
+            Guid.Parse("0f29ea7b-5075-4719-885f-54b879c1c010"),
+            Guid.Parse("2d78dca9-5915-4db9-aa99-e25c31ea8914"),
+            Guid.Parse("66fa6573-707d-4f39-804d-81248a7d9875")
+        };
+        private static readonly Guid[] RedForwardFighterSquadronIds =
+        {
+            Guid.Parse("275e3b2d-9b79-40de-8703-0e9db37de998"),
+            Guid.Parse("a91bc34a-80e4-43d6-a44f-e3f02ae6125a")
+        };
         private static readonly Guid RedAwacsSquadronId =
             Guid.Parse("7088f0da-cf99-46f8-b177-d7e266a4abfa");
         private static readonly Guid RedTankerSquadronId =
@@ -40,9 +70,7 @@ namespace Models.Gameplay.Campaign
             Guid.Parse("c3d4e5f6-7890-4abc-def1-234567890abc"),
             Guid.Parse("f4c047bf-4b74-4aa4-bb4b-dcf1abe53254"),
             Guid.Parse("20981a2a-ba4c-4778-bfe7-fea0fe0b6881"),
-            Guid.Parse("d4e5f6a7-8901-4bcd-ef12-345678901bcd"),
-            Guid.Parse("1b7902f4-3716-4761-b4fe-ed2a2f4d21c3"),
-            Guid.Parse("f6577e75-fed4-4189-8ea6-401dc4f6264e")
+            Guid.Parse("d4e5f6a7-8901-4bcd-ef12-345678901bcd")
         };
 
         private static readonly Guid[] RedFrontDivisionIds =
@@ -53,25 +81,35 @@ namespace Models.Gameplay.Campaign
             Guid.Parse("e5f6a7b8-9012-4cde-f123-456789012cde"),
             Guid.Parse("dc41ff3f-ff9c-47ce-918a-4b41d54dfb78"),
             Guid.Parse("d0692c0c-b5f8-4643-b327-339d06559bd9"),
-            Guid.Parse("f6a7b8c9-0123-4def-0123-567890123def"),
-            Guid.Parse("08edfbcc-222e-4db9-b3d2-852ad0be7d6f"),
-            Guid.Parse("95e65782-7075-4400-925a-d4a0c6f462be")
+            Guid.Parse("f6a7b8c9-0123-4def-0123-567890123def")
         };
 
         private static readonly Vector3Int BlueCapitalTileId = new Vector3Int(-3, 3, 0);
         private static readonly Vector3Int RedCapitalTileId = new Vector3Int(3, 0, -3);
+        private static readonly Vector3Int BlueDefensiveAirbaseTileId = new Vector3Int(-6, 6, 0);
+        private static readonly Vector3Int BlueVulnerableAirbaseTileId = new Vector3Int(-3, 4, -1);
+        private static readonly Vector3Int RedDefensiveAirbaseTileId = new Vector3Int(6, 0, -6);
+        private static readonly Vector3Int RedVulnerableAirbaseTileId = new Vector3Int(4, 0, -4);
         private static readonly Vector3Int NeutralHubTileId = new Vector3Int(0, 0, 0);
         private static readonly Vector3Int[] BlueFrontTileIds =
         {
             new Vector3Int(0, 1, -1),
             new Vector3Int(0, 2, -2),
-            new Vector3Int(0, 3, -3)
+            new Vector3Int(0, 3, -3),
+            new Vector3Int(0, 4, -4),
+            new Vector3Int(0, 5, -5),
+            new Vector3Int(0, 6, -6),
+            new Vector3Int(0, 7, -7)
         };
         private static readonly Vector3Int[] RedFrontTileIds =
         {
             new Vector3Int(1, 0, -1),
             new Vector3Int(1, 1, -2),
-            new Vector3Int(1, 2, -3)
+            new Vector3Int(1, 2, -3),
+            new Vector3Int(1, 3, -4),
+            new Vector3Int(1, 4, -5),
+            new Vector3Int(1, 5, -6),
+            new Vector3Int(1, 6, -7)
         };
         private static readonly Vector3Int BluePortTileId = new Vector3Int(-2, 2, 0);
         private static readonly Vector3Int RedRefineryTileId = new Vector3Int(2, 1, -3);
@@ -87,9 +125,10 @@ namespace Models.Gameplay.Campaign
                     SimulationTickMinutes = 5,
                     OperationalCadenceHours = 6
                 },
-                ContentHash = "advanced-mechanics-test-campaign-v6",
+                ContentHash = "advanced-mechanics-test-campaign-v8",
                 CountryAllianceAssignments = CreateCountryAllianceAssignments(),
                 OrdnanceAllowances = CreateOrdnanceAllowances(),
+                AirDoctrineByAlliance = CreateAirDoctrineByAlliance(),
                 Tiles = CreateTiles(),
                 StartingTileData = CreateStartingTileData(),
                 SupplyCapitals = CreateSupplyCapitals(),
@@ -138,6 +177,33 @@ namespace Models.Gameplay.Campaign
             };
         }
 
+        private static Dictionary<Alliance, AllianceAirDoctrine> CreateAirDoctrineByAlliance()
+        {
+            return new Dictionary<Alliance, AllianceAirDoctrine>
+            {
+                { Alliance.Bluefor, CreateAirDoctrine() },
+                { Alliance.Redfor, CreateAirDoctrine() }
+            };
+        }
+
+        private static AllianceAirDoctrine CreateAirDoctrine()
+        {
+            return new AllianceAirDoctrine
+            {
+                RiskTolerance = AllianceAirDoctrine.DefaultRiskTolerance,
+                DesiredAirCombatAdvantage = AllianceAirDoctrine.DefaultDesiredAirCombatAdvantage,
+                BaselineAirborneC2Slots = 11,
+                BaselineAerialRefuelingSlots = 4,
+                PriorityWeights = new Dictionary<AirMissionRequestType, float>
+                {
+                    { AirMissionRequestType.DefensiveCounterAirPatrol, 1.15f },
+                    { AirMissionRequestType.OffensiveCounterAirSweep, 1f },
+                    { AirMissionRequestType.ProvideAirborneC2, 0.9f },
+                    { AirMissionRequestType.ProvideAerialRefueling, 0.9f }
+                }
+            };
+        }
+
         private static List<SupplyCapitalStartingCondition> CreateSupplyCapitals()
         {
             return new List<SupplyCapitalStartingCondition>
@@ -169,7 +235,7 @@ namespace Models.Gameplay.Campaign
 
         // Western block (x <= -1) and a southern x=0 salient are blue.
         // Eastern block (x >= 1) is red. Northern arc (z >= 2) plus the center column are neutral.
-        // Blue and red meet along the full southern x=0 / x=1 edge (three contiguous contact tiles).
+        // Blue and red meet along the full southern x=0 / x=1 edge (seven contiguous contact tiles).
         private static Alliance AssignAlliance(Vector3Int tileId)
         {
             if (tileId.z >= 2)
@@ -231,6 +297,8 @@ namespace Models.Gameplay.Campaign
             {
                 CreateBuilding("c1a9f4e2-8d3b-4c17-a6f0-2e7b91d4c308", BlueCapitalTileId, BuildingType.Factory, 7),
                 CreateBuilding(BlueCapitalAirportBuildingId.ToString(), BlueCapitalTileId, BuildingType.Airport, 5),
+                CreateBuilding(BlueDefensiveAirportBuildingId.ToString(), BlueDefensiveAirbaseTileId, BuildingType.Airport, 7),
+                CreateBuilding(BlueVulnerableAirportBuildingId.ToString(), BlueVulnerableAirbaseTileId, BuildingType.Airport, 3),
                 CreateBuilding("6c69a6d3-1b42-4f3a-8b42-06b5f601e86f", BlueCapitalTileId, BuildingType.Railroad, 8),
                 CreateBuilding("3bf75c64-7ba8-4ed6-9f9e-1c4d9c2266ce", BlueCapitalTileId, BuildingType.SupplyHub, 8),
                 CreateBuilding("e3c1b6a4-0f5d-4e39-c812-4a9db3f6e52a", BluePortTileId, BuildingType.Port, 4),
@@ -244,6 +312,8 @@ namespace Models.Gameplay.Campaign
                 CreateBuilding("a5e3d8c6-2b7f-405b-e034-6c1fd518074c", BlueFrontTileIds[1], BuildingType.Fort, 3),
                 CreateBuilding("b6f4e9d7-3c8a-416c-f145-7d2ae629185d", RedCapitalTileId, BuildingType.PowerPlant, 4),
                 CreateBuilding(RedCapitalAirportBuildingId.ToString(), RedCapitalTileId, BuildingType.Airport, 5),
+                CreateBuilding(RedDefensiveAirportBuildingId.ToString(), RedDefensiveAirbaseTileId, BuildingType.Airport, 7),
+                CreateBuilding(RedVulnerableAirportBuildingId.ToString(), RedVulnerableAirbaseTileId, BuildingType.Airport, 3),
                 CreateBuilding("8f6b7125-5ab8-4791-93be-a3ccdcf823ad", RedCapitalTileId, BuildingType.Railroad, 8),
                 CreateBuilding("8ef77ba7-1ca4-4898-8f8e-afbcbe173d11", RedCapitalTileId, BuildingType.SupplyHub, 8),
                 CreateBuilding("c7a5f0e8-4d9b-427d-0256-8e3bf73a296e", RedRefineryTileId, BuildingType.Refinery, 3),
@@ -258,63 +328,105 @@ namespace Models.Gameplay.Campaign
 
         private static List<SquadronStartingCondition> CreateSquadronStartingConditions()
         {
-            return new List<SquadronStartingCondition>
+            var squadrons = new List<SquadronStartingCondition>();
+
+            AddFighterSquadrons(
+                squadrons,
+                BlueRearFighterSquadronIds,
+                BlueCountryId,
+                TestModule.F16AircraftTypeId,
+                BlueDefensiveAirportBuildingId,
+                RearFighterAircraftPerSquadron,
+                "BLUE-REAR-FTR");
+            AddFighterSquadrons(
+                squadrons,
+                BlueForwardFighterSquadronIds,
+                BlueCountryId,
+                TestModule.F16AircraftTypeId,
+                BlueVulnerableAirportBuildingId,
+                ForwardFighterAircraftPerSquadron,
+                "BLUE-FWD-FTR");
+            AddFighterSquadrons(
+                squadrons,
+                RedRearFighterSquadronIds,
+                RedCountryId,
+                TestModule.Mig29AircraftTypeId,
+                RedDefensiveAirportBuildingId,
+                RearFighterAircraftPerSquadron,
+                "RED-REAR-FTR");
+            AddFighterSquadrons(
+                squadrons,
+                RedForwardFighterSquadronIds,
+                RedCountryId,
+                TestModule.Mig29AircraftTypeId,
+                RedVulnerableAirportBuildingId,
+                ForwardFighterAircraftPerSquadron,
+                "RED-FWD-FTR");
+
+            squadrons.AddRange(new[]
             {
-                new SquadronStartingCondition
-                {
-                    SquadronId = BlueFighterSquadronId,
-                    CountryId = BlueCountryId,
-                    AircraftTypeDefinitionId = TestModule.F16AircraftTypeId,
-                    StartingAirportBuildingId = BlueCapitalAirportBuildingId,
-                    AircraftCount = 18,
-                    Name = "Advanced Blue Fighter Squadron"
-                },
                 new SquadronStartingCondition
                 {
                     SquadronId = BlueAwacsSquadronId,
                     CountryId = BlueCountryId,
                     AircraftTypeDefinitionId = TestModule.E3AircraftTypeId,
-                    StartingAirportBuildingId = BlueCapitalAirportBuildingId,
-                    AircraftCount = 1,
-                    Name = "Advanced Blue Airborne C2 Squadron"
+                    StartingAirportBuildingId = BlueDefensiveAirportBuildingId,
+                    AircraftCount = 3,
+                    Name = "BLUE-REAR-C2"
                 },
                 new SquadronStartingCondition
                 {
                     SquadronId = BlueTankerSquadronId,
                     CountryId = BlueCountryId,
                     AircraftTypeDefinitionId = TestModule.Kc135AircraftTypeId,
-                    StartingAirportBuildingId = BlueCapitalAirportBuildingId,
-                    AircraftCount = 2,
-                    Name = "Advanced Blue Tanker Squadron"
-                },
-                new SquadronStartingCondition
-                {
-                    SquadronId = RedFighterSquadronId,
-                    CountryId = RedCountryId,
-                    AircraftTypeDefinitionId = TestModule.Mig29AircraftTypeId,
-                    StartingAirportBuildingId = RedCapitalAirportBuildingId,
-                    AircraftCount = 16,
-                    Name = "Advanced Red Fighter Squadron"
+                    StartingAirportBuildingId = BlueDefensiveAirportBuildingId,
+                    AircraftCount = 4,
+                    Name = "BLUE-REAR-TKR"
                 },
                 new SquadronStartingCondition
                 {
                     SquadronId = RedAwacsSquadronId,
                     CountryId = RedCountryId,
                     AircraftTypeDefinitionId = TestModule.A50AircraftTypeId,
-                    StartingAirportBuildingId = RedCapitalAirportBuildingId,
-                    AircraftCount = 1,
-                    Name = "Advanced Red Airborne C2 Squadron"
+                    StartingAirportBuildingId = RedDefensiveAirportBuildingId,
+                    AircraftCount = 5,
+                    Name = "RED-REAR-C2"
                 },
                 new SquadronStartingCondition
                 {
                     SquadronId = RedTankerSquadronId,
                     CountryId = RedCountryId,
                     AircraftTypeDefinitionId = TestModule.Il78AircraftTypeId,
-                    StartingAirportBuildingId = RedCapitalAirportBuildingId,
-                    AircraftCount = 2,
-                    Name = "Advanced Red Tanker Squadron"
+                    StartingAirportBuildingId = RedDefensiveAirportBuildingId,
+                    AircraftCount = 4,
+                    Name = "RED-REAR-TKR"
                 }
-            };
+            });
+
+            return squadrons;
+        }
+
+        private static void AddFighterSquadrons(
+            ICollection<SquadronStartingCondition> squadrons,
+            IReadOnlyList<Guid> squadronIds,
+            Guid countryId,
+            Guid aircraftTypeDefinitionId,
+            Guid airportBuildingId,
+            int aircraftPerSquadron,
+            string namePrefix)
+        {
+            for (var i = 0; i < squadronIds.Count; i++)
+            {
+                squadrons.Add(new SquadronStartingCondition
+                {
+                    SquadronId = squadronIds[i],
+                    CountryId = countryId,
+                    AircraftTypeDefinitionId = aircraftTypeDefinitionId,
+                    StartingAirportBuildingId = airportBuildingId,
+                    AircraftCount = aircraftPerSquadron,
+                    Name = $"{namePrefix}-{(char)('A' + i)}"
+                });
+            }
         }
 
         private static List<DivisionStartingCondition> CreateDivisionStartingConditions()
