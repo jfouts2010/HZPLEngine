@@ -1,0 +1,7 @@
+# Aggregate route-driven air execution
+
+Campaign air execution models each flight as one aggregate point mass in unrestricted three-dimensional airspace, measured uniformly in feet, while preserving member aircraft for individual readiness, loadout, damage, and loss. This was chosen over tile movement and independent per-aircraft kinematics because the campaign needs physically continuous aircraft movement and future combat geometry without recreating a flight simulator; campaign IADS therefore tracks aggregate hostile flights rather than duplicating co-located aircraft contacts.
+
+Before commitment, package creation materializes one complete, timed semantic waypoint route per flight. That route is the executor's movement truth and may contain package rendezvous barriers, waypoint-owned racetrack repetition, mission actions, recovery, and landing; shared movement and lifecycle rules remain separate from extensible mission behaviors so future air combat, SEAD, CAS, and strike effects do not duplicate navigation logic.
+
+The initial execution model deliberately ignores fuel, range, endurance, airport damage, detailed runway operations, and tanker transfer effects. DCA, AWACS, and tanker flights complete by serving their scheduled station and recovering, while OCA flies a no-effect sweep placeholder; these fidelity limits keep the first implementation bounded without closing the route, mission-behavior, or typed execution-event extension points needed later.

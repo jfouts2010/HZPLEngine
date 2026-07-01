@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Engine.Service;
 using Models.Module;
 using UnityEngine;
 
@@ -16,7 +17,7 @@ namespace Models.Gameplay.Campaign
 
         [SerializeReference] public List<IADSTrack> Tracks = new List<IADSTrack>();
 
-        private Dictionary<Guid, IADSTrack> tracksByAircraftId;
+        private Dictionary<Guid, IADSTrack> tracksByFlightId;
 
         public Alliance Alliance;
         public int StaleExpiryTurns = DefaultStaleExpiryTurns;
@@ -33,15 +34,17 @@ namespace Models.Gameplay.Campaign
 
         public IReadOnlyList<IADSTrack> CurrentTracks => Tracks;
 
-        public IADSTrack GetTrackForAircraft(Guid aircraftId)
+        public IADSTrack GetTrackForFlight(Guid flightId)
         {
             EnsureIndex();
-            return tracksByAircraftId.TryGetValue(aircraftId, out var track) ? track : null;
+            return tracksByFlightId.TryGetValue(flightId, out var track) ? track : null;
         }
 
         public void RefreshTracks(
-            IEnumerable<CampaignAircraft> activeAircraft,
-            IReadOnlyDictionary<Guid, Alliance> aircraftAllianceById,
+            IEnumerable<AirFlight> activeFlights,
+            IReadOnlyDictionary<Guid, Alliance> flightAllianceById,
+            IReadOnlyDictionary<Guid, Guid> aircraftTypeByFlightId,
+            IReadOnlyDictionary<Guid, int> aircraftCountByFlightId,
             IEnumerable<SamSite> airDefenseSites,
             AirDefenseSiteSystem siteQuery,
             IReadOnlyDictionary<Guid, RadarAirDefenseComponentDefinition> radarDefinitionLookup,
@@ -50,37 +53,38 @@ namespace Models.Gameplay.Campaign
         {
             EnsureIndex();
 
-            var allianceByAircraftId = aircraftAllianceById ?? new Dictionary<Guid, Alliance>();
-            var activeHostileAircraft = (activeAircraft ?? Enumerable.Empty<CampaignAircraft>())
-                .Where(aircraft => aircraft != null
-                                   && aircraft.AircraftId != Guid.Empty
-                                   && aircraft.IsActiveInSortie
-                                   && aircraft.HasCurrentTileId
-                                   && aircraft.Status != CampaignAircraftStatus.Lost
-                                   && allianceByAircraftId.TryGetValue(aircraft.AircraftId, out var aircraftAlliance)
-                                   && AreHostile(Alliance, aircraftAlliance))
-                .GroupBy(aircraft => aircraft.AircraftId)
+            var allianceByFlightId = flightAllianceById ?? new Dictionary<Guid, Alliance>();
+            var activeHostileFlights = (activeFlights ?? Enumerable.Empty<AirFlight>())
+                .Where(flight => flight != null
+                                 && flight.FlightId != Guid.Empty
+                                 && flight.IsAirborne
+                                 && flight.HasPosition
+                                 && allianceByFlightId.TryGetValue(flight.FlightId, out var flightAlliance)
+                                 && AreHostile(Alliance, flightAlliance))
+                .GroupBy(flight => flight.FlightId)
                 .Select(group => group.First())
-                .ToDictionary(aircraft => aircraft.AircraftId);
+                .ToDictionary(flight => flight.FlightId);
 
-            RemoveInactiveTracks(activeHostileAircraft);
+            RemoveInactiveTracks(activeHostileFlights);
 
-            var refreshedAircraftIds = new HashSet<Guid>();
+            var refreshedFlightIds = new HashSet<Guid>();
             var availableSites = (airDefenseSites ?? Enumerable.Empty<SamSite>())
                 .Where(site => site != null
                                && siteQuery != null
                                && siteQuery.GetEffectiveAlliance(site) == Alliance)
                 .ToList();
 
-            foreach (var aircraft in activeHostileAircraft.Values)
+            foreach (var flight in activeHostileFlights.Values)
             {
-                if (!aircraftTypeDefinitions.TryGetValue(
-                        aircraft.AircraftTypeDefinitionId,
+                if (aircraftTypeByFlightId == null
+                    || !aircraftTypeByFlightId.TryGetValue(flight.FlightId, out var aircraftTypeId)
+                    || !aircraftTypeDefinitions.TryGetValue(
+                        aircraftTypeId,
                         out var aircraftTypeDefinition))
                     continue;
 
                 var contributions = CalculateRadarContributions(
-                        aircraft,
+                        flight,
                         aircraftTypeDefinition,
                         availableSites,
                         siteQuery,
@@ -94,15 +98,22 @@ namespace Models.Gameplay.Campaign
 
                 var totalQualityIncrease = CalculateDiminishedQualityIncrease(contributions);
                 var qualityCap = contributions.Max(contribution => contribution.QualityCap);
-                var currentQuality = tracksByAircraftId.TryGetValue(aircraft.AircraftId, out var existingTrack)
+                var currentQuality = tracksByFlightId.TryGetValue(flight.FlightId, out var existingTrack)
                     ? existingTrack.Quality
                     : 0f;
                 var newQuality = Mathf.Min(qualityCap, currentQuality + totalQualityIncrease);
+                var aircraftCount = aircraftCountByFlightId != null
+                                    && aircraftCountByFlightId.TryGetValue(flight.FlightId, out var count)
+                    ? count
+                    : flight.AircraftIds?.Count ?? 0;
 
                 if (existingTrack != null)
                 {
-                    existingTrack.Refresh(aircraft.CurrentTileId, newQuality);
-                    refreshedAircraftIds.Add(aircraft.AircraftId);
+                    existingTrack.Refresh(
+                        flight.PositionFeet,
+                        aircraftCount,
+                        newQuality);
+                    refreshedFlightIds.Add(flight.FlightId);
                     continue;
                 }
 
@@ -110,30 +121,31 @@ namespace Models.Gameplay.Campaign
                     continue;
 
                 var track = new IADSTrack(
-                    aircraft.AircraftId,
-                    aircraft.AircraftTypeDefinitionId,
-                    aircraft.CurrentTileId,
+                    flight.FlightId,
+                    aircraftTypeId,
+                    flight.PositionFeet,
+                    aircraftCount,
                     newQuality);
 
                 Tracks.Add(track);
-                tracksByAircraftId[track.AircraftId] = track;
-                refreshedAircraftIds.Add(aircraft.AircraftId);
+                tracksByFlightId[track.FlightId] = track;
+                refreshedFlightIds.Add(flight.FlightId);
             }
 
-            MarkUnrefreshedTracksStale(refreshedAircraftIds);
+            MarkUnrefreshedTracksStale(refreshedFlightIds);
             RemoveExpiredStaleTracks();
         }
 
         public void RebuildIndex()
         {
-            tracksByAircraftId = (Tracks ?? new List<IADSTrack>())
-                .Where(track => track != null && track.AircraftId != Guid.Empty)
-                .GroupBy(track => track.AircraftId)
+            tracksByFlightId = (Tracks ?? new List<IADSTrack>())
+                .Where(track => track != null && track.FlightId != Guid.Empty)
+                .GroupBy(track => track.FlightId)
                 .ToDictionary(group => group.Key, group => group.First());
         }
 
         private IEnumerable<RadarContribution> CalculateRadarContributions(
-            CampaignAircraft aircraft,
+            AirFlight flight,
             AircraftTypeDefinition aircraftTypeDefinition,
             IEnumerable<SamSite> airDefenseSites,
             AirDefenseSiteSystem siteQuery,
@@ -161,7 +173,11 @@ namespace Models.Gameplay.Campaign
                         || definition.DetectionRangeKm <= 0f)
                         continue;
 
-                    var distanceKm = CalculateDistanceKm(siteTileId, aircraft.CurrentTileId, tileDistanceKm);
+                    var sitePositionFeet = AirspaceGeometry.TileCenterFeet(siteTileId, tileDistanceKm);
+                    var distanceKm = Vector3.Distance(
+                                         sitePositionFeet,
+                                         flight.PositionFeet)
+                                     / AirspaceGeometry.FeetPerKilometer;
                     if (distanceKm > definition.DetectionRangeKm)
                         continue;
 
@@ -191,25 +207,19 @@ namespace Models.Gameplay.Campaign
             return Mathf.Clamp01(total);
         }
 
-        private static float CalculateDistanceKm(Vector3Int sourceTileId, Vector3Int targetTileId, float tileDistanceKm)
-        {
-            var distanceInTiles = Vector3Int.Distance(sourceTileId, targetTileId);
-            return distanceInTiles * Mathf.Max(0f, tileDistanceKm);
-        }
-
-        private void RemoveInactiveTracks(IReadOnlyDictionary<Guid, CampaignAircraft> activeHostileAircraft)
+        private void RemoveInactiveTracks(IReadOnlyDictionary<Guid, AirFlight> activeHostileFlights)
         {
             Tracks.RemoveAll(track => track == null
-                                      || track.AircraftId == Guid.Empty
-                                      || !activeHostileAircraft.ContainsKey(track.AircraftId));
+                                      || track.FlightId == Guid.Empty
+                                      || !activeHostileFlights.ContainsKey(track.FlightId));
             RebuildIndex();
         }
 
-        private void MarkUnrefreshedTracksStale(ISet<Guid> refreshedAircraftIds)
+        private void MarkUnrefreshedTracksStale(ISet<Guid> refreshedFlightIds)
         {
             foreach (var track in Tracks)
             {
-                if (track == null || refreshedAircraftIds.Contains(track.AircraftId))
+                if (track == null || refreshedFlightIds.Contains(track.FlightId))
                     continue;
 
                 track.MarkStale(StaleQualityDecayPerTurn);
@@ -224,7 +234,7 @@ namespace Models.Gameplay.Campaign
 
         private void EnsureIndex()
         {
-            if (tracksByAircraftId == null)
+            if (tracksByFlightId == null)
                 RebuildIndex();
         }
 

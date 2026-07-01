@@ -9,9 +9,10 @@ namespace Models.Gameplay.Campaign
         public const float MinimumCreationQuality = 0.10f;
 
         public Guid TrackId = Guid.NewGuid();
-        public Guid AircraftId;
+        public Guid FlightId;
         public Guid AircraftTypeDefinitionId;
-        public Vector3Int LastKnownTileId;
+        public Vector3 LastKnownPositionFeet;
+        public int EstimatedAircraftCount;
         public float Quality;
         public bool IsStale;
         public int StaleTurns;
@@ -21,22 +22,28 @@ namespace Models.Gameplay.Campaign
         }
 
         public IADSTrack(
-            Guid aircraftId,
+            Guid flightId,
             Guid aircraftTypeDefinitionId,
-            Vector3Int lastKnownTileId,
+            Vector3 lastKnownPositionFeet,
+            int estimatedAircraftCount,
             float quality)
         {
-            AircraftId = aircraftId;
+            FlightId = flightId;
             AircraftTypeDefinitionId = aircraftTypeDefinitionId;
-            LastKnownTileId = lastKnownTileId;
+            LastKnownPositionFeet = lastKnownPositionFeet;
+            EstimatedAircraftCount = Math.Max(0, estimatedAircraftCount);
             Quality = Mathf.Clamp01(quality);
             IsStale = false;
             StaleTurns = 0;
         }
 
-        public void Refresh(Vector3Int lastKnownTileId, float quality)
+        public void Refresh(
+            Vector3 lastKnownPositionFeet,
+            int estimatedAircraftCount,
+            float quality)
         {
-            LastKnownTileId = lastKnownTileId;
+            LastKnownPositionFeet = lastKnownPositionFeet;
+            EstimatedAircraftCount = Math.Max(0, estimatedAircraftCount);
             Quality = Mathf.Clamp01(quality);
             IsStale = false;
             StaleTurns = 0;

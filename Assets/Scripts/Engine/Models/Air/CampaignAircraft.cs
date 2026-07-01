@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using UnityEngine;
 
 namespace Models.Gameplay.Campaign
 {
@@ -12,10 +11,6 @@ namespace Models.Gameplay.Campaign
         public Guid AircraftTypeDefinitionId;
         public CampaignAircraftStatus Status = CampaignAircraftStatus.Ready;
         public Guid AssignedFlightId;
-        // Legacy execution bridge. The future mission-execution system will derive these from flight state.
-        public bool IsActiveInSortie;
-        public bool HasCurrentTileId;
-        public Vector3Int CurrentTileId;
         
         public List<AircraftLoadoutItem> Loadout = new List<AircraftLoadoutItem>();
 

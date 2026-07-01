@@ -5,6 +5,7 @@ using Engine.Monobehaviours.Managers;
 using Engine.Service;
 using Models.Gameplay.Campaign;
 using Models.Module;
+using UnityEngine;
 
 namespace Engine.Models
 {
@@ -57,6 +58,20 @@ namespace Engine.Models
                 Alliance.Redfor => redforCommander,
                 _ => null
             };
+        }
+
+        public IEnumerable<AirPackage> GetPackages()
+        {
+            return GetCommanders()
+                .SelectMany(commander => commander.Packages ?? Array.Empty<AirPackage>())
+                .Where(package => package != null);
+        }
+
+        public IEnumerable<AirFlight> GetAirborneFlights()
+        {
+            return GetPackages()
+                .SelectMany(package => package.Flights ?? new List<AirFlight>())
+                .Where(flight => flight != null && flight.IsAirborne && !flight.HasPhysicallyEnded);
         }
 
         public void Initialize()
@@ -195,4 +210,5 @@ namespace Engine.Models
             yield return redforCommander;
         }
     }
+
 }

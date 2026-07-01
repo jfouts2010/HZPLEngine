@@ -3,13 +3,6 @@ using System.Collections.Generic;
 
 namespace Models.Module
 {
-    public enum AircraftPreferredAltitudeBand
-    {
-        Low = 0,
-        Medium = 1,
-        High = 2
-    }
-
     public enum AirSupportCapability
     {
         None = 0,
@@ -22,11 +15,15 @@ namespace Models.Module
         public Guid AircraftTypeDefinitionId { get; }
         public string Name { get; }
         public string ThirdPartyId { get; }
-        public float CruiseSpeedKph { get; }
-        public float CombatSpeedKph { get; }
+        public float CruiseSpeedKnots { get; }
+        public float CombatSpeedKnots { get; }
+        public float ClimbRateFeetPerMinute { get; }
+        public float DescentRateFeetPerMinute { get; }
+        public float TurnRateDegreesPerSecond { get; }
+        public float NominalCruiseAltitudeFeet { get; }
+        public float ServiceCeilingFeet { get; }
         public float RangeKm { get; }
         public float EnduranceHours { get; }
-        public AircraftPreferredAltitudeBand PreferredAltitudeBand { get; }
         public float RadarQuality { get; }
         public float EcmQuality { get; }
         public float Survivability { get; }
@@ -39,11 +36,15 @@ namespace Models.Module
         public AircraftTypeDefinition(
             Guid aircraftTypeDefinitionId,
             string name,
-            float cruiseSpeedKph,
-            float combatSpeedKph,
+            float cruiseSpeedKnots,
+            float combatSpeedKnots,
+            float climbRateFeetPerMinute,
+            float descentRateFeetPerMinute,
+            float turnRateDegreesPerSecond,
+            float nominalCruiseAltitudeFeet,
+            float serviceCeilingFeet,
             float rangeKm,
             float enduranceHours,
-            AircraftPreferredAltitudeBand preferredAltitudeBand,
             float radarQuality,
             float ecmQuality,
             float survivability,
@@ -60,11 +61,15 @@ namespace Models.Module
             AircraftTypeDefinitionId = aircraftTypeDefinitionId;
             Name = string.IsNullOrWhiteSpace(name) ? aircraftTypeDefinitionId.ToString() : name.Trim();
             ThirdPartyId = thirdPartyId ?? string.Empty;
-            CruiseSpeedKph = cruiseSpeedKph;
-            CombatSpeedKph = combatSpeedKph;
+            CruiseSpeedKnots = Math.Max(0f, cruiseSpeedKnots);
+            CombatSpeedKnots = Math.Max(0f, combatSpeedKnots);
+            ClimbRateFeetPerMinute = Math.Max(0f, climbRateFeetPerMinute);
+            DescentRateFeetPerMinute = Math.Max(0f, descentRateFeetPerMinute);
+            TurnRateDegreesPerSecond = Math.Max(0f, turnRateDegreesPerSecond);
+            NominalCruiseAltitudeFeet = Math.Max(0f, nominalCruiseAltitudeFeet);
+            ServiceCeilingFeet = Math.Max(NominalCruiseAltitudeFeet, serviceCeilingFeet);
             RangeKm = rangeKm;
             EnduranceHours = enduranceHours;
-            PreferredAltitudeBand = preferredAltitudeBand;
             RadarQuality = radarQuality;
             EcmQuality = ecmQuality;
             Survivability = survivability;

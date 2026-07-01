@@ -51,19 +51,23 @@ namespace Engine.Models
                 .GetAirDefenseSites()
                 .ToList();
             var tileDistanceKm = gameManager.SimulationSettings?.TileDistanceKM ?? 0f;
-            var activeAircraft = GetActiveSortieAircraft().ToList();
-            var aircraftAllianceById = BuildAircraftAllianceLookup(activeAircraft);
+            var activeFlights = gameManager.GetAirborneFlights().ToList();
+            var flightContexts = BuildFlightContexts(activeFlights);
             blueforIads.RefreshTracks(
-                activeAircraft,
-                aircraftAllianceById,
+                activeFlights,
+                flightContexts.AllianceByFlightId,
+                flightContexts.AircraftTypeByFlightId,
+                flightContexts.AircraftCountByFlightId,
                 airDefenseSites,
                 gameManager.airDefenseSiteSystem,
                 radarDefinitionLookup,
                 aircraftTypeDefinitions,
                 tileDistanceKm);
             redforIads.RefreshTracks(
-                activeAircraft,
-                aircraftAllianceById,
+                activeFlights,
+                flightContexts.AllianceByFlightId,
+                flightContexts.AircraftTypeByFlightId,
+                flightContexts.AircraftCountByFlightId,
                 airDefenseSites,
                 gameManager.airDefenseSiteSystem,
                 radarDefinitionLookup,
@@ -71,36 +75,42 @@ namespace Engine.Models
                 tileDistanceKm);
         }
 
-        private IEnumerable<CampaignAircraft> GetActiveSortieAircraft()
-        {
-            return (gameManager.squadronSystem.Squadrons ?? new List<Squadron>())
-                .SelectMany(squadron => squadron?.Aircraft ?? new List<CampaignAircraft>())
-                .Where(aircraft => aircraft != null
-                                   && aircraft.IsActiveInSortie
-                                   && aircraft.HasCurrentTileId
-                                   && aircraft.Status != CampaignAircraftStatus.Lost);
-        }
-
-        private Dictionary<Guid, Alliance> BuildAircraftAllianceLookup(IEnumerable<CampaignAircraft> aircraft)
+        private FlightContexts BuildFlightContexts(IEnumerable<AirFlight> flights)
         {
             var squadronById = (gameManager.squadronSystem.Squadrons ?? new List<Squadron>())
                 .Where(squadron => squadron != null)
                 .GroupBy(squadron => squadron.SquadronId)
                 .ToDictionary(group => group.Key, group => group.First());
 
-            var allianceByAircraftId = new Dictionary<Guid, Alliance>();
-            foreach (var campaignAircraft in aircraft ?? Enumerable.Empty<CampaignAircraft>())
+            var contexts = new FlightContexts();
+            foreach (var flight in flights ?? Enumerable.Empty<AirFlight>())
             {
-                if (campaignAircraft == null
-                    || !squadronById.TryGetValue(campaignAircraft.SquadronId, out var squadron))
+                if (flight == null
+                    || !squadronById.TryGetValue(flight.SquadronId, out var squadron))
                     continue;
 
-                allianceByAircraftId[campaignAircraft.AircraftId] =
+                contexts.AllianceByFlightId[flight.FlightId] =
                     gameManager.GetCountryAlliance(squadron.CountryId);
+                contexts.AircraftTypeByFlightId[flight.FlightId] =
+                    squadron.AircraftTypeDefinitionId;
+                contexts.AircraftCountByFlightId[flight.FlightId] =
+                    (squadron.Aircraft ?? new List<CampaignAircraft>())
+                    .Count(aircraft => aircraft != null
+                                       && aircraft.AssignedFlightId == flight.FlightId
+                                       && aircraft.Status != CampaignAircraftStatus.Lost);
             }
 
-            return allianceByAircraftId;
+            return contexts;
         }
 
+        private sealed class FlightContexts
+        {
+            public readonly Dictionary<Guid, Alliance> AllianceByFlightId =
+                new Dictionary<Guid, Alliance>();
+            public readonly Dictionary<Guid, Guid> AircraftTypeByFlightId =
+                new Dictionary<Guid, Guid>();
+            public readonly Dictionary<Guid, int> AircraftCountByFlightId =
+                new Dictionary<Guid, int>();
+        }
     }
 }

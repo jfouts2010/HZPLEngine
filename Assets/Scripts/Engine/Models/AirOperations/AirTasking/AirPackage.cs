@@ -49,5 +49,10 @@ namespace Models.Gameplay.Campaign
             || LifecycleState == AirTaskingLifecycleState.Failed
             || LifecycleState == AirTaskingLifecycleState.Cancelled
             || LifecycleState == AirTaskingLifecycleState.Aborted;
+
+        public bool HasPhysicallyEnded =>
+            (Flights ?? new List<AirFlight>())
+            .Where(flight => flight != null)
+            .All(flight => flight.HasPhysicallyEnded);
     }
 }

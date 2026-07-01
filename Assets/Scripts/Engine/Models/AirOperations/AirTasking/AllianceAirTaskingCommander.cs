@@ -61,7 +61,7 @@ namespace Models.Gameplay.Campaign
                     .Where(package => package != null
                                       && package.MissionRequestId == request.MissionRequestId)
                     .ToList();
-                if (linkedPackages.Any(package => !package.IsTerminal))
+                if (linkedPackages.Any(package => !package.HasPhysicallyEnded))
                 {
                     retainedRequests.Add(request);
                     continue;
@@ -99,7 +99,7 @@ namespace Models.Gameplay.Campaign
                 .ToHashSet();
             packages = packages
                 .Where(package => package != null
-                                  && (!package.IsTerminal
+                                  && (!package.HasPhysicallyEnded
                                       || retainedRequestIds.Contains(package.MissionRequestId)))
                 .ToList();
         }
@@ -410,6 +410,16 @@ namespace Models.Gameplay.Campaign
                     || flight.MissionType != request.RequestType
                     || flight.EffectStart != package.EffectStart
                     || flight.EffectEnd != package.EffectEnd
+                    || flight.Route == null
+                    || flight.Route.Count < 2
+                    || flight.Route[0] == null
+                    || flight.Route[0].Action != AirWaypointAction.Takeoff
+                    || flight.Route[flight.Route.Count - 1] == null
+                    || flight.Route[flight.Route.Count - 1].Action != AirWaypointAction.Land
+                    || flight.Route.Any(waypoint =>
+                        waypoint == null || waypoint.WaypointId == Guid.Empty)
+                    || flight.Route.Select(waypoint => waypoint.WaypointId).Distinct().Count()
+                       != flight.Route.Count
                     || flight.AircraftIds == null
                     || flight.AircraftIds.Count == 0))
                 return "A proposed flight is incomplete.";

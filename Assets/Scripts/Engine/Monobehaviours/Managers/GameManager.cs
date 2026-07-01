@@ -38,6 +38,7 @@ namespace Engine.Monobehaviours.Managers
         public List<SupplyCapitalStartingCondition> SupplyCapitals = new List<SupplyCapitalStartingCondition>();
         private GroundTaskingSystem _groundTaskingSystem;
         private AirTaskingSystem _airTaskingSystem;
+        private AirExecutionSystem _airExecutionSystem;
         private IADSSystem _IADSSystem;
         private GroundCombatSystem _groundCombatSystem;
         private GroundOperationsSystem _groundOperationsSystem;
@@ -119,6 +120,7 @@ namespace Engine.Monobehaviours.Managers
             _groundTaskingSystem = new GroundTaskingSystem(this);
             _IADSSystem = new IADSSystem(this);
             _airTaskingSystem = new AirTaskingSystem(this, activeModule);
+            _airExecutionSystem = new AirExecutionSystem(this, _airTaskingSystem, activeModule);
             _groundOperationsSystem = new GroundOperationsSystem(this);
             _groundCombatSystem = new GroundCombatSystem(this, _groundOperationsSystem);
             _supplySystem = new SupplySystem(this);
@@ -143,6 +145,12 @@ namespace Engine.Monobehaviours.Managers
                 return null;
 
             return _airTaskingSystem.GetCommander(alliance);
+        }
+
+        public IReadOnlyList<AirFlight> GetAirborneFlights()
+        {
+            return _airTaskingSystem?.GetAirborneFlights().ToList()
+                   ?? new List<AirFlight>();
         }
 
         public AllianceIADS GetAllianceIADS(Alliance alliance)
@@ -243,6 +251,7 @@ namespace Engine.Monobehaviours.Managers
 
             _groundCombatSystem.GameTurn(resolveCombatRound);
             _groundOperationsSystem.GameTurn(elapsedHours);
+            _airExecutionSystem.GameTurn(previousTime, CurrentTime);
             _IADSSystem.TacticalTurn();
             _supplySystem.GameTurn(elapsedHours);
             _airTaskingSystem.GameTurn(crossedOperationalCadenceBoundary);

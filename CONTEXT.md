@@ -182,7 +182,7 @@ _Avoid_: using a projected incoming defender to justify pulling the last physica
 
 **Aircraft type** — reusable authored identity and capability data for one aircraft model or variant in a Module catalog. Aircraft type definitions are not country-scoped; a campaign template gives an aircraft type to a country by creating a squadron for that country that uses the aircraft type.
 
-Aircraft type capability data includes flight performance, range and endurance, sensors and defensive qualities, ordnance capacity and compatibility, and explicit support capabilities where applicable. The third-party ID remains an opaque export mapping rather than a source of campaign capability.
+Aircraft type capability data includes flight performance, range and endurance, sensors and defensive qualities, ordnance capacity and compatibility, and explicit support capabilities where applicable. Required point-mass performance consists of cruise and combat speed in knots, climb and descent rate in feet per minute, turn rate in degrees per second, and nominal cruise altitude and service ceiling in feet; these values are authored per aircraft type rather than inferred from mission role. The third-party ID remains an opaque export mapping rather than a source of campaign capability.
 
 _Avoid_: using "airframe" for the Module catalog concept; in this project, airframe can sound like a physical aircraft body, a flight-model implementation, or an individual tail.
 
@@ -241,13 +241,17 @@ In v1, ordnance availability rules are not enforced. If ordnance is allowed for 
 
 Air tasking allocates individual campaign aircraft to flights. An aircraft is available for planning only when it is ready, unassigned, located at its operating base, and capable of the proposed route and loadout. Assignment to a committed flight reserves that aircraft from every other package.
 
+An aircraft remains assigned from package commitment through landing, while its flight execution phase determines whether it is airborne. Aircraft do not duplicate flight position or airborne state; an individual aircraft leaves assignment early only through an individual outcome such as damage or loss.
+
+**Airbase overrun** — hostile capture of an airport while squadron aircraft are physically present. Ready, damaged, and committed-but-unlaunched aircraft at that airport are lost and their unlaunched flights cancel; already-airborne flights survive, divert, and may reconstitute their owning squadron at recovery, while a squadron with no surviving aircraft is eliminated.
+
 Squadron ready, damaged, assigned, and lost counts are summaries derived from the squadron's campaign aircraft; they are not a second source of allocation truth.
 
 Loading and unloading ordnance onto a campaign aircraft is instant in v1. There is no rearm duration, transit time, or separate arming workflow yet.
 
 Campaign aircraft start empty in v1. They receive a loadout when assigned to a sortie because sortie purpose determines what ordnance should be carried.
 
-When a campaign aircraft lands at the end of a sortie in v1, its loadout is cleared. The next sortie assignment generates a fresh loadout. Future supply rules may return unused ordnance from a landed aircraft back into available stock.
+When a campaign aircraft lands at the end of a sortie in v1, its flight assignment and loadout are cleared and an undamaged survivor becomes ready immediately. The next sortie assignment generates a fresh loadout, and the package preparation delay is the only turnaround abstraction; future maintenance, supply, and recovery rules may add downtime or return unused ordnance to available stock.
 
 **Aircraft loadout** — the ordnance physically carried by one campaign aircraft at a given moment, including remaining counts after expenditure. The core engine uses loadout state to know what that aircraft can still employ during autonomous simulation and, later, what to place on export.
 
@@ -485,6 +489,24 @@ _Avoid_: separate turn clocks for air and ground unless a future ADR explicitly 
 
 **Ground tactical combat round** — one execution of active ground combat resolution during a simulation tick.
 
+### Airspace position
+
+An **airspace position** is a campaign-local position measured uniformly in feet from the campaign's stable origin, with X running east-west, Y representing altitude above mean sea level, and Z running north-south. Aircraft move continuously between airspace positions and are not snapped to operational-map tiles; tile centers, the kilometer-based ground-map scale, and placed assets are converted into this coordinate frame when air and ground geography interact.
+
+_Avoid_: using tile cube coordinates or Unity scene-transform coordinates as an aircraft's authoritative position.
+
+The center of cube tile `(0,0,0)` is the airspace origin. Tile centers use the operational map's existing flat-top hex orientation and `TileDistanceKM` center spacing converted to feet, with map east mapped to positive X and map north to positive Z; airports use their tile center at zero feet MSL until terrain elevation exists.
+
+Physical air interactions, including sensor detection, weapon reach, and future aircraft encounters, use airspace positions and three-dimensional slant distance. Projection onto an operational-map tile is reserved for area membership, ownership, planning, and other tile-domain questions.
+
+**Aggregate flight motion** — the operational point-mass approximation used to move a flight through airspace with finite forward speed, turn rate, climb rate, descent rate, and altitude limits. It provides plausible route following without simulating lift, control surfaces, stalls, or other flight-simulator aerodynamics, and one simulation tick may advance through multiple route legs when time remains.
+
+Air-domain performance is authored in aviation units: airspeed in knots, climb and descent rates in feet per minute, and turn rate in degrees per second. The ground-map tile scale remains in kilometers and converts only when ground geography is represented in airspace.
+
+Initial flight execution uses cruise speed. During a coordinated package segment, participating combat flights match the slowest participating cruise speed; after separating for recovery they resume their own aircraft type's cruise speed. Combat speed and other phase-specific speed choices belong to later mission behavior rather than to waypoint data.
+
+During one simulation tick, a flight consumes the full elapsed-time budget continuously: reaching a waypoint consumes only the time physically needed, records the semantic crossing at its calculated within-tick campaign time, and leaves the remainder available for subsequent route legs. This is fractional event timing within the single simulation clock, not a second air-execution clock.
+
 ### Ground operational cadence
 
 How often expensive ground decision logic runs on the simulation tick clock: objective selection, order assignment, retreat destination selection, and other planning work that does not need to be recalculated every tick.
@@ -525,11 +547,15 @@ A **committed sortie** is one aircraft's planned employment after that aircraft 
 
 ### Active sortie
 
-An **active sortie** is one aircraft's employment after it has taken off. Takeoff locks its assigned mission and target: later planning may neither cancel nor retask it.
+An **active sortie** is one aircraft's employment after it has taken off. Takeoff locks its assigned mission intent and any already-assigned target: later air planning may neither cancel nor retask it.
 
-An active sortie may still end unsuccessfully because its aircraft are lost, fuel or package-integrity rules force an abort and return to base, or the assigned effect can no longer be achieved. Such outcomes are execution results, not air-planning cancellations or retasking.
+An active sortie may still end unsuccessfully because its aircraft are lost, package-integrity rules force an abort and return to base, or the assigned effect can no longer be achieved. Future fuel rules may add another execution-driven abort condition without changing this boundary.
 
 _Avoid_: using an operational replan to change an airborne sortie's assigned mission or target.
+
+**Execution-level tasking** — a bounded decision made by an active flight's own mission behavior within its already-authorized mission intent, such as a DCA flight intercepting inside its patrol area or an on-call CAS flight receiving a target. It may replace only the unflown mission segment and materializes the amendment into the authoritative route; it is not an air-planning retask.
+
+**Recovery diversion** — an execution-level change to an airborne flight's return and landing destination when its assigned recovery airport is no longer friendly. The flight applies the recovery-airport fallback hierarchy without changing its locked mission or target; because range is ignored initially, any valid alternate is reachable.
 
 ### Sortie
 
@@ -541,7 +567,59 @@ A **flight** is a persistent air-planning formation containing one or more campa
 
 Every flight draws its aircraft from exactly one squadron and therefore has one aircraft type and one operating base. A package may coordinate flights from multiple squadrons and bases.
 
+During aggregate campaign execution, the flight owns the authoritative airspace position, velocity, and route progress shared by its member aircraft. Member aircraft retain their individual identity, condition, loadout, and sortie outcome without independently maneuvering inside the formation.
+
 Each flight belongs to exactly one owning package. A supporting flight may additionally be referenced by other packages that use its service, but those references do not give the flight multiple owning packages.
+
+**Flight route** — the concrete, ordered path assigned to every flight before its package commits, from takeoff through terminal landing, including any transit, rendezvous, station, mission, and return legs needed for that flight's role. Package creation may accept authored route input or generate default geometry, but in both cases it materializes a complete waypoint sequence that becomes the flight executor's single source of movement truth.
+
+**Air waypoint** — an airspace position on a flight route paired with a semantic action or transition, such as takeoff, rendezvous, begin station work, perform a mission action, return to base, or land. A waypoint does not prescribe speed; flight guidance chooses movement performance.
+
+A waypoint carries its planned campaign arrival time when timing is operationally meaningful. Takeoff, rendezvous, station entry, discrete mission action, racetrack release, and landing timing are therefore part of the materialized route; flight-level takeoff and effect timing are derived summaries rather than competing stored execution clocks.
+
+A station-entry waypoint may carry the air mission area affected while its station loop is active. The initial route copies the mission request's area onto its one station entry; a flight's current effect area is derived from its active station waypoint rather than maintained as competing flight-level execution state.
+
+A racetrack uses explicit endpoint waypoints in the ordered route. Its terminal endpoint identifies the earlier station-entry waypoint to repeat from and the campaign time when repetition ends; after that time execution advances to the next waypoint. Because each loop instruction and effect area belongs to its waypoints, one flight route may contain multiple sequential stations without a separate station entity, flight-level loop state, or a general waypoint graph.
+
+**Flight execution event** — a bounded record that a flight actually crossed a semantic waypoint or completed an execution transition at a campaign time, such as takeoff, rendezvous, station entry, mission action, station exit, RTB, or landing. Common milestone times are derived from these events; repeated racetrack laps do not create events, and mission-specific outcomes such as damage, suppression, or weapons expended belong to separate typed effect records linked to the relevant execution event.
+
+After commitment, ordinary tick execution does not regenerate direct legs, station geometry, or rendezvous points. The initial model permits only recovery diversion to replace the unflown recovery portion; future execution-level tasking may explicitly replace an authorized unflown mission segment before the executor continues.
+
+_Avoid_: a committed flight without a complete materialized route, competing package- and flight-level route geometry, or opaque waypoint flags whose meaning depends on undocumented combinations.
+
+**Recovery airport** — the friendly airport where a flight intends to land. Recovery selection prefers the flight's assigned recovery airport, then its squadron's current airport if that differs, then the nearest friendly airport; landing at the final fallback reconstitutes the squadron at that airport, while absence of any friendly recovery airport causes the flight to fail and its aircraft to be lost.
+
+An airborne flight preserves its owning squadron even if that squadron loses its previous airport. A squadron is eliminated only when it has no surviving campaign aircraft, not merely because its base was captured or disabled.
+
+In the initial air-execution model, airport damage and functional level do not affect launch, landing, recovery selection, or diversion. Hostile tile capture is the only airport-state change that invalidates air operations; damage-based closure and repair are deferred.
+
+**Approach waypoint** — the final generated navigation waypoint before recovery, placed on the inbound line using the flight's cruise speed, descent rate, and current altitude so descent begins late enough to avoid ground-level transit and reaches the airport near zero altitude. Reaching the following airport landing waypoint ends the flight without runway, pattern, or ATC simulation.
+
+**Racetrack station route** — the shared station-keeping route pattern for initial DCA, AWACS, and tanker flights: enter the station, fly between two track-end waypoints, follow the terminal endpoint's repeat instruction until its release time, then continue to the return legs. An automatically derived v1 racetrack is centered on the mission-area center, aligned east-west at mission altitude, and sized from the campaign tile scale; authored route waypoints override that placeholder geometry.
+
+**Nominal cruise altitude** — the aircraft type's normal transit altitude in feet above mean sea level.
+
+**Service ceiling** — the aircraft type's maximum supported campaign altitude in feet above mean sea level.
+
+**Mission altitude** — the desired altitude in feet above mean sea level selected by a flight's mission behavior. Route generation uses the mission altitude where applicable, clamps it to the assigned aircraft type's service ceiling, and otherwise uses that type's nominal cruise altitude.
+
+Generated v1 mission altitudes are 40,000 feet for DCA and OCA, 35,000 feet for AWACS, and 25,000 feet for tanker missions. These are replaceable defaults rather than hard limits.
+
+_Avoid_: treating low, medium, and high altitude bands as exact aircraft performance or route altitudes.
+
+In the initial air-execution model, a sustained flight repeats its station route until its already-assigned effect end, then follows its return and landing legs. Execution does not score late arrival or partial coverage, and fuel, range, and endurance do not constrain planning or movement; those aircraft characteristics remain available for a later fidelity pass.
+
+**Flight execution phase** — the mission-independent stage of a flight's physical journey: awaiting takeoff, outbound, executing, returning, landing, or ended. Execution phase is separate from lifecycle outcome; an aborted flight has stopped its assigned mission and may have a terminal planning outcome while remaining physically in the returning phase until its surviving aircraft land.
+
+_Avoid_: mission-specific execution phases such as DCA, AWACS orbit, tanker track, or strike; those are mission behaviors performed during the generic executing phase.
+
+**Air mission behavior** — the mission-specific effect a flight performs during its generic executing phase, separate from the shared rules for takeoff, route movement, return, and landing. Initial behaviors establish DCA patrol presence, airborne-C2 service, placeholder tanker service, or a no-effect OCA sweep action; later air-combat and ground-attack behaviors may add their own resolution without replacing flight execution.
+
+_Avoid_: implementing navigation, takeoff, RTB, or landing separately for each mission type.
+
+An initial DCA, AWACS, or tanker flight achieves its mission by reaching station and remaining there through its assigned effect end. It becomes completed after returning and landing; a flight that never reaches station fails, while one explicitly directed home before achieving the mission is aborted.
+
+An initial OCA flight achieves its placeholder mission by traversing its sweep mission waypoint, returning, and landing. It records no combat or air-superiority effect until air-combat resolution is added.
 
 Flight size is adaptive. The package builder chooses the smallest aircraft allocation expected to produce the requested effect at acceptable risk, with alliance doctrine able to add a force or redundancy margin. Support-flight size reflects required service capacity, while combat-flight size reflects expected opposition and desired advantage.
 
@@ -574,13 +652,23 @@ _Avoid_: continuing a coordinated package after a required flight becomes unavai
 
 The fixed delay is separate from transit time and does not introduce detailed arming, taxi, runway, or airport-throughput simulation.
 
-**Package effect window** — the time interval during which a package's coordinated flights are intended to produce the requested effect. Each flight calculates its takeoff time from its operating base, route, speed, and the package's timing so required flights can synchronize.
+**Package effect window** — the time interval during which a package's coordinated flights are intended to produce the requested effect at their mission location. Effect start is planned time on station, never takeoff time; each flight calculates its takeoff time from its operating base, route, cruise speed, and the package's timing so required flights can synchronize.
+
+If preparation and transit make the requested effect start unreachable, projected coverage begins at the later feasible station-arrival time rather than crediting the outbound flight with an effect it cannot yet provide.
 
 **Package rendezvous** — a shared waypoint and time where required flights converge before conducting their coordinated mission. Required supporting coverage must be active when the package reaches the portion of its route or effect window that depends on that support.
 
+An initial DCA or OCA package with more than one required combat flight uses a package rendezvous before proceeding to the mission area. A single-flight combat package skips rendezvous, and AWACS or tanker flights proceed independently to their own stations rather than joining a supported package's formation.
+
+Rendezvous is a synchronization barrier: an early flight holds at its rendezvous waypoint until every required combat flight has arrived, then the package releases those flights together at their coordinated speed. If a required flight cannot arrive, package-integrity rules abort the package.
+
+An automatically generated rendezvous lies halfway between the participating combat flights' launch-base centroid and the mission-area center. It uses a common altitude limited by the lowest participating aircraft service ceiling and a common arrival time calculated backward from planned mission-area arrival; explicit package route data may override this placeholder.
+
+Rendezvous is a package coordination choice rather than a universal rule for every mission. Future packages may define staggered coordinated segments, such as SEAD reaching a threat area before a strike flight, without changing the shared flight executor.
+
 When suitable aircraft are otherwise comparable, package building prefers flights from squadrons at the same airport to reduce coordination and transit cost. This is a preference rather than a requirement; one package may still combine flights from different operating bases.
 
-Detailed route construction and the rules that conduct each mission are deferred beyond the air-tasking foundation. Foundation planning may preserve timing and rendezvous intent without yet resolving a complete flight route or mission execution.
+Initial generated routes use direct legs: DCA, AWACS, and tanker flights fly from their airport to station entry, execute their racetrack, and return directly for recovery; OCA flights fly through their sweep waypoint and return. Multi-flight DCA and OCA packages insert their required rendezvous before the mission leg, while threat avoidance, assembly patterns, and other tactical routing remain future planning improvements.
 
 _Avoid_: creating independent strike, escort, and support flights without recording the operational effort that coordinates them.
 
@@ -632,7 +720,7 @@ Mission requests remain distinct from sorties: a request may go unfulfilled when
 
 The current request collection contains actionable requests for the active planning cycle. A request with committed or active packages is retained until all of its packages reach a terminal state, even when a new global planning cycle begins. Packages reference their originating request through a stable identity.
 
-Terminal packages and snapshots of their originating requests move to bounded campaign history for diagnostics and AI explanation. They do not remain in the actionable request collection indefinitely.
+Terminal packages and snapshots of their originating requests move to bounded campaign history for diagnostics and AI explanation after every associated flight has physically ended. A planning-terminal outcome such as an airborne abort stops projected mission effects immediately but does not permit execution state to be discarded before the returning aircraft land or are otherwise resolved.
 
 _Avoid_: treating a sortie as the source of operational demand, assuming every mission request must produce a sortie, or carrying unfulfilled requests across full planning cycles.
 
@@ -682,7 +770,7 @@ _Avoid_: pre-authoring fixed mission areas, or treating a single target point, a
 
 ### Coverage window
 
-A **coverage window** is the bounded interval during which an area-based mission request asks the alliance to maintain an air effect. A request may create multiple sequential packages or flights when one flight cannot cover the interval because of endurance or other execution limits.
+A **coverage window** is the bounded interval during which an area-based mission request asks the alliance to maintain an air effect. In the initial model, one flight may cover its entire assigned window because fuel and endurance are ignored; future execution limits may require sequential rotations.
 
 Coverage planning uses a rolling handoff across air-planning cadences. A window may extend beyond the next cadence boundary long enough for the following planning cycle to prepare, launch, and position replacement coverage, preventing a gap while the new alliance air plan is being fulfilled.
 
@@ -746,11 +834,9 @@ Future AWACS control-channel rules and tanker fuel-transfer rules may specialize
 
 Observed and forecast mission demand do not escalate AWACS coverage until its operational effect exists. Future AWACS behavior is intended to contribute through alliance IADS and intelligence rules, where its help may not reduce cleanly to one numerical benefit. Do not add a placeholder combat multiplier that would compete with that future model.
 
-**Abstract aerial-refueling effect** — tanker support extends a receiver flight's usable range, endurance, and time on station without modeling continuous fuel quantity, transfer rate, boom queues, or partial offloads. Each supported receiver aircraft consumes a tanker support slot during the relevant refueling window.
+**Aerial-refueling effect** — in the initial air-execution model, tanker coverage has no numerical effect on receiver feasibility, range, endurance, or runtime behavior. Aerial-refueling requests, packages, flights, station routes, coverage windows, and support slots still exist so tankers can execute complete missions and the support-tasking backbone is ready for later fuel-transfer rules.
 
-In v1, an aircraft type explicitly states whether it can receive aerial refueling. Confirmed compatible tanker coverage doubles a receiver flight's range and endurance, does not stack when multiple tankers are available, and cannot extend total flight duration beyond six hours. The planned route must intersect the supporting tanker's coverage.
-
-For sustained missions such as DCA, aerial refueling can reduce the number of flight rotations needed to cover a window. For future strike missions, it can make otherwise unreachable targets feasible. Future airport-throughput rules may also value the reduced number of takeoffs and landings caused by longer on-station time.
+_Avoid_: adding placeholder range multipliers, fuel burn, transfer rates, boom queues, partial offloads, or fuel-driven aborts to the initial air-execution model.
 
 Support demand blends three inputs:
 
@@ -916,7 +1002,7 @@ Air-defense sites contribute to the alliance IADS for their effective site allia
 
 In v1, the alliance IADS owns current tracks and engagement assignments. IADS commander refresh names the decision pass that updates those assignments, even if a future IADS commander becomes a separate durable entity.
 
-In v1, an alliance IADS builds tracks for active airborne hostile aircraft only. Friendly aircraft remain known through air operations rather than as IADS current tracks.
+In v1, an alliance IADS builds tracks for active airborne hostile flights only. Friendly flights remain known through air operations rather than as IADS current tracks.
 
 Alliance IADS tracks are persistent campaign state across turns. They should be representable as campaign state even before save/load behavior exists.
 
@@ -924,27 +1010,27 @@ _Avoid_: treating future network topology as the owner of the v1 shared air pict
 
 ### IADS current track
 
-An IADS current track is an individual aircraft contact that a site or alliance IADS is currently aware of through direct detection or shared cueing. Current track awareness is not authorization to fire.
+An IADS current track is an aggregate hostile-flight contact that a site or alliance IADS is currently aware of through direct detection or shared cueing. Current track awareness is not authorization to fire.
 
 Remote cueing may add current track awareness for another site, but remote cueing alone is not enough to authorize a SAM launch.
 
-_Avoid_: treating a package, flight, or other air-plan grouping as the tracked object.
+_Avoid_: creating one co-located track for every member aircraft or treating a package as the tracked object.
 
-An IADS current track records the aircraft's last known position. It may reference the true aircraft entity for simulation bookkeeping, duplicate prevention, and resolution, but that reference is not itself alliance knowledge about aircraft type, squadron, mission, or package.
+An IADS current track records the flight's last known airspace position and may carry an estimated aircraft count. It may reference the true flight entity for simulation bookkeeping, duplicate prevention, and resolution, but that reference is not itself alliance knowledge about aircraft type, squadron, mission, or package.
 
 ### Stale IADS track
 
-A stale IADS track is an IADS current track that persists after the tracked aircraft is no longer currently observed. Stale tracks record that they are stale and remain in the alliance IADS air picture only until their configured expiry threshold is reached.
+A stale IADS track is an IADS current track that persists after the tracked flight is no longer currently observed. Stale tracks record that they are stale and remain in the alliance IADS air picture only until their configured expiry threshold is reached.
 
-Stale tracks represent lost sensor contact with an aircraft that may still be airborne. Their IADS track quality decays while stale, and tracks are removed when their true aircraft is no longer an active airborne entity, such as after landing, destruction, or leaving the battlespace.
+Stale tracks represent lost sensor contact with a flight that may still be airborne. Their IADS track quality decays while stale, and tracks are removed when their true flight is no longer active and airborne, such as after landing, destruction, or leaving the battlespace.
 
 If a stale track is reacquired before expiry, it keeps the same track identity, clears stale state, refreshes its last known position, and continues building from its decayed quality.
 
 ### IADS track quality
 
-IADS track quality is a continuous 0.0 to 1.0 estimate of how useful an IADS current track is for air-defense decisions. Track quality builds over time from radar contributions, is capped by the radar-aircraft situation, may improve faster when multiple radars contribute with diminishing returns, and is interpreted through gameplay thresholds for awareness, engagement assignment, weapon-quality use, and other actions.
+IADS track quality is a continuous 0.0 to 1.0 estimate of how useful an IADS current track is for air-defense decisions. Track quality builds over time from radar contributions, is capped by the radar-flight situation, may improve faster when multiple radars contribute with diminishing returns, and is interpreted through gameplay thresholds for awareness, engagement assignment, weapon-quality use, and other actions.
 
-An aircraft contact must reach at least 0.10 IADS track quality before it becomes an IADS current track. The 0.10 threshold creates tracks; stale tracks below that quality persist until their stale expiry threshold is reached.
+A flight contact must reach at least 0.10 IADS track quality before it becomes an IADS current track. The 0.10 threshold creates tracks; stale tracks below that quality persist until their stale expiry threshold is reached.
 
 Damaged, destroyed, disabled, or suppressed radar capability does not contribute to IADS track quality in v1. Radar emission is binary, and available radars are assumed to emit; future emission modes or graded suppression may add more detailed behavior.
 
