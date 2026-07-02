@@ -573,6 +573,8 @@ Each flight belongs to exactly one owning package. A supporting flight may addit
 
 **Flight route** — the concrete, ordered path assigned to every flight before its package commits, from takeoff through terminal landing, including any transit, rendezvous, station, mission, and return legs needed for that flight's role. Package creation may accept authored route input or generate default geometry, but in both cases it materializes a complete waypoint sequence that becomes the flight executor's single source of movement truth.
 
+**Air route geometry planner** — the replaceable planning policy that selects generated ingress and egress transit geometry before a flight commits. The initial policy places one laterally offset transit waypoint on each leg, puts ingress and egress on opposite geographic sides of the direct route, and varies the selected side by package identity. It does not yet evaluate threats, fuel, weather, tanker placement, support timing, or airspace restrictions; those factors may enrich or replace the policy without changing the flight executor.
+
 **Air waypoint** — an airspace position on a flight route paired with a semantic action or transition, such as takeoff, rendezvous, begin station work, perform a mission action, return to base, or land. A waypoint does not prescribe speed; flight guidance chooses movement performance.
 
 A waypoint carries its planned campaign arrival time when timing is operationally meaningful. Takeoff, rendezvous, station entry, discrete mission action, racetrack release, and landing timing are therefore part of the materialized route; flight-level takeoff and effect timing are derived summaries rather than competing stored execution clocks.
@@ -668,7 +670,7 @@ Rendezvous is a package coordination choice rather than a universal rule for eve
 
 When suitable aircraft are otherwise comparable, package building prefers flights from squadrons at the same airport to reduce coordination and transit cost. This is a preference rather than a requirement; one package may still combine flights from different operating bases.
 
-Initial generated routes use direct legs: DCA, AWACS, and tanker flights fly from their airport to station entry, execute their racetrack, and return directly for recovery; OCA flights fly through their sweep waypoint and return. Multi-flight DCA and OCA packages insert their required rendezvous before the mission leg, while threat avoidance, assembly patterns, and other tactical routing remain future planning improvements.
+Initial generated routes keep ingress and egress distinct with simple laterally offset transit waypoints. DCA, AWACS, and tanker flights then execute their racetrack, while OCA flights traverse their sweep mission waypoint; multi-flight DCA and OCA packages insert their required rendezvous before the shared ingress leg. The initial geometry prevents routine outbound-route reuse but does not claim to minimize operational risk; threat avoidance, fuel-state routing, tanker placement, support timing, assembly patterns, and airspace constraints remain future route-planning improvements.
 
 _Avoid_: creating independent strike, escort, and support flights without recording the operational effort that coordinates them.
 

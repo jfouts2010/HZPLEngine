@@ -27,12 +27,14 @@ namespace Engine.Service
         private readonly ProjectedAirEffectService projectedEffects;
         private readonly AirMissionPriorityService priorityService;
         private readonly IReadOnlyDictionary<Guid, AircraftTypeDefinition> aircraftTypes;
+        private readonly IAirRouteGeometryPlanner routeGeometryPlanner;
 
         public AirPackageBuilder(
             GameManager gameManager,
             ModuleDefinition module,
             ProjectedAirEffectService projectedEffects,
-            AirMissionPriorityService priorityService)
+            AirMissionPriorityService priorityService,
+            IAirRouteGeometryPlanner routeGeometryPlanner = null)
         {
             this.gameManager = gameManager ?? throw new ArgumentNullException(nameof(gameManager));
             if (module == null)
@@ -41,6 +43,8 @@ namespace Engine.Service
                                     ?? throw new ArgumentNullException(nameof(projectedEffects));
             this.priorityService = priorityService
                                    ?? throw new ArgumentNullException(nameof(priorityService));
+            this.routeGeometryPlanner = routeGeometryPlanner
+                                        ?? new SeparatedIngressEgressRouteGeometryPlanner();
             aircraftTypes = module.AircraftTypeDefinitions
                 .Where(definition => definition != null)
                 .ToDictionary(definition => definition.AircraftTypeDefinitionId);
@@ -386,6 +390,9 @@ namespace Engine.Service
             var missionEntry = request.FulfillmentPattern == AirMissionRequestFulfillmentPattern.Sustained
                 ? missionCenter - Vector3.right * tileDistanceFeet * 0.5f
                 : missionCenter;
+            var missionExit = request.FulfillmentPattern == AirMissionRequestFulfillmentPattern.Sustained
+                ? missionCenter + Vector3.right * tileDistanceFeet * 0.5f
+                : missionCenter;
             var combat = request.RequestType == AirMissionRequestType.DefensiveCounterAirPatrol
                          || request.RequestType == AirMissionRequestType.OffensiveCounterAirSweep;
             var hasRendezvous = combat && plans.Count > 1;
@@ -400,14 +407,26 @@ namespace Engine.Service
                 rendezvousPosition.y = missionAltitude;
             }
 
+            foreach (var plan in plans)
+            {
+                plan.RouteGeometry = routeGeometryPlanner.Plan(new AirRouteGeometryPlanningContext(
+                    hasRendezvous ? rendezvousPosition : plan.BasePositionFeet,
+                    missionEntry,
+                    missionExit,
+                    plan.BasePositionFeet,
+                    tileDistanceFeet,
+                    package.PackageId));
+            }
+
             var earliestTakeoff = package.EarliestTakeoffTime;
             var plannedEffectStart = package.EffectStart;
             var rendezvousTime = plannedEffectStart;
             if (hasRendezvous)
             {
                 rendezvousTime -= TimeSpan.FromSeconds(
-                    AirspaceGeometry.TravelSeconds(
+                    TravelSecondsAlong(
                         rendezvousPosition,
+                        plans[0].RouteGeometry.IngressWaypoints,
                         missionEntry,
                         coordinatedSpeed,
                         plans.Min(plan => plan.AircraftType.ClimbRateFeetPerMinute),
@@ -417,15 +436,22 @@ namespace Engine.Service
             var requiredShift = TimeSpan.Zero;
             foreach (var plan in plans)
             {
-                var firstTarget = hasRendezvous ? rendezvousPosition : missionEntry;
-                var firstTargetTime = hasRendezvous ? rendezvousTime : plannedEffectStart;
-                var takeoff = firstTargetTime - TimeSpan.FromSeconds(
-                    AirspaceGeometry.TravelSeconds(
-                        plan.BasePositionFeet,
-                        firstTarget,
-                        plan.AircraftType.CruiseSpeedKnots,
-                        plan.AircraftType.ClimbRateFeetPerMinute,
-                        plan.AircraftType.DescentRateFeetPerMinute));
+                var takeoff = hasRendezvous
+                    ? rendezvousTime - TimeSpan.FromSeconds(
+                        AirspaceGeometry.TravelSeconds(
+                            plan.BasePositionFeet,
+                            rendezvousPosition,
+                            plan.AircraftType.CruiseSpeedKnots,
+                            plan.AircraftType.ClimbRateFeetPerMinute,
+                            plan.AircraftType.DescentRateFeetPerMinute))
+                    : plannedEffectStart - TimeSpan.FromSeconds(
+                        TravelSecondsAlong(
+                            plan.BasePositionFeet,
+                            plan.RouteGeometry.IngressWaypoints,
+                            missionEntry,
+                            plan.AircraftType.CruiseSpeedKnots,
+                            plan.AircraftType.ClimbRateFeetPerMinute,
+                            plan.AircraftType.DescentRateFeetPerMinute));
                 plan.PlannedTakeoff = takeoff;
                 if (takeoff < earliestTakeoff && earliestTakeoff - takeoff > requiredShift)
                     requiredShift = earliestTakeoff - takeoff;
@@ -457,7 +483,8 @@ namespace Engine.Service
                     package.EffectEnd,
                     hasRendezvous,
                     rendezvousPosition,
-                    rendezvousTime);
+                    rendezvousTime,
+                    coordinatedSpeed);
             }
 
             return true;
@@ -471,13 +498,22 @@ namespace Engine.Service
             DateTime effectEnd,
             bool hasRendezvous,
             Vector3 rendezvousPosition,
-            DateTime rendezvousTime)
+            DateTime rendezvousTime,
+            float coordinatedSpeed)
         {
             var flight = plan.Flight;
             var route = new List<AirWaypoint>();
             route.Add(NewWaypoint(plan.BasePositionFeet, AirWaypointAction.Takeoff, plan.PlannedTakeoff));
             if (hasRendezvous)
                 route.Add(NewWaypoint(rendezvousPosition, AirWaypointAction.Rendezvous, rendezvousTime));
+
+            AppendTransitRoute(
+                route,
+                hasRendezvous ? rendezvousPosition : plan.BasePositionFeet,
+                hasRendezvous ? rendezvousTime : plan.PlannedTakeoff,
+                plan.RouteGeometry.IngressWaypoints,
+                plan.AircraftType,
+                hasRendezvous ? coordinatedSpeed : plan.AircraftType.CruiseSpeedKnots);
 
             if (request.FulfillmentPattern == AirMissionRequestFulfillmentPattern.Sustained)
             {
@@ -513,11 +549,21 @@ namespace Engine.Service
                     effectStart));
             }
 
-            var returnPosition = route[route.Count - 1].PositionFeet;
             var returnTime = request.FulfillmentPattern == AirMissionRequestFulfillmentPattern.Sustained
                 ? effectEnd
                 : effectStart;
+            var returnPosition = route[route.Count - 1].PositionFeet;
             route.Add(NewWaypoint(returnPosition, AirWaypointAction.ReturnToBase, returnTime));
+            returnTime = AppendTransitRoute(
+                route,
+                returnPosition,
+                returnTime,
+                plan.RouteGeometry.EgressWaypoints,
+                plan.AircraftType,
+                plan.AircraftType.CruiseSpeedKnots);
+            if (plan.RouteGeometry.EgressWaypoints.Count > 0)
+                returnPosition = plan.RouteGeometry.EgressWaypoints[
+                    plan.RouteGeometry.EgressWaypoints.Count - 1];
             AppendRecoveryRoute(route, plan, returnPosition, returnTime);
 
             flight.Route = route;
@@ -587,6 +633,60 @@ namespace Engine.Service
             };
         }
 
+        private static DateTime AppendTransitRoute(
+            ICollection<AirWaypoint> route,
+            Vector3 start,
+            DateTime startTime,
+            IReadOnlyList<Vector3> transitPoints,
+            AircraftTypeDefinition aircraftType,
+            float speedKnots)
+        {
+            var position = start;
+            var time = startTime;
+            foreach (var point in transitPoints)
+            {
+                time += TimeSpan.FromSeconds(AirspaceGeometry.TravelSeconds(
+                    position,
+                    point,
+                    speedKnots,
+                    aircraftType.ClimbRateFeetPerMinute,
+                    aircraftType.DescentRateFeetPerMinute));
+                route.Add(NewWaypoint(point, AirWaypointAction.Transit, time));
+                position = point;
+            }
+
+            return time;
+        }
+
+        private static double TravelSecondsAlong(
+            Vector3 start,
+            IReadOnlyList<Vector3> transitPoints,
+            Vector3 end,
+            float speedKnots,
+            float climbRateFeetPerMinute,
+            float descentRateFeetPerMinute)
+        {
+            var seconds = 0d;
+            var position = start;
+            foreach (var point in transitPoints)
+            {
+                seconds += AirspaceGeometry.TravelSeconds(
+                    position,
+                    point,
+                    speedKnots,
+                    climbRateFeetPerMinute,
+                    descentRateFeetPerMinute);
+                position = point;
+            }
+
+            return seconds + AirspaceGeometry.TravelSeconds(
+                position,
+                end,
+                speedKnots,
+                climbRateFeetPerMinute,
+                descentRateFeetPerMinute);
+        }
+
         private static float GetMissionAltitudeFeet(AirMissionRequestType missionType)
         {
             return missionType switch
@@ -629,6 +729,7 @@ namespace Engine.Service
             public readonly AircraftTypeDefinition AircraftType;
             public readonly Vector3 BasePositionFeet;
             public DateTime PlannedTakeoff;
+            public AirRouteGeometry RouteGeometry;
 
             public RoutePlan(
                 AirFlight flight,
@@ -658,6 +759,107 @@ namespace Engine.Service
                 AircraftType = aircraftType;
                 Aircraft = aircraft;
             }
+        }
+    }
+
+    public interface IAirRouteGeometryPlanner
+    {
+        AirRouteGeometry Plan(AirRouteGeometryPlanningContext context);
+    }
+
+    public sealed class AirRouteGeometryPlanningContext
+    {
+        public Vector3 IngressOrigin { get; }
+        public Vector3 MissionEntry { get; }
+        public Vector3 MissionExit { get; }
+        public Vector3 RecoveryDestination { get; }
+        public float TileDistanceFeet { get; }
+        public Guid RouteKey { get; }
+
+        public AirRouteGeometryPlanningContext(
+            Vector3 ingressOrigin,
+            Vector3 missionEntry,
+            Vector3 missionExit,
+            Vector3 recoveryDestination,
+            float tileDistanceFeet,
+            Guid routeKey)
+        {
+            IngressOrigin = ingressOrigin;
+            MissionEntry = missionEntry;
+            MissionExit = missionExit;
+            RecoveryDestination = recoveryDestination;
+            TileDistanceFeet = tileDistanceFeet;
+            RouteKey = routeKey;
+        }
+    }
+
+    public sealed class AirRouteGeometry
+    {
+        public IReadOnlyList<Vector3> IngressWaypoints { get; }
+        public IReadOnlyList<Vector3> EgressWaypoints { get; }
+
+        public AirRouteGeometry(
+            IReadOnlyList<Vector3> ingressWaypoints,
+            IReadOnlyList<Vector3> egressWaypoints)
+        {
+            IngressWaypoints = ingressWaypoints ?? Array.Empty<Vector3>();
+            EgressWaypoints = egressWaypoints ?? Array.Empty<Vector3>();
+        }
+    }
+
+    public sealed class SeparatedIngressEgressRouteGeometryPlanner : IAirRouteGeometryPlanner
+    {
+        private const float MaximumOffsetLegFraction = 0.25f;
+
+        public AirRouteGeometry Plan(AirRouteGeometryPlanningContext context)
+        {
+            if (context == null)
+                throw new ArgumentNullException(nameof(context));
+
+            var side = SelectSide(context.RouteKey);
+            var ingress = CreateOffsetMidpoint(
+                context.IngressOrigin,
+                context.MissionEntry,
+                context.TileDistanceFeet,
+                side);
+            var egress = CreateOffsetMidpoint(
+                context.MissionExit,
+                context.RecoveryDestination,
+                context.TileDistanceFeet,
+                side);
+            return new AirRouteGeometry(
+                ingress.HasValue ? new[] { ingress.Value } : Array.Empty<Vector3>(),
+                egress.HasValue ? new[] { egress.Value } : Array.Empty<Vector3>());
+        }
+
+        private static Vector3? CreateOffsetMidpoint(
+            Vector3 start,
+            Vector3 end,
+            float desiredOffsetFeet,
+            float side)
+        {
+            var horizontal = new Vector2(end.x - start.x, end.z - start.z);
+            var distance = horizontal.magnitude;
+            if (distance <= 0.01f)
+                return null;
+
+            var direction = horizontal / distance;
+            var perpendicular = new Vector2(-direction.y, direction.x) * side;
+            var offset = Math.Min(
+                Math.Max(0f, desiredOffsetFeet),
+                distance * MaximumOffsetLegFraction);
+            var midpoint = (start + end) * 0.5f;
+            midpoint.x += perpendicular.x * offset;
+            midpoint.z += perpendicular.y * offset;
+            return midpoint;
+        }
+
+        private static float SelectSide(Guid routeKey)
+        {
+            var parity = 0;
+            foreach (var value in routeKey.ToByteArray())
+                parity ^= value;
+            return (parity & 1) == 0 ? 1f : -1f;
         }
     }
 
