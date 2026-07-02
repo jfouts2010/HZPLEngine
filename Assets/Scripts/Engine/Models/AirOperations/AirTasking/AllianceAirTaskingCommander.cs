@@ -231,11 +231,9 @@ namespace Models.Gameplay.Campaign
                 .All(flight => flight.IsTerminal))
                 return false;
 
-            var active = (package.Flights ?? new List<AirFlight>())
+            var aborted = (package.Flights ?? new List<AirFlight>())
                 .Where(flight => flight != null)
-                .Any(flight =>
-                    flight.LifecycleState == AirTaskingLifecycleState.Active
-                    || flight.LifecycleState == AirTaskingLifecycleState.Aborted);
+                .Any(flight => flight.LifecycleState == AirTaskingLifecycleState.Aborted);
             foreach (var supportFlight in packages
                          .Where(candidate => candidate != null)
                          .SelectMany(candidate => candidate.Flights ?? new List<AirFlight>())
@@ -251,16 +249,15 @@ namespace Models.Gameplay.Campaign
                 if (flight == null || flight.IsTerminal)
                     continue;
 
-                var wasActive = flight.LifecycleState == AirTaskingLifecycleState.Active;
-                flight.LifecycleState = active
-                    ? AirTaskingLifecycleState.Aborted
-                    : AirTaskingLifecycleState.Cancelled;
-                if (!wasActive)
+                var cancellation = flight.Cancel(currentTime, reason);
+                if (cancellation == FlightCancellationResult.Aborted)
+                    aborted = true;
+                if (cancellation == FlightCancellationResult.Cancelled)
                     aircraftReservations.ReleaseFlight(flight);
             }
 
             var request = GetRequest(package.MissionRequestId);
-            if (request != null && !active)
+            if (request != null && !aborted)
                 request.State = AirMissionRequestState.Actionable;
 
             AddDiagnostic(new AirTaskingDiagnostic
@@ -268,7 +265,7 @@ namespace Models.Gameplay.Campaign
                 RecordedAt = currentTime,
                 MissionRequestId = package.MissionRequestId,
                 PackageId = package.PackageId,
-                Code = active ? "package-aborted" : "package-cancelled",
+                Code = aborted ? "package-aborted" : "package-cancelled",
                 Message = reason ?? string.Empty
             });
             return true;

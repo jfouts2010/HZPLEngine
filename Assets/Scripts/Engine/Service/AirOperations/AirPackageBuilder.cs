@@ -566,13 +566,10 @@ namespace Engine.Service
                     plan.RouteGeometry.EgressWaypoints.Count - 1];
             AppendRecoveryRoute(route, plan, returnPosition, returnTime);
 
-            flight.Route = route;
-            flight.CurrentWaypointIndex = 0;
-            flight.ExecutionPhase = FlightExecutionPhase.AwaitingTakeoff;
-            flight.HasPosition = false;
-            flight.LaunchAirportBuildingId = plan.Squadron.AirportBuildingId;
-            flight.RecoveryAirportBuildingId = plan.Squadron.AirportBuildingId;
-            flight.PlannedTakeoffTime = plan.PlannedTakeoff;
+            flight.MaterializeRoute(
+                route,
+                plan.Squadron.AirportBuildingId,
+                plan.PlannedTakeoff);
             flight.EffectStart = effectStart;
             flight.EffectEnd = effectEnd;
             flight.MissionArea = new AirMissionArea(

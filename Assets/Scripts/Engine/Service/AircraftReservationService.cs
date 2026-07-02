@@ -86,7 +86,7 @@ namespace Engine.Service
             foreach (var flight in package?.Flights ?? new List<AirFlight>())
             {
                 if (flight != null
-                    && flight.LifecycleState != AirTaskingLifecycleState.Active)
+                    && !flight.IsAirborne)
                     ReleaseFlight(flight);
             }
         }

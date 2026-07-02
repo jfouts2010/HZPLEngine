@@ -34,7 +34,7 @@ namespace Engine.Models
 
         public void GameTurn(DateTime previousTime, DateTime currentTime)
         {
-            ResolveAirbaseOverruns();
+            ResolveAirbaseOverruns(currentTime);
             var states = new Dictionary<Guid, FlightTickState>();
             foreach (var package in airTaskingSystem.GetPackages()
                          .OrderBy(candidate => candidate.PackageId))
@@ -70,7 +70,7 @@ namespace Engine.Models
 
                     foreach (var flight in required)
                     {
-                        flight.IsWaitingAtRendezvous = false;
+                        flight.ReleaseRendezvous();
                         AdvanceFlight(package, flight, states[flight.FlightId]);
                     }
 
@@ -91,7 +91,7 @@ namespace Engine.Models
                 return null;
             if (!TryGetFlightContext(flight, out var squadron, out var aircraftType))
             {
-                FailFlight(flight, currentTime, "Flight context became unavailable.");
+                flight.Fail(currentTime, "Flight context became unavailable.");
                 return null;
             }
 
@@ -113,25 +113,22 @@ namespace Engine.Models
                 var takeoff = flight.Route?.FirstOrDefault();
                 if (takeoff == null || takeoff.Action != AirWaypointAction.Takeoff)
                 {
-                    FailFlight(flight, takeoffTime, "Flight route has no takeoff waypoint.");
+                    flight.Fail(takeoffTime, "Flight route has no takeoff waypoint.");
                     return null;
                 }
 
-                flight.PositionFeet = takeoff.PositionFeet;
-                flight.HasPosition = true;
-                flight.CurrentWaypointIndex = 1;
-                flight.LifecycleState = AirTaskingLifecycleState.Active;
-                flight.ExecutionPhase = FlightExecutionPhase.Outbound;
-                flight.HeadingDegrees = GetInitialHeading(flight);
-                RecordEvent(flight, takeoff, takeoffTime, "Flight took off.");
+                if (!flight.TryTakeOff(takeoffTime))
+                {
+                    flight.Fail(takeoffTime, "Flight could not transition to takeoff.");
+                    return null;
+                }
                 cursor = takeoffTime;
             }
 
             if (!flight.IsAirborne)
                 return null;
 
-            if (flight.LifecycleState == AirTaskingLifecycleState.Aborted)
-                DirectToReturn(flight, cursor);
+            flight.ContinueAbortRecovery(cursor);
             return new FlightTickState(
                 cursor,
                 Math.Max(0d, (currentTime - cursor).TotalSeconds));
@@ -144,7 +141,7 @@ namespace Engine.Models
         {
             if (!TryGetFlightContext(flight, out _, out var aircraftType))
             {
-                FailFlight(flight, state.Cursor, "Aircraft performance became unavailable.");
+                flight.Fail(state.Cursor, "Aircraft performance became unavailable.");
                 return;
             }
 
@@ -152,26 +149,20 @@ namespace Engine.Models
                    && flight.IsAirborne
                    && !flight.IsWaitingAtRendezvous)
             {
-                if (flight.Route == null
-                    || flight.CurrentWaypointIndex < 0
-                    || flight.CurrentWaypointIndex >= flight.Route.Count)
-                {
-                    FailFlight(flight, state.Cursor, "Flight exhausted its route before landing.");
-                    return;
-                }
-
-                var waypoint = flight.Route[flight.CurrentWaypointIndex];
+                var waypoint = flight.CurrentWaypoint;
                 if (waypoint == null)
                 {
-                    FailFlight(flight, state.Cursor, "Flight encountered an invalid waypoint.");
+                    flight.Fail(
+                        state.Cursor,
+                        "Flight exhausted its route or encountered an invalid waypoint before landing.");
                     return;
                 }
 
                 var speedKnots = GetGuidanceSpeedKnots(package, flight, aircraftType);
                 if (HasReached(flight.PositionFeet, waypoint.PositionFeet))
                 {
-                    flight.PositionFeet = waypoint.PositionFeet;
-                    HandleWaypoint(package, flight, waypoint, state.Cursor);
+                    flight.UpdateKinematics(waypoint.PositionFeet, flight.HeadingDegrees);
+                    HandleWaypoint(package, flight, state.Cursor);
                     continue;
                 }
 
@@ -184,9 +175,9 @@ namespace Engine.Models
                     step);
                 if (secondsToReach >= 0d)
                 {
-                    flight.PositionFeet = waypoint.PositionFeet;
+                    flight.UpdateKinematics(waypoint.PositionFeet, flight.HeadingDegrees);
                     state.Advance(secondsToReach);
-                    HandleWaypoint(package, flight, waypoint, state.Cursor);
+                    HandleWaypoint(package, flight, state.Cursor);
                     continue;
                 }
 
@@ -198,83 +189,20 @@ namespace Engine.Models
         private void HandleWaypoint(
             AirPackage package,
             AirFlight flight,
-            AirWaypoint waypoint,
             DateTime occurredAt)
         {
-            switch (waypoint.Action)
+            switch (flight.CrossCurrentWaypoint(occurredAt))
             {
-                case AirWaypointAction.Rendezvous:
-                    RecordEvent(flight, waypoint, occurredAt, "Flight reached package rendezvous.");
-                    flight.CurrentWaypointIndex++;
-                    flight.IsWaitingAtRendezvous = true;
-                    return;
-
-                case AirWaypointAction.StationEntry:
-                    if (flight.ExecutionPhase != FlightExecutionPhase.Executing)
-                    {
-                        flight.ExecutionPhase = FlightExecutionPhase.Executing;
-                        RecordEvent(flight, waypoint, occurredAt, "Flight entered station.");
-                    }
-                    flight.CurrentWaypointIndex++;
-                    return;
-
-                case AirWaypointAction.StationEndpoint:
-                    if (waypoint.HasRepeat && occurredAt < waypoint.RepeatUntil)
-                    {
-                        var repeatIndex = flight.Route.FindIndex(
-                            candidate => candidate != null
-                                         && candidate.WaypointId == waypoint.RepeatFromWaypointId);
-                        if (repeatIndex < 0)
-                        {
-                            FailFlight(flight, occurredAt, "Station loop target is missing.");
-                            return;
-                        }
-
-                        flight.CurrentWaypointIndex = repeatIndex;
-                        return;
-                    }
-
-                    flight.MissionAchieved = true;
-                    RecordEvent(flight, waypoint, occurredAt, "Flight exited station.");
-                    flight.CurrentWaypointIndex++;
-                    return;
-
-                case AirWaypointAction.MissionAction:
-                    flight.ExecutionPhase = FlightExecutionPhase.Executing;
-                    flight.MissionAchieved = true;
-                    RecordEvent(flight, waypoint, occurredAt, "Flight completed its mission action.");
-                    flight.CurrentWaypointIndex++;
-                    return;
-
-                case AirWaypointAction.ReturnToBase:
-                    flight.ExecutionPhase = FlightExecutionPhase.Returning;
-                    RecordEvent(flight, waypoint, occurredAt, "Flight began recovery.");
-                    flight.CurrentWaypointIndex++;
+                case FlightWaypointTransition.RecoveryStarted:
                     if (!EnsureRecoveryRoute(package, flight, occurredAt))
                         LoseAirborneFlight(flight, occurredAt, "No friendly recovery airport remains.");
                     return;
 
-                case AirWaypointAction.Approach:
-                    flight.ExecutionPhase = FlightExecutionPhase.Landing;
-                    RecordEvent(flight, waypoint, occurredAt, "Flight reached approach.");
-                    flight.CurrentWaypointIndex++;
-                    return;
-
-                case AirWaypointAction.Land:
-                    RecordEvent(flight, waypoint, occurredAt, "Flight landed.");
+                case FlightWaypointTransition.LandingRequired:
                     CompleteLanding(flight, occurredAt);
                     return;
 
-                case AirWaypointAction.Transit:
-                    flight.CurrentWaypointIndex++;
-                    return;
-
-                case AirWaypointAction.Takeoff:
-                    flight.CurrentWaypointIndex++;
-                    return;
-
                 default:
-                    flight.CurrentWaypointIndex++;
                     return;
             }
         }
@@ -317,28 +245,26 @@ namespace Engine.Models
 
             if (!gameManager.buildingSystem.TryGetBuilding(recoveryAirportId, out var recovery))
                 return false;
-            flight.RecoveryAirportBuildingId = recoveryAirportId;
-            ReplaceRecoveryTail(
-                flight,
+            var recoveryTail = BuildRecoveryTail(
+                flight.PositionFeet,
                 aircraftType,
                 AirspaceGeometry.TileCenterFeet(
                     recovery.TileId,
                     gameManager.SimulationSettings?.TileDistanceKM
                     ?? SimulationSettings.DefaultTileDistanceKM),
                 currentTime);
+            flight.ReplaceRecoveryRoute(recoveryAirportId, recoveryTail);
             return true;
         }
 
-        private static void ReplaceRecoveryTail(
-            AirFlight flight,
+        private static IReadOnlyList<AirWaypoint> BuildRecoveryTail(
+            Vector3 currentPosition,
             AircraftTypeDefinition aircraftType,
             Vector3 basePosition,
             DateTime currentTime)
         {
-            flight.Route.RemoveRange(
-                flight.CurrentWaypointIndex,
-                flight.Route.Count - flight.CurrentWaypointIndex);
-            var from = flight.PositionFeet;
+            var recoveryTail = new List<AirWaypoint>();
+            var from = currentPosition;
             var horizontal = new Vector3(from.x - basePosition.x, 0f, from.z - basePosition.z);
             var distance = horizontal.magnitude;
             var descentMinutes = from.y / Math.Max(1f, aircraftType.DescentRateFeetPerMinute);
@@ -363,25 +289,26 @@ namespace Engine.Models
                     aircraftType.CruiseSpeedKnots,
                     aircraftType.ClimbRateFeetPerMinute,
                     aircraftType.DescentRateFeetPerMinute));
-            flight.Route.Add(new AirWaypoint
+            recoveryTail.Add(new AirWaypoint
             {
                 PositionFeet = approach,
                 Action = AirWaypointAction.Approach,
                 PlannedArrivalTime = approachTime
             });
-            flight.Route.Add(new AirWaypoint
+            recoveryTail.Add(new AirWaypoint
             {
                 PositionFeet = basePosition,
                 Action = AirWaypointAction.Land,
                 PlannedArrivalTime = landingTime
             });
+            return recoveryTail;
         }
 
         private void CompleteLanding(AirFlight flight, DateTime occurredAt)
         {
             if (!TryGetFlightContext(flight, out var squadron, out _))
             {
-                FailFlight(flight, occurredAt, "Squadron disappeared during recovery.");
+                flight.Fail(occurredAt, "Squadron disappeared during recovery.");
                 return;
             }
 
@@ -397,14 +324,7 @@ namespace Engine.Models
 
             squadron.AirportBuildingId = flight.RecoveryAirportBuildingId;
             gameManager.squadronSystem.RebuildIndex();
-            flight.HasPosition = false;
-            flight.ExecutionPhase = FlightExecutionPhase.Ended;
-            if (flight.LifecycleState != AirTaskingLifecycleState.Aborted)
-            {
-                flight.LifecycleState = flight.MissionAchieved
-                    ? AirTaskingLifecycleState.Completed
-                    : AirTaskingLifecycleState.Failed;
-            }
+            flight.Land(occurredAt);
         }
 
         private void ResolvePackageOutcomes(DateTime currentTime)
@@ -428,7 +348,7 @@ namespace Engine.Models
             }
         }
 
-        private void ResolveAirbaseOverruns()
+        private void ResolveAirbaseOverruns(DateTime currentTime)
         {
             var flights = airTaskingSystem.GetPackages()
                 .SelectMany(package => package.Flights ?? new List<AirFlight>())
@@ -450,8 +370,9 @@ namespace Engine.Models
                              flight.SquadronId == squadron.SquadronId
                              && flight.ExecutionPhase == FlightExecutionPhase.AwaitingTakeoff))
                 {
-                    flight.LifecycleState = AirTaskingLifecycleState.Cancelled;
-                    flight.ExecutionPhase = FlightExecutionPhase.Ended;
+                    flight.Cancel(
+                        currentTime,
+                        "Launch airport was overrun before takeoff.");
                 }
 
                 foreach (var aircraft in squadron.Aircraft ?? new List<CampaignAircraft>())
@@ -559,32 +480,34 @@ namespace Engine.Models
             double seconds)
         {
             var desiredHeading = HeadingTo(flight.PositionFeet, target);
-            flight.HeadingDegrees = Mathf.MoveTowardsAngle(
+            var heading = Mathf.MoveTowardsAngle(
                 flight.HeadingDegrees,
                 desiredHeading,
                 aircraftType.TurnRateDegreesPerSecond * (float)seconds);
-            var radians = flight.HeadingDegrees * Mathf.Deg2Rad;
+            var radians = heading * Mathf.Deg2Rad;
             var feetPerSecond = speedKnots * AirspaceGeometry.FeetPerNauticalMile / 3600f;
             var horizontalStep = feetPerSecond * (float)seconds;
+            var position = flight.PositionFeet;
             var horizontalRemaining = Vector2.Distance(
-                new Vector2(flight.PositionFeet.x, flight.PositionFeet.z),
+                new Vector2(position.x, position.z),
                 new Vector2(target.x, target.z));
             horizontalStep = Math.Min(horizontalStep, horizontalRemaining);
-            flight.PositionFeet += new Vector3(
+            position += new Vector3(
                 Mathf.Sin(radians) * horizontalStep,
                 0f,
                 Mathf.Cos(radians) * horizontalStep);
 
-            var verticalRate = (target.y >= flight.PositionFeet.y
+            var verticalRate = (target.y >= position.y
                                    ? aircraftType.ClimbRateFeetPerMinute
                                    : aircraftType.DescentRateFeetPerMinute) / 60f;
-            flight.PositionFeet = new Vector3(
-                flight.PositionFeet.x,
+            position = new Vector3(
+                position.x,
                 Mathf.MoveTowards(
-                    flight.PositionFeet.y,
+                    position.y,
                     target.y,
                     Math.Max(1f, verticalRate) * (float)seconds),
-                flight.PositionFeet.z);
+                position.z);
+            flight.UpdateKinematics(position, heading);
         }
 
         private static bool HasReached(Vector3 current, Vector3 target)
@@ -592,54 +515,9 @@ namespace Engine.Models
             return Vector3.Distance(current, target) <= WaypointCaptureFeet;
         }
 
-        private static float GetInitialHeading(AirFlight flight)
-        {
-            if (flight.Route == null
-                || flight.CurrentWaypointIndex >= flight.Route.Count)
-                return 0f;
-            return HeadingTo(
-                flight.PositionFeet,
-                flight.Route[flight.CurrentWaypointIndex].PositionFeet);
-        }
-
         private static float HeadingTo(Vector3 from, Vector3 to)
         {
             return Mathf.Atan2(to.x - from.x, to.z - from.z) * Mathf.Rad2Deg;
-        }
-
-        private static void RecordEvent(
-            AirFlight flight,
-            AirWaypoint waypoint,
-            DateTime occurredAt,
-            string detail)
-        {
-            flight.ExecutionEvents ??= new List<FlightExecutionEvent>();
-            flight.ExecutionEvents.Add(new FlightExecutionEvent
-            {
-                WaypointId = waypoint.WaypointId,
-                Action = waypoint.Action,
-                OccurredAt = occurredAt,
-                Detail = detail ?? string.Empty
-            });
-        }
-
-        private static void DirectToReturn(AirFlight flight, DateTime currentTime)
-        {
-            if (!flight.IsAirborne)
-                return;
-            var returnIndex = flight.Route?.FindIndex(
-                flight.CurrentWaypointIndex,
-                waypoint => waypoint != null
-                            && waypoint.Action == AirWaypointAction.ReturnToBase) ?? -1;
-            if (returnIndex < 0)
-            {
-                FailFlight(flight, currentTime, "Aborted flight has no return waypoint.");
-                return;
-            }
-
-            flight.CurrentWaypointIndex = returnIndex;
-            flight.ExecutionPhase = FlightExecutionPhase.Returning;
-            flight.IsWaitingAtRendezvous = false;
         }
 
         private static void LoseGroundedFlight(
@@ -655,7 +533,7 @@ namespace Engine.Models
                 aircraft.AssignedFlightId = Guid.Empty;
                 aircraft.ClearLoadout();
             }
-            FailFlight(flight, occurredAt, "Launch airport was overrun before takeoff.");
+            flight.Fail(occurredAt, "Launch airport was overrun before takeoff.");
         }
 
         private void LoseAirborneFlight(
@@ -674,25 +552,7 @@ namespace Engine.Models
                     aircraft.ClearLoadout();
                 }
             }
-            FailFlight(flight, occurredAt, reason);
-        }
-
-        private static void FailFlight(
-            AirFlight flight,
-            DateTime occurredAt,
-            string reason)
-        {
-            flight.LifecycleState = AirTaskingLifecycleState.Failed;
-            flight.ExecutionPhase = FlightExecutionPhase.Ended;
-            flight.HasPosition = false;
-            flight.IsWaitingAtRendezvous = false;
-            flight.ExecutionEvents ??= new List<FlightExecutionEvent>();
-            flight.ExecutionEvents.Add(new FlightExecutionEvent
-            {
-                OccurredAt = occurredAt,
-                Action = AirWaypointAction.ReturnToBase,
-                Detail = reason ?? string.Empty
-            });
+            flight.Fail(occurredAt, reason);
         }
 
         private sealed class FlightTickState

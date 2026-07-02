@@ -27,20 +27,38 @@ namespace Models.Gameplay.Campaign
         {
             get
             {
-                var flights = Flights ?? new List<AirFlight>();
+                var flights = (Flights ?? new List<AirFlight>())
+                    .Where(flight => flight != null)
+                    .ToList();
                 if (flights.Count == 0)
                     return AirTaskingLifecycleState.Cancelled;
                 if (flights.Any(flight => flight.LifecycleState == AirTaskingLifecycleState.Aborted))
                     return AirTaskingLifecycleState.Aborted;
                 if (flights.Any(flight => flight.LifecycleState == AirTaskingLifecycleState.Active))
                     return AirTaskingLifecycleState.Active;
-                if (flights.All(flight => flight.LifecycleState == AirTaskingLifecycleState.Completed))
+                if (flights.Any(flight =>
+                        flight.LifecycleState == AirTaskingLifecycleState.Committed))
+                    return AirTaskingLifecycleState.Committed;
+
+                var requiredFlights = flights
+                    .Where(flight => flight.IsRequired)
+                    .ToList();
+                var outcomeFlights = requiredFlights.Count > 0
+                    ? requiredFlights
+                    : flights;
+                if (outcomeFlights.All(flight =>
+                        flight.LifecycleState == AirTaskingLifecycleState.Completed))
                     return AirTaskingLifecycleState.Completed;
-                if (flights.Any(flight => flight.LifecycleState == AirTaskingLifecycleState.Failed))
+                if (outcomeFlights.Any(flight =>
+                        flight.LifecycleState == AirTaskingLifecycleState.Failed))
                     return AirTaskingLifecycleState.Failed;
-                if (flights.All(flight => flight.LifecycleState == AirTaskingLifecycleState.Cancelled))
+                if (outcomeFlights.All(flight =>
+                        flight.LifecycleState == AirTaskingLifecycleState.Cancelled))
                     return AirTaskingLifecycleState.Cancelled;
-                return AirTaskingLifecycleState.Committed;
+
+                // A terminal mixture, such as completed and cancelled required
+                // flights, did not achieve the package as committed.
+                return AirTaskingLifecycleState.Failed;
             }
         }
 
