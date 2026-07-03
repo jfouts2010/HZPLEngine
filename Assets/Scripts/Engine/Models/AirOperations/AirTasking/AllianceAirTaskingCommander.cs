@@ -392,7 +392,9 @@ namespace Models.Gameplay.Campaign
                 return "The package proposal does not target a current actionable request.";
             if (package.EffectStart < request.EffectStart
                 || package.EffectEnd > request.EffectEnd
-                || package.EffectEnd <= package.EffectStart)
+                || package.EffectEnd < package.EffectStart
+                || request.FulfillmentPattern == AirMissionRequestFulfillmentPattern.Sustained
+                && package.EffectEnd == package.EffectStart)
                 return "The package proposal has an invalid effect window.";
 
             var flights = (package.Flights ?? new List<AirFlight>())
@@ -400,23 +402,25 @@ namespace Models.Gameplay.Campaign
                 .ToList();
             if (flights.Count == 0 || flights.Count != package.Flights.Count)
                 return "The package proposal must contain valid flights.";
+            foreach (var flight in flights)
+            {
+                if (!flight.TryValidateRoute(out _))
+                    return "A proposed flight has an invalid materialized route.";
+                if (flight.PlannedTakeoffTime < package.CreatedAt + AirPackage.PreparationDelay
+                    || flight.EffectStart < request.EffectStart
+                    || flight.EffectEnd > request.EffectEnd
+                    || flight.EffectEnd < flight.EffectStart
+                    || flight.MissionArea == null
+                    || !request.MissionArea.Contains(flight.MissionArea.CenterTileId))
+                {
+                    return "A proposed flight route does not satisfy its request.";
+                }
+            }
             if (flights.Any(flight =>
                     flight.FlightId == Guid.Empty
                     || flight.OwningPackageId != package.PackageId
                     || flight.SquadronId == Guid.Empty
                     || flight.MissionType != request.RequestType
-                    || flight.EffectStart != package.EffectStart
-                    || flight.EffectEnd != package.EffectEnd
-                    || flight.Route == null
-                    || flight.Route.Count < 2
-                    || flight.Route[0] == null
-                    || flight.Route[0].Action != AirWaypointAction.Takeoff
-                    || flight.Route[flight.Route.Count - 1] == null
-                    || flight.Route[flight.Route.Count - 1].Action != AirWaypointAction.Land
-                    || flight.Route.Any(waypoint =>
-                        waypoint == null || waypoint.WaypointId == Guid.Empty)
-                    || flight.Route.Select(waypoint => waypoint.WaypointId).Distinct().Count()
-                       != flight.Route.Count
                     || flight.AircraftIds == null
                     || flight.AircraftIds.Count == 0))
                 return "A proposed flight is incomplete.";
@@ -458,7 +462,7 @@ namespace Models.Gameplay.Campaign
                                               && !flight.IsTerminal);
                 if (supportFlight == null
                     || supportFlight.EffectStart > package.EffectStart
-                    || supportFlight.EffectEnd < package.EffectEnd)
+                    || supportFlight.EffectEnd < package.SupportWindowEnd)
                 {
                     reason = "A required support flight is no longer available.";
                     return false;
@@ -467,7 +471,7 @@ namespace Models.Gameplay.Campaign
                 supportFlight.SupportReservations ??= new List<AirSupportReservation>();
                 var alreadyReserved = supportFlight.SupportReservations
                     .Where(reservation => reservation != null
-                                          && reservation.StartTime < package.EffectEnd
+                                          && reservation.StartTime < package.SupportWindowEnd
                                           && reservation.EndTime > package.EffectStart)
                     .Sum(reservation => Math.Max(0, reservation.SlotCount));
                 var slots = Math.Min(
@@ -484,7 +488,7 @@ namespace Models.Gameplay.Campaign
                         ConsumingPackageId = package.PackageId,
                         SlotCount = slots,
                         StartTime = package.EffectStart,
-                        EndTime = package.EffectEnd
+                        EndTime = package.SupportWindowEnd
                     }));
                 remainingSlots -= slots;
                 if (remainingSlots == 0)

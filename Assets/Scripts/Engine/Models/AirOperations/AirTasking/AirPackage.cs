@@ -14,14 +14,38 @@ namespace Models.Gameplay.Campaign
         public Guid MissionRequestId;
         public Alliance Alliance;
         public DateTime CreatedAt;
-        public DateTime EarliestTakeoffTime;
-        public DateTime EffectStart;
-        public DateTime EffectEnd;
         public bool HasRendezvous;
         public Vector3Int RendezvousTileId;
         public List<AirFlight> Flights = new List<AirFlight>();
         public List<Guid> SupportingFlightIds = new List<Guid>();
         public string Rationale = string.Empty;
+
+        private IReadOnlyList<AirFlight> RequiredFlights
+        {
+            get
+            {
+                var flights = (Flights ?? new List<AirFlight>())
+                    .Where(flight => flight != null)
+                    .ToList();
+                var required = flights.Where(flight => flight.IsRequired).ToList();
+                return required.Count > 0 ? required : flights;
+            }
+        }
+
+        public DateTime EarliestTakeoffTime =>
+            RequiredFlights.Count == 0
+                ? default
+                : RequiredFlights.Min(flight => flight.PlannedTakeoffTime);
+        public DateTime EffectStart =>
+            RequiredFlights.Count == 0
+                ? default
+                : RequiredFlights.Max(flight => flight.EffectStart);
+        public DateTime EffectEnd =>
+            RequiredFlights.Count == 0
+                ? default
+                : RequiredFlights.Min(flight => flight.EffectEnd);
+        internal DateTime SupportWindowEnd =>
+            EffectEnd > EffectStart ? EffectEnd : EffectStart.AddTicks(1);
 
         public AirTaskingLifecycleState LifecycleState
         {

@@ -772,7 +772,9 @@ namespace Engine.Monobehaviours.Managers
                         GetMissionLabel(request?.RequestType ?? package.Flights?.FirstOrDefault()?.MissionType ?? default)),
                     new AirCardField("Composition", $"{package.Flights?.Count ?? 0} flights / {aircraftCount} aircraft"),
                     new AirCardField("Earliest launch", package.EarliestTakeoffTime.ToString("MM-dd HH:mm")),
-                    new AirCardField("Effect window", $"{package.EffectStart:MM-dd HH:mm} – {package.EffectEnd:MM-dd HH:mm}"),
+                    request?.FulfillmentPattern == AirMissionRequestFulfillmentPattern.Discrete
+                        ? new AirCardField("Effect time", package.EffectStart.ToString("MM-dd HH:mm"))
+                        : new AirCardField("Effect window", $"{package.EffectStart:MM-dd HH:mm} – {package.EffectEnd:MM-dd HH:mm}"),
                     new AirCardField("Source request", ShortId(package.MissionRequestId))
                 };
                 if (package.HasRendezvous)
@@ -1015,7 +1017,9 @@ namespace Engine.Monobehaviours.Managers
                     : "Altitude: Ground",
                 $"Heading: {flight.HeadingDegrees:0}°",
                 $"Planned takeoff: {flight.PlannedTakeoffTime:yyyy-MM-dd HH:mm}",
-                $"Effect window: {flight.EffectStart:yyyy-MM-dd HH:mm} – {flight.EffectEnd:yyyy-MM-dd HH:mm}",
+                flight.HasSustainedEffect
+                    ? $"Effect window: {flight.EffectStart:yyyy-MM-dd HH:mm} – {flight.EffectEnd:yyyy-MM-dd HH:mm}"
+                    : $"Effect time: {flight.EffectStart:yyyy-MM-dd HH:mm}",
                 $"Mission area: Hex {FormatTile(flight.MissionArea?.CenterTileId ?? default)}");
 
             AddAircraftDetailSection(flight, squadron);

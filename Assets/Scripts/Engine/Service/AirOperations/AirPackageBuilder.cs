@@ -125,18 +125,22 @@ namespace Engine.Service
             var selectedAircraft = candidates.AvailableAircraft.Take(aircraftCount).ToList();
             var effectStart = gapStart > planningStart ? gapStart : planningStart;
             var effectEnd = request.EffectEnd;
-            package = CreatePackage(request, currentTime, effectStart, effectEnd);
+            package = CreatePackage(request, currentTime);
             var flight = CreateFlight(
                 package,
                 request,
                 candidates.Squadron,
-                selectedAircraft,
-                effectStart,
-                effectEnd);
+                selectedAircraft);
             flight.ProvidedSupportSlots =
                 selectedAircraft.Count * candidates.AircraftType.SupportSlotCapacity;
             package.Flights.Add(flight);
-            if (!TryMaterializeRoutes(package, request, out reason))
+            if (!TryMaterializeRoutes(
+                    package,
+                    request,
+                    planningStart,
+                    effectStart,
+                    effectEnd,
+                    out reason))
             {
                 package = null;
                 return AirPackageBuildOutcome.Deferred;
@@ -211,7 +215,7 @@ namespace Engine.Service
             }
 
             var effectEnd = request.EffectEnd;
-            package = CreatePackage(request, currentTime, effectStart, effectEnd);
+            package = CreatePackage(request, currentTime);
 
             foreach (var selected in selectedCandidates)
             {
@@ -219,13 +223,17 @@ namespace Engine.Service
                     package,
                     request,
                     selected.Squadron,
-                    selected.Aircraft,
-                    effectStart,
-                    effectEnd);
+                    selected.Aircraft);
                 package.Flights.Add(flight);
             }
 
-            if (!TryMaterializeRoutes(package, request, out reason))
+            if (!TryMaterializeRoutes(
+                    package,
+                    request,
+                    planningStart,
+                    effectStart,
+                    effectEnd,
+                    out reason))
             {
                 package = null;
                 return AirPackageBuildOutcome.Deferred;
@@ -282,18 +290,13 @@ namespace Engine.Service
 
         private AirPackage CreatePackage(
             AirMissionRequest request,
-            DateTime currentTime,
-            DateTime effectStart,
-            DateTime effectEnd)
+            DateTime currentTime)
         {
             return new AirPackage
             {
                 MissionRequestId = request.MissionRequestId,
                 Alliance = request.Alliance,
                 CreatedAt = currentTime,
-                EarliestTakeoffTime = currentTime + AirPackage.PreparationDelay,
-                EffectStart = effectStart,
-                EffectEnd = effectEnd,
                 HasRendezvous = false,
                 Rationale = request.Rationale
             };
@@ -303,9 +306,7 @@ namespace Engine.Service
             AirPackage package,
             AirMissionRequest request,
             Squadron squadron,
-            IReadOnlyCollection<CampaignAircraft> aircraft,
-            DateTime effectStart,
-            DateTime effectEnd)
+            IReadOnlyCollection<CampaignAircraft> aircraft)
         {
             return new AirFlight
             {
@@ -313,13 +314,7 @@ namespace Engine.Service
                 SquadronId = squadron.SquadronId,
                 MissionType = request.RequestType,
                 IsRequired = true,
-                AircraftIds = aircraft.Select(candidate => candidate.AircraftId).ToList(),
-                PlannedTakeoffTime = package.EarliestTakeoffTime,
-                EffectStart = effectStart,
-                EffectEnd = effectEnd,
-                MissionArea = new AirMissionArea(
-                    request.MissionArea.CenterTileId,
-                    request.MissionArea.RadiusTiles)
+                AircraftIds = aircraft.Select(candidate => candidate.AircraftId).ToList()
             };
         }
 
@@ -352,6 +347,9 @@ namespace Engine.Service
         private bool TryMaterializeRoutes(
             AirPackage package,
             AirMissionRequest request,
+            DateTime earliestTakeoff,
+            DateTime proposedEffectStart,
+            DateTime proposedEffectEnd,
             out string reason)
         {
             reason = string.Empty;
@@ -418,8 +416,7 @@ namespace Engine.Service
                     package.PackageId));
             }
 
-            var earliestTakeoff = package.EarliestTakeoffTime;
-            var plannedEffectStart = package.EffectStart;
+            var plannedEffectStart = proposedEffectStart;
             var rendezvousTime = plannedEffectStart;
             if (hasRendezvous)
             {
@@ -465,13 +462,12 @@ namespace Engine.Service
                     plan.PlannedTakeoff += requiredShift;
             }
 
-            if (plannedEffectStart >= package.EffectEnd)
+            if (plannedEffectStart >= proposedEffectEnd)
             {
                 reason = "Preparation and transit leave no time for the requested effect.";
                 return false;
             }
 
-            package.EffectStart = plannedEffectStart;
             package.HasRendezvous = hasRendezvous;
             foreach (var plan in plans)
             {
@@ -480,7 +476,7 @@ namespace Engine.Service
                     request,
                     missionCenter,
                     plannedEffectStart,
-                    package.EffectEnd,
+                    proposedEffectEnd,
                     hasRendezvous,
                     rendezvousPosition,
                     rendezvousTime,
@@ -503,7 +499,11 @@ namespace Engine.Service
         {
             var flight = plan.Flight;
             var route = new List<AirWaypoint>();
-            route.Add(NewWaypoint(plan.BasePositionFeet, AirWaypointAction.Takeoff, plan.PlannedTakeoff));
+            route.Add(NewWaypoint(
+                plan.BasePositionFeet,
+                AirWaypointAction.Takeoff,
+                plan.PlannedTakeoff,
+                airportBuildingId: plan.Squadron.AirportBuildingId));
             if (hasRendezvous)
                 route.Add(NewWaypoint(rendezvousPosition, AirWaypointAction.Rendezvous, rendezvousTime));
 
@@ -524,20 +524,20 @@ namespace Engine.Service
                 var stationEntry = NewWaypoint(
                     missionCenter - trackOffset,
                     AirWaypointAction.StationEntry,
-                    effectStart);
-                stationEntry.EffectArea = new AirMissionArea(
-                    request.MissionArea.CenterTileId,
-                    request.MissionArea.RadiusTiles);
+                    effectStart,
+                    new AirMissionArea(
+                        request.MissionArea.CenterTileId,
+                        request.MissionArea.RadiusTiles));
                 var stationEnd = NewWaypoint(
                     missionCenter + trackOffset,
                     AirWaypointAction.StationEndpoint,
                     effectStart + TimeSpan.FromSeconds(
                         AirspaceGeometry.HorizontalTravelSeconds(
                             tileDistanceFeet,
-                            plan.AircraftType.CruiseSpeedKnots)));
-                stationEnd.HasRepeat = true;
-                stationEnd.RepeatFromWaypointId = stationEntry.WaypointId;
-                stationEnd.RepeatUntil = effectEnd;
+                            plan.AircraftType.CruiseSpeedKnots)),
+                    hasRepeat: true,
+                    repeatFromWaypointId: stationEntry.WaypointId,
+                    repeatUntil: effectEnd);
                 route.Add(stationEntry);
                 route.Add(stationEnd);
             }
@@ -546,7 +546,10 @@ namespace Engine.Service
                 route.Add(NewWaypoint(
                     missionCenter,
                     AirWaypointAction.MissionAction,
-                    effectStart));
+                    effectStart,
+                    new AirMissionArea(
+                        request.MissionArea.CenterTileId,
+                        request.MissionArea.RadiusTiles)));
             }
 
             var returnTime = request.FulfillmentPattern == AirMissionRequestFulfillmentPattern.Sustained
@@ -564,70 +567,38 @@ namespace Engine.Service
             if (plan.RouteGeometry.EgressWaypoints.Count > 0)
                 returnPosition = plan.RouteGeometry.EgressWaypoints[
                     plan.RouteGeometry.EgressWaypoints.Count - 1];
-            AppendRecoveryRoute(route, plan, returnPosition, returnTime);
+            foreach (var waypoint in AirRecoveryRouteBuilder.Build(
+                         returnPosition,
+                         plan.AircraftType,
+                         plan.Squadron.AirportBuildingId,
+                         plan.BasePositionFeet,
+                         returnTime))
+            {
+                route.Add(waypoint);
+            }
 
-            flight.MaterializeRoute(
-                route,
-                plan.Squadron.AirportBuildingId,
-                plan.PlannedTakeoff);
-            flight.EffectStart = effectStart;
-            flight.EffectEnd = effectEnd;
-            flight.MissionArea = new AirMissionArea(
-                request.MissionArea.CenterTileId,
-                request.MissionArea.RadiusTiles);
-        }
-
-        private static void AppendRecoveryRoute(
-            ICollection<AirWaypoint> route,
-            RoutePlan plan,
-            Vector3 fromPosition,
-            DateTime returnTime)
-        {
-            var basePosition = plan.BasePositionFeet;
-            var horizontal = new Vector3(
-                fromPosition.x - basePosition.x,
-                0f,
-                fromPosition.z - basePosition.z);
-            var distance = horizontal.magnitude;
-            var descentMinutes = fromPosition.y
-                                 / Math.Max(1f, plan.AircraftType.DescentRateFeetPerMinute);
-            var descentDistance = plan.AircraftType.CruiseSpeedKnots
-                                  * AirspaceGeometry.FeetPerNauticalMile
-                                  * (descentMinutes / 60f);
-            var approachDistance = Math.Min(distance, descentDistance);
-            var approach = basePosition;
-            if (distance > 0.01f)
-                approach += horizontal.normalized * approachDistance;
-            approach.y = fromPosition.y;
-            var approachTime = returnTime + TimeSpan.FromSeconds(
-                AirspaceGeometry.TravelSeconds(
-                    fromPosition,
-                    approach,
-                    plan.AircraftType.CruiseSpeedKnots,
-                    plan.AircraftType.ClimbRateFeetPerMinute,
-                    plan.AircraftType.DescentRateFeetPerMinute));
-            var landingTime = approachTime + TimeSpan.FromSeconds(
-                AirspaceGeometry.TravelSeconds(
-                    approach,
-                    basePosition,
-                    plan.AircraftType.CruiseSpeedKnots,
-                    plan.AircraftType.ClimbRateFeetPerMinute,
-                    plan.AircraftType.DescentRateFeetPerMinute));
-            route.Add(NewWaypoint(approach, AirWaypointAction.Approach, approachTime));
-            route.Add(NewWaypoint(basePosition, AirWaypointAction.Land, landingTime));
+            flight.MaterializeRoute(route);
         }
 
         private static AirWaypoint NewWaypoint(
             Vector3 positionFeet,
             AirWaypointAction action,
-            DateTime plannedArrivalTime)
+            DateTime plannedArrivalTime,
+            AirMissionArea effectArea = null,
+            bool hasRepeat = false,
+            Guid repeatFromWaypointId = default,
+            DateTime repeatUntil = default,
+            Guid airportBuildingId = default)
         {
-            return new AirWaypoint
-            {
-                PositionFeet = positionFeet,
-                Action = action,
-                PlannedArrivalTime = plannedArrivalTime
-            };
+            return new AirWaypoint(
+                positionFeet,
+                action,
+                plannedArrivalTime,
+                effectArea,
+                hasRepeat,
+                repeatFromWaypointId,
+                repeatUntil,
+                airportBuildingId);
         }
 
         private static DateTime AppendTransitRoute(

@@ -1,4 +1,7 @@
 using System;
+using System.Collections.Generic;
+using Models.Gameplay.Campaign;
+using Models.Module;
 using UnityEngine;
 
 namespace Engine.Service
@@ -45,6 +48,67 @@ namespace Engine.Service
             var feetPerSecond = Math.Max(1f, speedKnots)
                                 * FeetPerNauticalMile / 3600f;
             return Math.Max(0f, distanceFeet) / feetPerSecond;
+        }
+    }
+
+    internal static class AirRecoveryRouteBuilder
+    {
+        public static IReadOnlyList<AirWaypoint> Build(
+            Vector3 currentPosition,
+            AircraftTypeDefinition aircraftType,
+            Guid recoveryAirportId,
+            Vector3 recoveryPosition,
+            DateTime recoveryStart)
+        {
+            if (aircraftType == null)
+                throw new ArgumentNullException(nameof(aircraftType));
+            if (recoveryAirportId == Guid.Empty)
+                throw new ArgumentException(
+                    "A recovery airport is required.",
+                    nameof(recoveryAirportId));
+
+            var horizontal = new Vector3(
+                currentPosition.x - recoveryPosition.x,
+                0f,
+                currentPosition.z - recoveryPosition.z);
+            var distance = horizontal.magnitude;
+            var descentMinutes = currentPosition.y
+                                 / Math.Max(1f, aircraftType.DescentRateFeetPerMinute);
+            var descentDistance = aircraftType.CruiseSpeedKnots
+                                  * AirspaceGeometry.FeetPerNauticalMile
+                                  * descentMinutes / 60f;
+            var approach = recoveryPosition;
+            if (distance > 0.01f)
+                approach += horizontal.normalized * Math.Min(distance, descentDistance);
+            approach.y = currentPosition.y;
+
+            var approachTime = recoveryStart + TimeSpan.FromSeconds(
+                AirspaceGeometry.TravelSeconds(
+                    currentPosition,
+                    approach,
+                    aircraftType.CruiseSpeedKnots,
+                    aircraftType.ClimbRateFeetPerMinute,
+                    aircraftType.DescentRateFeetPerMinute));
+            var landingTime = approachTime + TimeSpan.FromSeconds(
+                AirspaceGeometry.TravelSeconds(
+                    approach,
+                    recoveryPosition,
+                    aircraftType.CruiseSpeedKnots,
+                    aircraftType.ClimbRateFeetPerMinute,
+                    aircraftType.DescentRateFeetPerMinute));
+
+            return new[]
+            {
+                new AirWaypoint(
+                    approach,
+                    AirWaypointAction.Approach,
+                    approachTime),
+                new AirWaypoint(
+                    recoveryPosition,
+                    AirWaypointAction.Land,
+                    landingTime,
+                    airportBuildingId: recoveryAirportId)
+            };
         }
     }
 }

@@ -245,63 +245,17 @@ namespace Engine.Models
 
             if (!gameManager.buildingSystem.TryGetBuilding(recoveryAirportId, out var recovery))
                 return false;
-            var recoveryTail = BuildRecoveryTail(
+            var recoveryTail = AirRecoveryRouteBuilder.Build(
                 flight.PositionFeet,
                 aircraftType,
+                recoveryAirportId,
                 AirspaceGeometry.TileCenterFeet(
                     recovery.TileId,
                     gameManager.SimulationSettings?.TileDistanceKM
                     ?? SimulationSettings.DefaultTileDistanceKM),
                 currentTime);
-            flight.ReplaceRecoveryRoute(recoveryAirportId, recoveryTail);
+            flight.ReplaceRecoveryRoute(recoveryTail);
             return true;
-        }
-
-        private static IReadOnlyList<AirWaypoint> BuildRecoveryTail(
-            Vector3 currentPosition,
-            AircraftTypeDefinition aircraftType,
-            Vector3 basePosition,
-            DateTime currentTime)
-        {
-            var recoveryTail = new List<AirWaypoint>();
-            var from = currentPosition;
-            var horizontal = new Vector3(from.x - basePosition.x, 0f, from.z - basePosition.z);
-            var distance = horizontal.magnitude;
-            var descentMinutes = from.y / Math.Max(1f, aircraftType.DescentRateFeetPerMinute);
-            var descentDistance = aircraftType.CruiseSpeedKnots
-                                  * AirspaceGeometry.FeetPerNauticalMile
-                                  * descentMinutes / 60f;
-            var approach = basePosition;
-            if (distance > 0.01f)
-                approach += horizontal.normalized * Math.Min(distance, descentDistance);
-            approach.y = from.y;
-            var approachTime = currentTime + TimeSpan.FromSeconds(
-                AirspaceGeometry.TravelSeconds(
-                    from,
-                    approach,
-                    aircraftType.CruiseSpeedKnots,
-                    aircraftType.ClimbRateFeetPerMinute,
-                    aircraftType.DescentRateFeetPerMinute));
-            var landingTime = approachTime + TimeSpan.FromSeconds(
-                AirspaceGeometry.TravelSeconds(
-                    approach,
-                    basePosition,
-                    aircraftType.CruiseSpeedKnots,
-                    aircraftType.ClimbRateFeetPerMinute,
-                    aircraftType.DescentRateFeetPerMinute));
-            recoveryTail.Add(new AirWaypoint
-            {
-                PositionFeet = approach,
-                Action = AirWaypointAction.Approach,
-                PlannedArrivalTime = approachTime
-            });
-            recoveryTail.Add(new AirWaypoint
-            {
-                PositionFeet = basePosition,
-                Action = AirWaypointAction.Land,
-                PlannedArrivalTime = landingTime
-            });
-            return recoveryTail;
         }
 
         private void CompleteLanding(AirFlight flight, DateTime occurredAt)

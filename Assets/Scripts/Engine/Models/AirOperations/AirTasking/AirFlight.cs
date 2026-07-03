@@ -98,21 +98,12 @@ namespace Models.Gameplay.Campaign
         private bool isWaitingAtRendezvous;
         [SerializeField, FormerlySerializedAs("MissionAchieved")]
         private bool missionAchieved;
-        [SerializeField, FormerlySerializedAs("LaunchAirportBuildingId")]
-        private Guid launchAirportBuildingId;
-        [SerializeField, FormerlySerializedAs("RecoveryAirportBuildingId")]
-        private Guid recoveryAirportBuildingId;
         [SerializeField, FormerlySerializedAs("ExecutionEvents")]
         private List<FlightExecutionEvent> executionEvents =
             new List<FlightExecutionEvent>();
         [NonSerialized] private ReadOnlyCollection<AirWaypoint> routeView;
         [NonSerialized] private ReadOnlyCollection<FlightExecutionEvent> executionEventView;
 
-        // Derived planning summaries retained for air-tasking queries.
-        public DateTime PlannedTakeoffTime;
-        public DateTime EffectStart;
-        public DateTime EffectEnd;
-        public AirMissionArea MissionArea = new AirMissionArea();
         public int ProvidedSupportSlots;
         public List<AirSupportReservation> SupportReservations = new List<AirSupportReservation>();
 
@@ -126,11 +117,52 @@ namespace Models.Gameplay.Campaign
         public float HeadingDegrees => headingDegrees;
         public bool IsWaitingAtRendezvous => isWaitingAtRendezvous;
         public bool MissionAchieved => missionAchieved;
-        public Guid LaunchAirportBuildingId => launchAirportBuildingId;
-        public Guid RecoveryAirportBuildingId => recoveryAirportBuildingId;
+        public DateTime PlannedTakeoffTime =>
+            route?.FirstOrDefault(waypoint =>
+                waypoint?.Action == AirWaypointAction.Takeoff)?.PlannedArrivalTime
+            ?? default;
+        public DateTime EffectStart => EffectWaypoints.FirstOrDefault()?.PlannedArrivalTime
+                                       ?? default;
+        public bool HasSustainedEffect =>
+            EffectWaypoints.Any(waypoint => waypoint.Action == AirWaypointAction.StationEntry);
+        public DateTime EffectEnd
+        {
+            get
+            {
+                var effectWaypoints = EffectWaypoints;
+                if (effectWaypoints.Count == 0)
+                    return default;
+
+                var last = effectWaypoints[effectWaypoints.Count - 1];
+                if (last.Action == AirWaypointAction.MissionAction)
+                    return last.PlannedArrivalTime;
+
+                var endpoint = route?
+                    .Where(waypoint => waypoint?.Action == AirWaypointAction.StationEndpoint
+                                       && waypoint.HasRepeat
+                                       && waypoint.RepeatFromWaypointId == last.WaypointId)
+                    .LastOrDefault();
+                return endpoint?.RepeatUntil ?? last.PlannedArrivalTime;
+            }
+        }
+        public AirMissionArea MissionArea => EffectWaypoints.FirstOrDefault()?.EffectArea;
+        public Guid LaunchAirportBuildingId =>
+            route?.FirstOrDefault(waypoint =>
+                waypoint?.Action == AirWaypointAction.Takeoff)?.AirportBuildingId
+            ?? Guid.Empty;
+        public Guid RecoveryAirportBuildingId =>
+            route?.LastOrDefault(waypoint =>
+                waypoint?.Action == AirWaypointAction.Land)?.AirportBuildingId
+            ?? Guid.Empty;
         public IReadOnlyList<FlightExecutionEvent> ExecutionEvents =>
             executionEventView ??=
                 (executionEvents ??= new List<FlightExecutionEvent>()).AsReadOnly();
+
+        private IReadOnlyList<AirWaypoint> EffectWaypoints =>
+            (route ??= new List<AirWaypoint>())
+            .Where(waypoint => waypoint?.Action == AirWaypointAction.StationEntry
+                               || waypoint?.Action == AirWaypointAction.MissionAction)
+            .ToList();
 
         public bool IsTerminal =>
             lifecycleState == AirTaskingLifecycleState.Completed
@@ -176,9 +208,7 @@ namespace Models.Gameplay.Campaign
         }
 
         public void MaterializeRoute(
-            IEnumerable<AirWaypoint> waypoints,
-            Guid launchAirportId,
-            DateTime takeoffTime)
+            IEnumerable<AirWaypoint> waypoints)
         {
             if (lifecycleState != AirTaskingLifecycleState.Committed
                 || executionPhase != FlightExecutionPhase.AwaitingTakeoff
@@ -190,13 +220,10 @@ namespace Models.Gameplay.Campaign
 
             var materializedRoute = waypoints?.ToList()
                                     ?? throw new ArgumentNullException(nameof(waypoints));
-            if (materializedRoute.Count < 2
-                || materializedRoute[0]?.Action != AirWaypointAction.Takeoff
-                || materializedRoute[materializedRoute.Count - 1]?.Action
-                != AirWaypointAction.Land)
+            if (!TryValidateRoute(materializedRoute, out var reason))
             {
                 throw new ArgumentException(
-                    "A materialized flight route must begin with takeoff and end with landing.",
+                    reason,
                     nameof(waypoints));
             }
 
@@ -206,9 +233,11 @@ namespace Models.Gameplay.Campaign
             hasPosition = false;
             isWaitingAtRendezvous = false;
             missionAchieved = false;
-            launchAirportBuildingId = launchAirportId;
-            recoveryAirportBuildingId = launchAirportId;
-            PlannedTakeoffTime = takeoffTime;
+        }
+
+        public bool TryValidateRoute(out string reason)
+        {
+            return TryValidateRoute(route, out reason);
         }
 
         public bool TryTakeOff(DateTime occurredAt)
@@ -363,9 +392,7 @@ namespace Models.Gameplay.Campaign
             return true;
         }
 
-        public void ReplaceRecoveryRoute(
-            Guid recoveryAirportId,
-            IEnumerable<AirWaypoint> recoveryWaypoints)
+        public void ReplaceRecoveryRoute(IEnumerable<AirWaypoint> recoveryWaypoints)
         {
             if (!IsAirborne
                 || executionPhase != FlightExecutionPhase.Returning
@@ -386,9 +413,14 @@ namespace Models.Gameplay.Campaign
                     nameof(recoveryWaypoints));
             }
 
-            route.RemoveRange(currentWaypointIndex, route.Count - currentWaypointIndex);
-            route.AddRange(replacement);
-            recoveryAirportBuildingId = recoveryAirportId;
+            var amendedRoute = route.Take(currentWaypointIndex)
+                .Concat(replacement)
+                .ToList();
+            if (!TryValidateRoute(amendedRoute, out var reason))
+                throw new ArgumentException(reason, nameof(recoveryWaypoints));
+
+            route = amendedRoute;
+            routeView = null;
         }
 
         public void Land(DateTime occurredAt)
@@ -465,6 +497,91 @@ namespace Models.Gameplay.Campaign
         private static float HeadingTo(Vector3 from, Vector3 to)
         {
             return Mathf.Atan2(to.x - from.x, to.z - from.z) * Mathf.Rad2Deg;
+        }
+
+        private static bool TryValidateRoute(
+            IReadOnlyList<AirWaypoint> waypoints,
+            out string reason)
+        {
+            reason = string.Empty;
+            if (waypoints == null
+                || waypoints.Count < 2
+                || waypoints[0]?.Action != AirWaypointAction.Takeoff
+                || waypoints[waypoints.Count - 1]?.Action != AirWaypointAction.Land)
+            {
+                reason = "A materialized flight route must begin with takeoff and end with landing.";
+                return false;
+            }
+
+            if (waypoints.Any(waypoint =>
+                    waypoint == null || waypoint.WaypointId == Guid.Empty)
+                || waypoints.Select(waypoint => waypoint.WaypointId).Distinct().Count()
+                != waypoints.Count)
+            {
+                reason = "A materialized flight route must contain unique, valid waypoints.";
+                return false;
+            }
+
+            if (waypoints[0].AirportBuildingId == Guid.Empty
+                || waypoints[waypoints.Count - 1].AirportBuildingId == Guid.Empty)
+            {
+                reason = "Takeoff and landing waypoints must identify their airports.";
+                return false;
+            }
+            if (waypoints.Count(waypoint => waypoint.Action == AirWaypointAction.Takeoff) != 1
+                || waypoints.Count(waypoint => waypoint.Action == AirWaypointAction.Land) != 1)
+            {
+                reason = "A flight route must contain exactly one takeoff and one landing.";
+                return false;
+            }
+
+            for (var index = 1; index < waypoints.Count; index++)
+            {
+                if (waypoints[index].PlannedArrivalTime
+                    < waypoints[index - 1].PlannedArrivalTime)
+                {
+                    reason = "Flight waypoint times must be ordered.";
+                    return false;
+                }
+            }
+
+            var effects = waypoints
+                .Where(waypoint => waypoint.Action == AirWaypointAction.StationEntry
+                                   || waypoint.Action == AirWaypointAction.MissionAction)
+                .ToList();
+            if (effects.Count == 0 || effects.Any(waypoint => waypoint.EffectArea == null))
+            {
+                reason = "A flight route must identify its mission area on a semantic effect waypoint.";
+                return false;
+            }
+            foreach (var station in effects.Where(waypoint =>
+                         waypoint.Action == AirWaypointAction.StationEntry))
+            {
+                if (!waypoints.Any(waypoint =>
+                        waypoint.Action == AirWaypointAction.StationEndpoint
+                        && waypoint.HasRepeat
+                        && waypoint.RepeatFromWaypointId == station.WaypointId))
+                {
+                    reason = "Every station entry must have a repeating station endpoint.";
+                    return false;
+                }
+            }
+
+            foreach (var endpoint in waypoints.Where(waypoint =>
+                         waypoint.Action == AirWaypointAction.StationEndpoint))
+            {
+                if (!endpoint.HasRepeat
+                    || endpoint.RepeatUntil < endpoint.PlannedArrivalTime
+                    || !waypoints.Any(waypoint =>
+                        waypoint.Action == AirWaypointAction.StationEntry
+                        && waypoint.WaypointId == endpoint.RepeatFromWaypointId))
+                {
+                    reason = "A station endpoint must repeat a valid station entry until a valid release time.";
+                    return false;
+                }
+            }
+
+            return true;
         }
     }
 }
