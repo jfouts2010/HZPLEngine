@@ -297,7 +297,6 @@ namespace Engine.Service
                 MissionRequestId = request.MissionRequestId,
                 Alliance = request.Alliance,
                 CreatedAt = currentTime,
-                HasRendezvous = false,
                 Rationale = request.Rationale
             };
         }
@@ -468,7 +467,6 @@ namespace Engine.Service
                 return false;
             }
 
-            package.HasRendezvous = hasRendezvous;
             foreach (var plan in plans)
             {
                 BuildRoute(

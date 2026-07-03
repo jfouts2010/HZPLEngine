@@ -57,7 +57,7 @@ namespace Engine.Models
             {
                 releasedAny = false;
                 foreach (var package in airTaskingSystem.GetPackages()
-                             .Where(candidate => candidate.HasRendezvous)
+                             .Where(candidate => candidate.RendezvousWaypoint != null)
                              .OrderBy(candidate => candidate.PackageId))
                 {
                     var required = (package.Flights ?? new List<AirFlight>())
@@ -382,8 +382,7 @@ namespace Engine.Models
             AirFlight flight,
             AircraftTypeDefinition ownType)
         {
-            if (!package.HasRendezvous
-                || flight.ExecutionPhase == FlightExecutionPhase.Returning
+            if (flight.ExecutionPhase == FlightExecutionPhase.Returning
                 || flight.ExecutionPhase == FlightExecutionPhase.Landing
                 || !flight.ExecutionEvents.Any(entry =>
                     entry.Action == AirWaypointAction.Rendezvous))

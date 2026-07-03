@@ -777,8 +777,14 @@ namespace Engine.Monobehaviours.Managers
                         : new AirCardField("Effect window", $"{package.EffectStart:MM-dd HH:mm} – {package.EffectEnd:MM-dd HH:mm}"),
                     new AirCardField("Source request", ShortId(package.MissionRequestId))
                 };
-                if (package.HasRendezvous)
-                    fields.Add(new AirCardField("Rendezvous", $"Hex {FormatTile(package.RendezvousTileId)}"));
+                var rendezvous = package.RendezvousWaypoint;
+                if (rendezvous != null)
+                {
+                    fields.Add(new AirCardField(
+                        "Rendezvous",
+                        $"X {rendezvous.PositionFeet.x:0} / Z {rendezvous.PositionFeet.z:0} / "
+                        + $"ALT {rendezvous.PositionFeet.y:0} ft"));
+                }
                 if (!string.IsNullOrWhiteSpace(package.Rationale))
                     fields.Add(new AirCardField("Intent", package.Rationale));
                 airPackagesList.Add(CreateAirCard(package.Alliance, title, fields));

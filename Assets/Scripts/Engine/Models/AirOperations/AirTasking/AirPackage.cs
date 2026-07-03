@@ -14,8 +14,6 @@ namespace Models.Gameplay.Campaign
         public Guid MissionRequestId;
         public Alliance Alliance;
         public DateTime CreatedAt;
-        public bool HasRendezvous;
-        public Vector3Int RendezvousTileId;
         public List<AirFlight> Flights = new List<AirFlight>();
         public List<Guid> SupportingFlightIds = new List<Guid>();
         public string Rationale = string.Empty;
@@ -31,6 +29,12 @@ namespace Models.Gameplay.Campaign
                 return required.Count > 0 ? required : flights;
             }
         }
+
+        public AirWaypoint RendezvousWaypoint =>
+            RequiredFlights
+            .SelectMany(flight => flight.Route)
+            .FirstOrDefault(waypoint =>
+                waypoint?.Action == AirWaypointAction.Rendezvous);
 
         public DateTime EarliestTakeoffTime =>
             RequiredFlights.Count == 0
