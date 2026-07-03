@@ -22,7 +22,7 @@ namespace Models.Module
             SamSiteTemplateId = samSiteTemplateId;
             Name = string.IsNullOrWhiteSpace(name) ? samSiteTemplateId.ToString() : name.Trim();
             HostConstraint = hostConstraint;
-            Components = components ?? new List<SamSiteTemplateComponent>();
+            Components = components;
         }
     }
     public sealed class SamSiteTemplateComponent

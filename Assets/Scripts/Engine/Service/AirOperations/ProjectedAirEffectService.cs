@@ -20,9 +20,6 @@ namespace Engine.Service
         {
             gapStart = planningStart;
             projectedAmount = 0;
-            if (commander == null || request == null)
-                return false;
-
             var desiredAmount = request.IsSupportRequest
                 ? request.DesiredSupportSlots
                 : request.DesiredAircraftStrength;
@@ -54,7 +51,7 @@ namespace Engine.Service
                     .Where(flight => flight.EffectStart <= eventTime && flight.EffectEnd > eventTime)
                     .Sum(flight => request.IsSupportRequest
                         ? Math.Max(0, flight.ProvidedSupportSlots)
-                        : flight.AircraftIds?.Count ?? 0);
+                        : flight.AircraftIds.Count);
                 if (amount >= desiredAmount)
                     continue;
 
@@ -70,15 +67,11 @@ namespace Engine.Service
             AllianceAirTaskingCommander commander,
             AirMissionRequest request)
         {
-            if (commander == null || request == null)
-                return false;
-
-            var requestsById = (commander.MissionRequests ?? new List<AirMissionRequest>())
-                .Where(candidate => candidate != null)
+            var requestsById = commander.MissionRequests
                 .GroupBy(candidate => candidate.MissionRequestId)
                 .ToDictionary(group => group.Key, group => group.First());
-            return (commander.Packages ?? new List<AirPackage>())
-                .Where(package => package != null && !package.IsTerminal)
+            return commander.Packages
+                .Where(package => !package.IsTerminal)
                 .Any(package =>
                     requestsById.TryGetValue(package.MissionRequestId, out var origin)
                     && origin.RequestType == request.RequestType
@@ -92,14 +85,10 @@ namespace Engine.Service
             DateTime start,
             DateTime end)
         {
-            if (commander == null)
-                return Array.Empty<AirFlight>();
-
-            return (commander.Packages ?? new List<AirPackage>())
-                .Where(package => package != null && !package.IsTerminal)
-                .SelectMany(package => package.Flights ?? new List<AirFlight>())
-                .Where(flight => flight != null
-                                 && !flight.IsTerminal
+            return commander.Packages
+                .Where(package => !package.IsTerminal)
+                .SelectMany(package => package.Flights)
+                .Where(flight => !flight.IsTerminal
                                  && flight.MissionType == supportType
                                  && flight.EffectStart <= start
                                  && flight.EffectEnd >= end
@@ -114,12 +103,8 @@ namespace Engine.Service
             DateTime start,
             DateTime end)
         {
-            if (supportingFlight == null)
-                return 0;
-
-            var reserved = (supportingFlight.SupportReservations ?? new List<AirSupportReservation>())
-                .Where(reservation => reservation != null
-                                      && reservation.StartTime < end
+            var reserved = supportingFlight.SupportReservations
+                .Where(reservation => reservation.StartTime < end
                                       && reservation.EndTime > start)
                 .Sum(reservation => Math.Max(0, reservation.SlotCount));
             return Math.Max(0, supportingFlight.ProvidedSupportSlots - reserved);
@@ -129,12 +114,11 @@ namespace Engine.Service
             AllianceAirTaskingCommander commander,
             AirMissionRequest request)
         {
-            return (commander.Packages ?? new List<AirPackage>())
-                .Where(package => package != null
-                                  && !package.IsTerminal
+            return commander.Packages
+                .Where(package => !package.IsTerminal
                                   && package.MissionRequestId == request.MissionRequestId)
-                .SelectMany(package => package.Flights ?? new List<AirFlight>())
-                .Where(flight => flight != null && !flight.IsTerminal);
+                .SelectMany(package => package.Flights)
+                .Where(flight => !flight.IsTerminal);
         }
     }
 

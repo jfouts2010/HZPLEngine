@@ -16,14 +16,9 @@ namespace Engine.Service
 
         public AirMissionPriorityService(ModuleDefinition module)
         {
-            if (module == null)
-                throw new ArgumentNullException(nameof(module));
-
             aircraftTypes = module.AircraftTypeDefinitions
-                .Where(definition => definition != null)
                 .ToDictionary(definition => definition.AircraftTypeDefinitionId);
             ordnanceTypes = module.OrdnanceTypeDefinitions
-                .Where(definition => definition != null)
                 .ToDictionary(definition => definition.OrdnanceTypeDefinitionId);
         }
 
@@ -32,10 +27,6 @@ namespace Engine.Service
             AllianceAirDoctrine doctrine,
             AirPlanningSnapshot snapshot)
         {
-            if (request == null)
-                return;
-
-            doctrine ??= AllianceAirDoctrine.CreateDefault();
             var doctrineWeight = doctrine.GetPriorityWeight(request.RequestType);
             var friendlyPower = CalculatePowerNear(
                 snapshot.FriendlySquadrons,
@@ -61,9 +52,7 @@ namespace Engine.Service
             var riskAcceptance = Mathf.Clamp01(doctrine.RiskTolerance);
             var score = doctrineWeight * (1f + urgency + riskAcceptance * 0.25f);
 
-            var components = request.PriorityComponents == null
-                ? new Dictionary<string, float>()
-                : new Dictionary<string, float>(request.PriorityComponents);
+            var components = new Dictionary<string, float>(request.PriorityComponents);
             components["doctrineWeight"] = doctrineWeight;
             components["friendlyAirCombatPower"] = friendlyPower;
             components["hostileAirCombatPower"] = hostilePower;
@@ -75,15 +64,13 @@ namespace Engine.Service
 
         public float CalculateAirCombatPower(AirPlanningSquadronSnapshot squadron)
         {
-            if (squadron == null
-                || !aircraftTypes.TryGetValue(squadron.AircraftTypeDefinitionId, out var aircraftType)
-                || !CanPerformAirCombat(aircraftType))
+            var aircraftType = aircraftTypes[squadron.AircraftTypeDefinitionId];
+            if (!CanPerformAirCombat(aircraftType))
                 return 0f;
 
             var bestAirWeaponEffectiveness = aircraftType.CompatibleOrdnanceTypeDefinitionIds
-                .Where(ordnanceTypes.ContainsKey)
-                .Select(ordnanceTypeId =>
-                    ordnanceTypes[ordnanceTypeId].GetEffectiveness(OrdnanceTargetCategory.Aircraft))
+                .Select(ordnanceTypeId => ordnanceTypes[ordnanceTypeId]
+                    .GetEffectiveness(OrdnanceTargetCategory.Aircraft))
                 .DefaultIfEmpty(0f)
                 .Max();
             var perAircraftPower =
@@ -97,21 +84,20 @@ namespace Engine.Service
 
         public bool CanPerformAirCombat(AircraftTypeDefinition aircraftType)
         {
-            if (aircraftType == null || aircraftType.SupportCapability != AirSupportCapability.None)
+            if (aircraftType.SupportCapability != AirSupportCapability.None)
                 return false;
 
             return aircraftType.CompatibleOrdnanceTypeDefinitionIds
-                .Where(ordnanceTypes.ContainsKey)
-                .Any(ordnanceTypeId =>
-                    ordnanceTypes[ordnanceTypeId].GetEffectiveness(OrdnanceTargetCategory.Aircraft) > 0f);
+                .Any(ordnanceTypeId => ordnanceTypes[ordnanceTypeId]
+                    .GetEffectiveness(OrdnanceTargetCategory.Aircraft) > 0f);
         }
 
         public float CalculatePowerNear(
             IEnumerable<AirPlanningSquadronSnapshot> squadrons,
             AirMissionArea missionArea)
         {
-            return (squadrons ?? Enumerable.Empty<AirPlanningSquadronSnapshot>())
-                .Where(squadron => missionArea == null || missionArea.Contains(squadron.AirportTileId))
+            return squadrons
+                .Where(squadron => missionArea.Contains(squadron.AirportTileId))
                 .Sum(CalculateAirCombatPower);
         }
     }

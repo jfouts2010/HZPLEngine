@@ -43,7 +43,7 @@ namespace Models.Gameplay.Campaign
         public CampaignTemplate(string name, List<Tile> tiles)
             : this(name)
         {
-            Tiles = tiles ?? new List<Tile>();
+            Tiles = tiles;
             RebuildDerivedData();
         }
 

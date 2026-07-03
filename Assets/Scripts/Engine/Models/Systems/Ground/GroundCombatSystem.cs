@@ -83,7 +83,7 @@ namespace Engine.Models.Ground
 
         private List<System.Guid> ReconcileAttackers(GroundCombat combat)
         {
-            return (combat.AttackerDivisionIds ?? new List<Guid>())
+            return combat.AttackerDivisionIds
                 .Distinct()
                 .Where(divisionId => gameManager.divisionSystem.TryGetDivision(divisionId, out var division)
                                      && IsValidAttacker(division, combat))
@@ -183,7 +183,7 @@ namespace Engine.Models.Ground
 
         private List<Combatant> BuildCombatants(IEnumerable<Guid> divisionIds)
         {
-            return (divisionIds ?? Enumerable.Empty<Guid>())
+            return divisionIds
                 .Select(TryBuildCombatant)
                 .ToList();
         }
@@ -413,18 +413,16 @@ namespace Engine.Models.Ground
         public bool IsDivisionAttackingInCombat(Guid divisionId)
         {
             EnsureIndex();
-            return (Combats ?? Enumerable.Empty<GroundCombat>())
-                .Any(combat => combat != null
-                               && combat.AttackerDivisionIds != null
+            return Combats
+                .Any(combat => combat.AttackerDivisionIds != null
                                && combat.AttackerDivisionIds.Contains(divisionId));
         }
 
         public bool IsDivisionDefendingInCombat(Guid divisionId)
         {
             EnsureIndex();
-            return (Combats ?? Enumerable.Empty<GroundCombat>())
-                .Any(combat => combat != null
-                               && combat.DefenderDivisionIds != null
+            return Combats
+                .Any(combat =>combat.DefenderDivisionIds != null
                                && combat.DefenderDivisionIds.Contains(divisionId));
         }
 
@@ -461,7 +459,7 @@ namespace Engine.Models.Ground
 
         public void RebuildIndex()
         {
-            combatByDefendingTileId = (Combats ?? new List<GroundCombat>())
+            combatByDefendingTileId = Combats
                 .GroupBy(combat => combat.DefendingTileId)
                 .ToDictionary(group => group.Key, group => group.First());
         }

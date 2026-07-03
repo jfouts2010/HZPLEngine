@@ -20,8 +20,7 @@ namespace Models.Gameplay.Campaign
 
         public float GetPriorityWeight(AirMissionRequestType requestType)
         {
-            if (PriorityWeights != null
-                && PriorityWeights.TryGetValue(requestType, out var weight))
+            if (PriorityWeights.TryGetValue(requestType, out var weight))
                 return Mathf.Max(0f, weight);
 
             return 1f;
@@ -35,9 +34,9 @@ namespace Models.Gameplay.Campaign
                 DesiredAirCombatAdvantage = Mathf.Max(0.1f, DesiredAirCombatAdvantage),
                 BaselineAirborneC2Slots = Math.Max(0, BaselineAirborneC2Slots),
                 BaselineAerialRefuelingSlots = Math.Max(0, BaselineAerialRefuelingSlots),
-                PriorityWeights = PriorityWeights == null
-                    ? CreateDefaultPriorityWeights()
-                    : PriorityWeights.ToDictionary(entry => entry.Key, entry => Mathf.Max(0f, entry.Value))
+                PriorityWeights = PriorityWeights.ToDictionary(
+                    entry => entry.Key,
+                    entry => Mathf.Max(0f, entry.Value))
             };
         }
 

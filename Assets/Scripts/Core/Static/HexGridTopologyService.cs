@@ -62,7 +62,7 @@ namespace Models.Gameplay.Campaign
             var tileIds = new HashSet<Vector3Int>(concreteTiles.Select(tile => tile.Coordinates));
             foreach (var tile in concreteTiles)
             {
-                foreach (var riverNeighborId in tile.RiverNeighborTileIds ?? new List<Vector3Int>())
+                foreach (var riverNeighborId in tile.RiverNeighborTileIds)
                 {
                     if (!tileIds.Contains(riverNeighborId))
                         errors.Add($"Tile {tile.Coordinates} has unknown river neighbor {riverNeighborId}.");

@@ -31,29 +31,23 @@ namespace Models.Gameplay.Campaign
             MobileSamSiteStartingCondition startingCondition,
             List<AirDefenseComponent> components)
         {
-            if (startingCondition == null)
-                throw new ArgumentNullException(nameof(startingCondition));
-
             SiteId = startingCondition.MobileSamSiteId;
             SamSiteTemplateId = startingCondition.SamSiteTemplateId;
             HostType = SamSiteHostType.MobileDivision;
             HostId = startingCondition.HostDivisionId;
             Alliance = startingCondition.Alliance;
-            Components = components ?? new List<AirDefenseComponent>();
+            Components = components;
         }
 
         public SamSite(
             BuildingStartingCondition startingCondition,
             List<AirDefenseComponent> components)
         {
-            if (startingCondition == null)
-                throw new ArgumentNullException(nameof(startingCondition));
-
             SiteId = startingCondition.BuildingId;
             SamSiteTemplateId = startingCondition.SamSiteTemplateId;
             HostType = SamSiteHostType.StaticBuilding;
             HostId = startingCondition.BuildingId;
-            Components = components ?? new List<AirDefenseComponent>();
+            Components = components;
         }
 
         public bool DamageComponent(Guid componentId)

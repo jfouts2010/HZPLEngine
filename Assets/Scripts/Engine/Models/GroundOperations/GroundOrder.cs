@@ -22,7 +22,7 @@ namespace Models.Gameplay.Campaign
         public HoldGroundOrder(GroundOrderAssignmentSource assignmentSource, string rationale = "")
         {
             AssignmentSource = assignmentSource;
-            Rationale = rationale ?? string.Empty;
+            Rationale = rationale;
             CanBeReplaced = true;
         }
     }
@@ -35,7 +35,7 @@ namespace Models.Gameplay.Campaign
         public float MovementProgress;
         public MoveGroundOrderPurpose Purpose = MoveGroundOrderPurpose.Normal;
 
-        public Vector3Int DestinationTileId => Path?.DestinationTileId ?? default;
+        public Vector3Int DestinationTileId => Path.DestinationTileId;
 
         public MoveGroundOrder()
         {

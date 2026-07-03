@@ -25,7 +25,7 @@ namespace Models.Module
             DivisionTemplateId = divisionTemplateId;
             CountryId = countryId;
             Name = string.IsNullOrWhiteSpace(name) ? divisionTemplateId.ToString() : name.Trim();
-            Battalions = battalions ?? new List<DivisionTemplateBattalion>();
+            Battalions = battalions;
         }
 
         public DivisionCombatStats CalculateFullStrengthStats(
@@ -56,9 +56,6 @@ namespace Models.Module
         public List<DivisionCombatStatsBattalion> CreateFullStrengthCombatBattalions(
             IReadOnlyDictionary<Guid, BattalionDefinition> battalionDefinitions)
         {
-            if (battalionDefinitions == null)
-                throw new ArgumentNullException(nameof(battalionDefinitions));
-
             var combatBattalions = new List<DivisionCombatStatsBattalion>();
 
             foreach (var templateBattalion in Battalions)

@@ -9,8 +9,7 @@ namespace Models.Module
 
         public DivisionCombatStatsBattalion(BattalionDefinition battalionDefinition, int count)
         {
-            BattalionDefinition = battalionDefinition
-                ?? throw new ArgumentNullException(nameof(battalionDefinition));
+            BattalionDefinition = battalionDefinition;
             Count = count;
         }
     }

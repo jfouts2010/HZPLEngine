@@ -23,12 +23,9 @@ namespace Engine.Models
             AirTaskingSystem airTaskingSystem,
             ModuleDefinition module)
         {
-            this.gameManager = gameManager ?? throw new ArgumentNullException(nameof(gameManager));
-            this.airTaskingSystem = airTaskingSystem
-                                    ?? throw new ArgumentNullException(nameof(airTaskingSystem));
-            aircraftTypes = (module?.AircraftTypeDefinitions
-                             ?? new List<AircraftTypeDefinition>())
-                .Where(definition => definition != null)
+            this.gameManager = gameManager;
+            this.airTaskingSystem = airTaskingSystem;
+            aircraftTypes = module.AircraftTypeDefinitions
                 .ToDictionary(definition => definition.AircraftTypeDefinitionId);
         }
 
@@ -39,8 +36,7 @@ namespace Engine.Models
             foreach (var package in airTaskingSystem.GetPackages()
                          .OrderBy(candidate => candidate.PackageId))
             {
-                foreach (var flight in (package.Flights ?? new List<AirFlight>())
-                             .Where(candidate => candidate != null)
+                foreach (var flight in package.Flights
                              .OrderBy(candidate => candidate.FlightId))
                 {
                     var state = BeginTick(package, flight, previousTime, currentTime);
@@ -60,8 +56,8 @@ namespace Engine.Models
                              .Where(candidate => candidate.RendezvousWaypoint != null)
                              .OrderBy(candidate => candidate.PackageId))
                 {
-                    var required = (package.Flights ?? new List<AirFlight>())
-                        .Where(flight => flight != null && flight.IsRequired)
+                    var required = package.Flights
+                        .Where(flight => flight.IsRequired)
                         .ToList();
                     if (required.Count == 0
                         || required.Any(flight => !flight.IsWaitingAtRendezvous)
@@ -91,8 +87,8 @@ namespace Engine.Models
                 return null;
             if (!TryGetFlightContext(flight, out var squadron, out var aircraftType))
             {
-                flight.Fail(currentTime, "Flight context became unavailable.");
-                return null;
+                throw new InvalidOperationException(
+                    $"Flight {flight.FlightId} context became unavailable.");
             }
 
             var cursor = previousTime;
@@ -110,17 +106,17 @@ namespace Engine.Models
                 var takeoffTime = flight.PlannedTakeoffTime > previousTime
                     ? flight.PlannedTakeoffTime
                     : previousTime;
-                var takeoff = flight.Route?.FirstOrDefault();
-                if (takeoff == null || takeoff.Action != AirWaypointAction.Takeoff)
+                var takeoff = flight.Route.FirstOrDefault();
+                if (takeoff == null)
                 {
-                    flight.Fail(takeoffTime, "Flight route has no takeoff waypoint.");
-                    return null;
+                    throw new InvalidOperationException(
+                        $"Flight {flight.FlightId} route has no takeoff waypoint.");
                 }
 
                 if (!flight.TryTakeOff(takeoffTime))
                 {
-                    flight.Fail(takeoffTime, "Flight could not transition to takeoff.");
-                    return null;
+                    throw new InvalidOperationException(
+                        $"Flight {flight.FlightId} could not transition to takeoff.");
                 }
                 cursor = takeoffTime;
             }
@@ -141,8 +137,8 @@ namespace Engine.Models
         {
             if (!TryGetFlightContext(flight, out _, out var aircraftType))
             {
-                flight.Fail(state.Cursor, "Aircraft performance became unavailable.");
-                return;
+                throw new InvalidOperationException(
+                    $"Flight {flight.FlightId} aircraft performance became unavailable.");
             }
 
             while (state.RemainingSeconds > 0.0001d
@@ -152,10 +148,8 @@ namespace Engine.Models
                 var waypoint = flight.CurrentWaypoint;
                 if (waypoint == null)
                 {
-                    flight.Fail(
-                        state.Cursor,
-                        "Flight exhausted its route or encountered an invalid waypoint before landing.");
-                    return;
+                    throw new InvalidOperationException(
+                        $"Flight {flight.FlightId} exhausted its route before landing.");
                 }
 
                 var speedKnots = GetGuidanceSpeedKnots(package, flight, aircraftType);
@@ -215,7 +209,10 @@ namespace Engine.Models
             if (IsAirportFriendly(flight.RecoveryAirportBuildingId, package.Alliance))
                 return true;
             if (!TryGetFlightContext(flight, out var squadron, out var aircraftType))
-                return false;
+            {
+                throw new InvalidOperationException(
+                    $"Flight {flight.FlightId} context became unavailable during recovery.");
+            }
 
             Guid recoveryAirportId;
             if (IsAirportFriendly(squadron.AirportBuildingId, package.Alliance))
@@ -230,8 +227,7 @@ namespace Engine.Models
                         Airport = airport,
                         Position = AirspaceGeometry.TileCenterFeet(
                             airport.TileId,
-                            gameManager.SimulationSettings?.TileDistanceKM
-                            ?? SimulationSettings.DefaultTileDistanceKM)
+                            gameManager.SimulationSettings.TileDistanceKM)
                     })
                     .OrderBy(candidate => Vector2.Distance(
                         new Vector2(flight.PositionFeet.x, flight.PositionFeet.z),
@@ -251,8 +247,7 @@ namespace Engine.Models
                 recoveryAirportId,
                 AirspaceGeometry.TileCenterFeet(
                     recovery.TileId,
-                    gameManager.SimulationSettings?.TileDistanceKM
-                    ?? SimulationSettings.DefaultTileDistanceKM),
+                    gameManager.SimulationSettings.TileDistanceKM),
                 currentTime);
             flight.ReplaceRecoveryRoute(recoveryTail);
             return true;
@@ -262,14 +257,13 @@ namespace Engine.Models
         {
             if (!TryGetFlightContext(flight, out var squadron, out _))
             {
-                flight.Fail(occurredAt, "Squadron disappeared during recovery.");
-                return;
+                throw new InvalidOperationException(
+                    $"Flight {flight.FlightId} squadron disappeared during recovery.");
             }
 
-            foreach (var aircraft in squadron.Aircraft ?? new List<CampaignAircraft>())
+            foreach (var aircraft in squadron.Aircraft)
             {
-                if (aircraft == null
-                    || aircraft.AssignedFlightId != flight.FlightId
+                if (aircraft.AssignedFlightId != flight.FlightId
                     || aircraft.Status == CampaignAircraftStatus.Lost)
                     continue;
                 aircraft.ClearLoadout();
@@ -286,10 +280,8 @@ namespace Engine.Models
             foreach (var alliance in new[] { Alliance.Bluefor, Alliance.Redfor })
             {
                 var commander = airTaskingSystem.GetCommander(alliance);
-                if (commander == null)
-                    continue;
-                foreach (var package in (commander.Packages ?? Array.Empty<AirPackage>())
-                             .Where(candidate => candidate != null && candidate.HasPhysicallyEnded))
+                foreach (var package in commander.Packages
+                             .Where(candidate => candidate.HasPhysicallyEnded))
                 {
                     if (package.LifecycleState == AirTaskingLifecycleState.Completed)
                     {
@@ -305,17 +297,14 @@ namespace Engine.Models
         private void ResolveAirbaseOverruns(DateTime currentTime)
         {
             var flights = airTaskingSystem.GetPackages()
-                .SelectMany(package => package.Flights ?? new List<AirFlight>())
-                .Where(flight => flight != null)
+                .SelectMany(package => package.Flights)
                 .ToList();
             var activeFlightIds = flights
                 .Where(flight => flight.IsAirborne)
                 .Select(flight => flight.FlightId)
                 .ToHashSet();
-            foreach (var squadron in gameManager.squadronSystem.Squadrons ?? new List<Squadron>())
+            foreach (var squadron in gameManager.squadronSystem.Squadrons)
             {
-                if (squadron == null)
-                    continue;
                 var alliance = gameManager.GetCountryAlliance(squadron.CountryId);
                 if (IsAirportFriendly(squadron.AirportBuildingId, alliance))
                     continue;
@@ -329,9 +318,9 @@ namespace Engine.Models
                         "Launch airport was overrun before takeoff.");
                 }
 
-                foreach (var aircraft in squadron.Aircraft ?? new List<CampaignAircraft>())
+                foreach (var aircraft in squadron.Aircraft)
                 {
-                    if (aircraft == null || activeFlightIds.Contains(aircraft.AssignedFlightId))
+                    if (activeFlightIds.Contains(aircraft.AssignedFlightId))
                         continue;
                     aircraft.Status = CampaignAircraftStatus.Lost;
                     aircraft.AssignedFlightId = Guid.Empty;
@@ -346,7 +335,7 @@ namespace Engine.Models
                 || !gameManager.buildingSystem.TryGetBuilding(airportId, out var building)
                 || building is not Airport)
                 return false;
-            var landTile = (gameManager.Tiles ?? new List<TileData>())
+            var landTile = gameManager.Tiles
                 .OfType<LandTileData>()
                 .FirstOrDefault(tile => tile.TileId == building.TileId);
             return landTile != null && landTile.Controller == alliance;
@@ -357,7 +346,7 @@ namespace Engine.Models
             return gameManager.buildingSystem.GetBuildings<Airport>()
                 .Where(airport =>
                 {
-                    var landTile = (gameManager.Tiles ?? new List<TileData>())
+                    var landTile = gameManager.Tiles
                         .OfType<LandTileData>()
                         .FirstOrDefault(tile => tile.TileId == airport.TileId);
                     return landTile != null && landTile.Controller == alliance;
@@ -371,7 +360,6 @@ namespace Engine.Models
         {
             aircraftType = null;
             return gameManager.squadronSystem.TryGetSquadron(flight.SquadronId, out squadron)
-                   && squadron != null
                    && aircraftTypes.TryGetValue(
                        squadron.AircraftTypeDefinitionId,
                        out aircraftType);
@@ -388,8 +376,8 @@ namespace Engine.Models
                     entry.Action == AirWaypointAction.Rendezvous))
                 return Math.Max(1f, ownType.CruiseSpeedKnots);
 
-            return (package.Flights ?? new List<AirFlight>())
-                .Where(candidate => candidate != null && candidate.IsRequired)
+            return package.Flights
+                .Where(candidate => candidate.IsRequired)
                 .Select(candidate =>
                     TryGetFlightContext(candidate, out _, out var type)
                         ? Math.Max(1f, type.CruiseSpeedKnots)
@@ -478,9 +466,9 @@ namespace Engine.Models
             Squadron squadron,
             DateTime occurredAt)
         {
-            foreach (var aircraft in squadron.Aircraft ?? new List<CampaignAircraft>())
+            foreach (var aircraft in squadron.Aircraft)
             {
-                if (aircraft?.AssignedFlightId != flight.FlightId)
+                if (aircraft.AssignedFlightId != flight.FlightId)
                     continue;
                 aircraft.Status = CampaignAircraftStatus.Lost;
                 aircraft.AssignedFlightId = Guid.Empty;
@@ -496,9 +484,9 @@ namespace Engine.Models
         {
             if (gameManager.squadronSystem.TryGetSquadron(flight.SquadronId, out var squadron))
             {
-                foreach (var aircraft in squadron.Aircraft ?? new List<CampaignAircraft>())
+                foreach (var aircraft in squadron.Aircraft)
                 {
-                    if (aircraft?.AssignedFlightId != flight.FlightId)
+                    if (aircraft.AssignedFlightId != flight.FlightId)
                         continue;
                     aircraft.Status = CampaignAircraftStatus.Lost;
                     aircraft.AssignedFlightId = Guid.Empty;

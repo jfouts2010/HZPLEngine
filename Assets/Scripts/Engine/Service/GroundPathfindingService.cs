@@ -145,7 +145,7 @@ namespace Engine.Models.Ground
 
         private static IEnumerable<Vector3Int> OrderTileIds(IEnumerable<Vector3Int> tileIds)
         {
-            return (tileIds ?? Enumerable.Empty<Vector3Int>())
+            return tileIds
                 .OrderBy(tileId => tileId.x)
                 .ThenBy(tileId => tileId.y)
                 .ThenBy(tileId => tileId.z);

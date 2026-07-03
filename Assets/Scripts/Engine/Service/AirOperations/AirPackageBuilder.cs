@@ -36,17 +36,11 @@ namespace Engine.Service
             AirMissionPriorityService priorityService,
             IAirRouteGeometryPlanner routeGeometryPlanner = null)
         {
-            this.gameManager = gameManager ?? throw new ArgumentNullException(nameof(gameManager));
-            if (module == null)
-                throw new ArgumentNullException(nameof(module));
-            this.projectedEffects = projectedEffects
-                                    ?? throw new ArgumentNullException(nameof(projectedEffects));
-            this.priorityService = priorityService
-                                   ?? throw new ArgumentNullException(nameof(priorityService));
-            this.routeGeometryPlanner = routeGeometryPlanner
-                                        ?? new SeparatedIngressEgressRouteGeometryPlanner();
+            this.gameManager = gameManager;
+            this.projectedEffects = projectedEffects;
+            this.priorityService = priorityService;
+            this.routeGeometryPlanner = routeGeometryPlanner;
             aircraftTypes = module.AircraftTypeDefinitions
-                .Where(definition => definition != null)
                 .ToDictionary(definition => definition.AircraftTypeDefinitionId);
         }
 
@@ -59,11 +53,6 @@ namespace Engine.Service
         {
             package = null;
             reason = string.Empty;
-            if (commander == null || request == null)
-            {
-                reason = "Commander and request are required.";
-                return AirPackageBuildOutcome.Deferred;
-            }
 
             return request.IsSupportRequest
                 ? TryBuildSupportPackage(commander, request, currentTime, out package, out reason)
@@ -257,7 +246,7 @@ namespace Engine.Service
                 .OrderBy(group => group.Distance)
                 .ThenBy(group => group.Candidates[0].Squadron.AirportBuildingId)
                 .FirstOrDefault();
-            var orderedCandidates = sameAirportGroup?.Candidates ?? candidates.ToList();
+            var orderedCandidates = sameAirportGroup?.Candidates;
             return TakeAircraft(orderedCandidates, desiredStrength);
         }
 
@@ -304,29 +293,30 @@ namespace Engine.Service
             Squadron squadron,
             IReadOnlyCollection<CampaignAircraft> aircraft)
         {
-            return new AirFlight
+            var flight = new AirFlight
             {
                 SquadronId = squadron.SquadronId,
                 MissionType = request.RequestType,
-                IsRequired = true,
-                AircraftIds = aircraft.Select(candidate => candidate.AircraftId).ToList()
+                IsRequired = true
             };
+            flight.AircraftIds.AddRange(
+                aircraft.Select(candidate => candidate.AircraftId));
+            return flight;
         }
 
         private List<Squadron> GetFriendlySquadrons(Alliance alliance)
         {
-            return (gameManager.squadronSystem.Squadrons ?? new List<Squadron>())
-                .Where(squadron => squadron != null
-                                   && gameManager.GetCountryAlliance(squadron.CountryId) == alliance)
+            return gameManager.squadronSystem.Squadrons
+                .Where(squadron =>
+                    gameManager.GetCountryAlliance(squadron.CountryId) == alliance)
                 .OrderBy(squadron => squadron.SquadronId)
                 .ToList();
         }
 
         private static List<CampaignAircraft> GetAvailableAircraft(Squadron squadron)
         {
-            return (squadron.Aircraft ?? new List<CampaignAircraft>())
-                .Where(aircraft => aircraft != null
-                                   && aircraft.Status == CampaignAircraftStatus.Ready
+            return squadron.Aircraft
+                .Where(aircraft => aircraft.Status == CampaignAircraftStatus.Ready
                                    && aircraft.AssignedFlightId == Guid.Empty)
                 .ToList();
         }
@@ -349,7 +339,7 @@ namespace Engine.Service
         {
             reason = string.Empty;
             var plans = new List<RoutePlan>();
-            foreach (var flight in package.Flights ?? new List<AirFlight>())
+            foreach (var flight in package.Flights)
             {
                 if (!gameManager.squadronSystem.TryGetSquadron(flight.SquadronId, out var squadron)
                     || !gameManager.buildingSystem.TryGetBuilding(squadron.AirportBuildingId, out var airport)
@@ -365,8 +355,7 @@ namespace Engine.Service
                     aircraftType,
                     AirspaceGeometry.TileCenterFeet(
                         airport.TileId,
-                        gameManager.SimulationSettings?.TileDistanceKM
-                        ?? SimulationSettings.DefaultTileDistanceKM)));
+                        gameManager.SimulationSettings.TileDistanceKM)));
             }
 
             var desiredMissionAltitude = GetMissionAltitudeFeet(request.RequestType);
@@ -374,11 +363,9 @@ namespace Engine.Service
                 Math.Min(desiredMissionAltitude, plan.AircraftType.ServiceCeilingFeet));
             var missionCenter = AirspaceGeometry.TileCenterFeet(
                 request.MissionArea.CenterTileId,
-                gameManager.SimulationSettings?.TileDistanceKM
-                ?? SimulationSettings.DefaultTileDistanceKM,
+                gameManager.SimulationSettings.TileDistanceKM,
                 missionAltitude);
-            var tileDistanceFeet = (gameManager.SimulationSettings?.TileDistanceKM
-                                    ?? SimulationSettings.DefaultTileDistanceKM)
+            var tileDistanceFeet = gameManager.SimulationSettings.TileDistanceKM
                                    * AirspaceGeometry.FeetPerKilometer;
             var missionEntry = request.FulfillmentPattern == AirMissionRequestFulfillmentPattern.Sustained
                 ? missionCenter - Vector3.right * tileDistanceFeet * 0.5f
@@ -511,8 +498,7 @@ namespace Engine.Service
 
             if (request.FulfillmentPattern == AirMissionRequestFulfillmentPattern.Sustained)
             {
-                var tileDistanceFeet = (gameManager.SimulationSettings?.TileDistanceKM
-                                        ?? SimulationSettings.DefaultTileDistanceKM)
+                var tileDistanceFeet = gameManager.SimulationSettings.TileDistanceKM
                                        * AirspaceGeometry.FeetPerKilometer;
                 var trackOffset = Vector3.right * tileDistanceFeet * 0.5f;
                 var stationEntry = NewWaypoint(
@@ -764,8 +750,8 @@ namespace Engine.Service
             IReadOnlyList<Vector3> ingressWaypoints,
             IReadOnlyList<Vector3> egressWaypoints)
         {
-            IngressWaypoints = ingressWaypoints ?? Array.Empty<Vector3>();
-            EgressWaypoints = egressWaypoints ?? Array.Empty<Vector3>();
+            IngressWaypoints = ingressWaypoints;
+            EgressWaypoints = egressWaypoints;
         }
     }
 
@@ -775,9 +761,6 @@ namespace Engine.Service
 
         public AirRouteGeometry Plan(AirRouteGeometryPlanningContext context)
         {
-            if (context == null)
-                throw new ArgumentNullException(nameof(context));
-
             var side = SelectSide(context.RouteKey);
             var ingress = CreateOffsetMidpoint(
                 context.IngressOrigin,

@@ -19,8 +19,7 @@ namespace Engine.Service
 
         public AirMissionRequestGenerator(AirMissionPriorityService priorityService)
         {
-            this.priorityService = priorityService
-                                   ?? throw new ArgumentNullException(nameof(priorityService));
+            this.priorityService = priorityService;
         }
 
         public List<AirMissionRequest> Generate(
@@ -28,11 +27,6 @@ namespace Engine.Service
             AirPlanningSnapshot snapshot,
             int operationalCadenceHours)
         {
-            if (commander == null)
-                throw new ArgumentNullException(nameof(commander));
-            if (snapshot == null)
-                throw new ArgumentNullException(nameof(snapshot));
-
             var generated = new List<AirMissionRequest>();
             var effectStart = snapshot.CurrentTime + AirPackage.PreparationDelay;
             var effectEnd = snapshot.CurrentTime
@@ -170,7 +164,7 @@ namespace Engine.Service
                 PlanningCycle = commander.PlanningCycle,
                 DesiredAircraftStrength = Math.Max(0, desiredAircraftStrength),
                 DesiredSupportSlots = Math.Max(0, desiredSupportSlots),
-                Rationale = rationale ?? string.Empty
+                Rationale = rationale
             };
         }
 
@@ -190,8 +184,7 @@ namespace Engine.Service
 
             var desiredAdvantage = Math.Max(
                 0.1f,
-                doctrine?.DesiredAirCombatAdvantage
-                ?? AllianceAirDoctrine.DefaultDesiredAirCombatAdvantage);
+                doctrine.DesiredAirCombatAdvantage);
             var pressureRatio = hostilePower * desiredAdvantage / Math.Max(0.1f, friendlyPower);
             var strengthScale = Mathf.Clamp(pressureRatio, 0.5f, 2f);
             return Math.Max(
@@ -206,9 +199,9 @@ namespace Engine.Service
         {
             var recentThreshold = currentTime - TimeSpan.FromHours(24);
             var demandArea = new AirMissionArea(centerTile, DefaultMissionRadiusTiles);
-            return (commander.SupportDemandHistory ?? new List<SupportDemandSample>())
-                .Where(sample => sample != null
-                                 && sample.SupportType == AirMissionRequestType.ProvideAerialRefueling
+            return commander.SupportDemandHistory
+                .Where(sample =>
+                    sample.SupportType == AirMissionRequestType.ProvideAerialRefueling
                                  && sample.RecordedAt >= recentThreshold
                                  && demandArea.Contains(sample.MissionArea.CenterTileId))
                 .Sum(sample => Math.Max(0, sample.RequestedSlots));

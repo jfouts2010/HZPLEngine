@@ -84,7 +84,7 @@ namespace Engine.Models.Ground
                 .ToList();
 
             estimate = Estimate(
-                (attackerDivisions ?? Enumerable.Empty<Division>())
+                attackerDivisions
                 .Where(GroundTacticalCombatRules.IsCombatReady)
                 .ToList(),
                 defenders,
@@ -106,7 +106,7 @@ namespace Engine.Models.Ground
                 return false;
 
             var attackers = new List<Division>();
-            foreach (var divisionId in attackerDivisionIds ?? Enumerable.Empty<Guid>())
+            foreach (var divisionId in attackerDivisionIds)
             {
                 if (gameManager.divisionSystem.TryGetDivision(divisionId, out var division) && division != null)
                     attackers.Add(division);
@@ -141,10 +141,10 @@ namespace Engine.Models.Ground
             GroundCombatAssaultIntent assaultIntent,
             float damageScale)
         {
-            var attackers = (attackerDivisions ?? Array.Empty<Division>())
+            var attackers = attackerDivisions
                 .Where(GroundTacticalCombatRules.IsCombatReady)
                 .ToList();
-            var defenders = (defenderDivisions ?? Array.Empty<Division>())
+            var defenders = defenderDivisions
                 .Where(GroundTacticalCombatRules.IsCombatReady)
                 .ToList();
 

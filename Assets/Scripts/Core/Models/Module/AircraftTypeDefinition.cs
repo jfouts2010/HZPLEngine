@@ -60,7 +60,7 @@ namespace Models.Module
 
             AircraftTypeDefinitionId = aircraftTypeDefinitionId;
             Name = string.IsNullOrWhiteSpace(name) ? aircraftTypeDefinitionId.ToString() : name.Trim();
-            ThirdPartyId = thirdPartyId ?? string.Empty;
+            ThirdPartyId = thirdPartyId;
             CruiseSpeedKnots = Math.Max(0f, cruiseSpeedKnots);
             CombatSpeedKnots = Math.Max(0f, combatSpeedKnots);
             ClimbRateFeetPerMinute = Math.Max(0f, climbRateFeetPerMinute);
@@ -74,7 +74,7 @@ namespace Models.Module
             EcmQuality = ecmQuality;
             Survivability = survivability;
             OrdnanceCapacity = Math.Max(0f, ordnanceCapacity);
-            CompatibleOrdnanceTypeDefinitionIds = compatibleOrdnanceTypeDefinitionIds ?? new List<Guid>();
+            CompatibleOrdnanceTypeDefinitionIds = compatibleOrdnanceTypeDefinitionIds;
             SupportCapability = supportCapability;
             SupportSlotCapacity = supportCapability == AirSupportCapability.None
                 ? 0

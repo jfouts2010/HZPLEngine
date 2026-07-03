@@ -25,7 +25,7 @@ namespace Models.Module
 
             OrdnanceTypeDefinitionId = ordnanceTypeDefinitionId;
             Name = string.IsNullOrWhiteSpace(name) ? ordnanceTypeDefinitionId.ToString() : name.Trim();
-            ThirdPartyId = thirdPartyId ?? string.Empty;
+            ThirdPartyId = thirdPartyId;
             Weight = Math.Max(0f, weight);
             EffectPower = Math.Max(0, effectPower);
             EffectivenessByTargetCategory = ClampEffectiveness(effectivenessByTargetCategory);

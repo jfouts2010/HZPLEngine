@@ -35,7 +35,7 @@ namespace Monobehaviours.Singletons
 
         public void SetActive(ModuleDefinition module)
         {
-            _activeModule = module ?? throw new ArgumentNullException(nameof(module));
+            _activeModule = module;
             _hasActiveModuleSelection = true;
         }
 

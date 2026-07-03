@@ -48,9 +48,6 @@ namespace Models.Module
 
         public static DivisionCombatStats Calculate(IEnumerable<DivisionCombatStatsBattalion> battalions)
         {
-            if (battalions == null)
-                throw new ArgumentNullException(nameof(battalions));
-
             var strength = 0;
             var organization = 0;
             var recovery = 0f;

@@ -215,7 +215,7 @@ namespace Engine.Models
 
         private static Dictionary<Vector3Int, LandTileData> BuildLandTileLookup(GameManager gameManager)
         {
-            return (gameManager?.Tiles ?? new List<TileData>())
+            return (gameManager.Tiles)
                 .OfType<LandTileData>()
                 .GroupBy(tileData => tileData.TileId)
                 .ToDictionary(group => group.Key, group => group.First());
@@ -223,11 +223,11 @@ namespace Engine.Models
 
         private static Dictionary<Vector3Int, List<Vector3Int>> BuildNeighborLookup(GameManager gameManager)
         {
-            return (gameManager?.CampaignTiles ?? new List<Tile>())
+            return (gameManager.CampaignTiles)
                 .GroupBy(tile => tile.Coordinates)
                 .ToDictionary(
                     group => group.Key,
-                    group => group.First().NeighborTileIds ?? new List<Vector3Int>());
+                    group => group.First().NeighborTileIds);
         }
 
         private static Dictionary<Alliance, Vector3Int> BuildSupplyCapitalLookup(
@@ -235,7 +235,7 @@ namespace Engine.Models
             IReadOnlyDictionary<Vector3Int, LandTileData> landTilesById)
         {
             var result = new Dictionary<Alliance, Vector3Int>();
-            foreach (var capital in gameManager?.SupplyCapitals ?? new List<SupplyCapitalStartingCondition>())
+            foreach (var capital in gameManager.SupplyCapitals)
             {
                 if (capital == null || capital.Alliance == Alliance.Neutral)
                     continue;
@@ -255,7 +255,7 @@ namespace Engine.Models
         private List<HubSupplyOption> BuildHubOptions()
         {
             var hubOptions = new List<HubSupplyOption>();
-            foreach (var hub in (gameManager?.buildingSystem?.Buildings ?? new List<Building>()).OfType<SupplyHub>())
+            foreach (var hub in gameManager.buildingSystem.Buildings.OfType<SupplyHub>())
             {
                 if (hub.FunctionalLevel <= 0)
                     continue;
@@ -292,7 +292,7 @@ namespace Engine.Models
             var divisionAssignments = new List<DivisionSupplyAssignment>();
             divisionsByHubId = new Dictionary<Guid, List<Division>>();
 
-            foreach (var division in gameManager?.divisionSystem?.Divisions ?? new List<Division>())
+            foreach (var division in gameManager.divisionSystem.Divisions)
             {
                 if (division == null || division.SupplyConsumption <= 0f)
                     continue;
@@ -377,11 +377,11 @@ namespace Engine.Models
             if (!LandTilesById.TryGetValue(tileId, out var landTileData) || landTileData.Controller != alliance)
                 return false;
 
-            railLevel = gameManager?.buildingSystem
-                ?.GetBuildingsOnTile(tileId, BuildingType.Railroad)
+            railLevel = gameManager.buildingSystem
+                .GetBuildingsOnTile(tileId, BuildingType.Railroad)
                 .Select(building => building.FunctionalLevel)
                 .DefaultIfEmpty(0)
-                .Max() ?? 0;
+                .Max();
 
             return railLevel > 0;
         }

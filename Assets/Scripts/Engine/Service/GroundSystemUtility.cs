@@ -74,7 +74,7 @@ namespace Engine.Models.Ground
         {
             var tile = gameManager?.CampaignTiles?
                 .FirstOrDefault(candidate => candidate != null && candidate.Coordinates == tileId);
-            return tile?.NeighborTileIds ?? Enumerable.Empty<Vector3Int>();
+            return tile?.NeighborTileIds;
         }
     }
 }

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
+using UnityEngine.Serialization;
 
 namespace Models.Gameplay.Campaign
 {
@@ -14,17 +15,23 @@ namespace Models.Gameplay.Campaign
         public Guid MissionRequestId;
         public Alliance Alliance;
         public DateTime CreatedAt;
-        public List<AirFlight> Flights = new List<AirFlight>();
-        public List<Guid> SupportingFlightIds = new List<Guid>();
+        private List<AirFlight> flights = new List<AirFlight>();
+        private List<Guid> supportingFlightIds = new List<Guid>();
         public string Rationale = string.Empty;
+
+        public List<AirFlight> Flights => flights;
+        public List<Guid> SupportingFlightIds => supportingFlightIds;
 
         private IReadOnlyList<AirFlight> RequiredFlights
         {
             get
             {
-                var flights = (Flights ?? new List<AirFlight>())
-                    .Where(flight => flight != null)
-                    .ToList();
+                var flights = Flights;
+                if (flights.Count == 0)
+                {
+                    throw new InvalidOperationException(
+                        $"Package {PackageId} contains no flights.");
+                }
                 var required = flights.Where(flight => flight.IsRequired).ToList();
                 return required.Count > 0 ? required : flights;
             }
@@ -34,7 +41,7 @@ namespace Models.Gameplay.Campaign
             RequiredFlights
             .SelectMany(flight => flight.Route)
             .FirstOrDefault(waypoint =>
-                waypoint?.Action == AirWaypointAction.Rendezvous);
+                waypoint.Action == AirWaypointAction.Rendezvous);
 
         public DateTime EarliestTakeoffTime =>
             RequiredFlights.Count == 0
@@ -55,11 +62,12 @@ namespace Models.Gameplay.Campaign
         {
             get
             {
-                var flights = (Flights ?? new List<AirFlight>())
-                    .Where(flight => flight != null)
-                    .ToList();
+                var flights = Flights;
                 if (flights.Count == 0)
-                    return AirTaskingLifecycleState.Cancelled;
+                {
+                    throw new InvalidOperationException(
+                        $"Package {PackageId} contains no flights.");
+                }
                 if (flights.Any(flight => flight.LifecycleState == AirTaskingLifecycleState.Aborted))
                     return AirTaskingLifecycleState.Aborted;
                 if (flights.Any(flight => flight.LifecycleState == AirTaskingLifecycleState.Active))
@@ -96,9 +104,18 @@ namespace Models.Gameplay.Campaign
             || LifecycleState == AirTaskingLifecycleState.Cancelled
             || LifecycleState == AirTaskingLifecycleState.Aborted;
 
-        public bool HasPhysicallyEnded =>
-            (Flights ?? new List<AirFlight>())
-            .Where(flight => flight != null)
-            .All(flight => flight.HasPhysicallyEnded);
+        public bool HasPhysicallyEnded
+        {
+            get
+            {
+                if (Flights.Count == 0)
+                {
+                    throw new InvalidOperationException(
+                        $"Package {PackageId} contains no flights.");
+                }
+
+                return Flights.All(flight => flight.HasPhysicallyEnded);
+            }
+        }
     }
 }

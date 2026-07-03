@@ -66,7 +66,7 @@ namespace Models.Gameplay.Campaign
             this.waypointId = waypointId;
             this.action = action;
             this.occurredAt = occurredAt;
-            this.detail = detail ?? string.Empty;
+            this.detail = detail;
         }
     }
 
@@ -77,39 +77,31 @@ namespace Models.Gameplay.Campaign
         public Guid SquadronId;
         public AirMissionRequestType MissionType;
         public bool IsRequired = true;
-        public List<Guid> AircraftIds = new List<Guid>();
-
-        [SerializeField, FormerlySerializedAs("LifecycleState")]
+        private List<Guid> aircraftIds = new List<Guid>();
         private AirTaskingLifecycleState lifecycleState = AirTaskingLifecycleState.Committed;
-        [SerializeField, FormerlySerializedAs("ExecutionPhase")]
         private FlightExecutionPhase executionPhase = FlightExecutionPhase.AwaitingTakeoff;
-        [SerializeField, FormerlySerializedAs("Route")]
         private List<AirWaypoint> route = new List<AirWaypoint>();
-        [SerializeField, FormerlySerializedAs("CurrentWaypointIndex")]
         private int currentWaypointIndex;
-        [SerializeField, FormerlySerializedAs("HasPosition")]
         private bool hasPosition;
-        [SerializeField, FormerlySerializedAs("PositionFeet")]
         private Vector3 positionFeet;
-        [SerializeField, FormerlySerializedAs("HeadingDegrees")]
         private float headingDegrees;
-        [SerializeField, FormerlySerializedAs("IsWaitingAtRendezvous")]
         private bool isWaitingAtRendezvous;
-        [SerializeField, FormerlySerializedAs("MissionAchieved")]
         private bool missionAchieved;
-        [SerializeField, FormerlySerializedAs("ExecutionEvents")]
         private List<FlightExecutionEvent> executionEvents =
             new List<FlightExecutionEvent>();
         [NonSerialized] private ReadOnlyCollection<AirWaypoint> routeView;
         [NonSerialized] private ReadOnlyCollection<FlightExecutionEvent> executionEventView;
 
         public int ProvidedSupportSlots;
-        public List<AirSupportReservation> SupportReservations = new List<AirSupportReservation>();
+        private List<AirSupportReservation> supportReservations =
+            new List<AirSupportReservation>();
 
+        public List<Guid> AircraftIds => aircraftIds;
+        public List<AirSupportReservation> SupportReservations => supportReservations;
         public AirTaskingLifecycleState LifecycleState => lifecycleState;
         public FlightExecutionPhase ExecutionPhase => executionPhase;
         public IReadOnlyList<AirWaypoint> Route =>
-            routeView ??= (route ??= new List<AirWaypoint>()).AsReadOnly();
+            routeView ??= route.AsReadOnly();
         public int CurrentWaypointIndex => currentWaypointIndex;
         public bool HasPosition => hasPosition;
         public Vector3 PositionFeet => positionFeet;
@@ -117,11 +109,8 @@ namespace Models.Gameplay.Campaign
         public bool IsWaitingAtRendezvous => isWaitingAtRendezvous;
         public bool MissionAchieved => missionAchieved;
         public DateTime PlannedTakeoffTime =>
-            route?.FirstOrDefault(waypoint =>
-                waypoint?.Action == AirWaypointAction.Takeoff)?.PlannedArrivalTime
-            ?? default;
-        public DateTime EffectStart => EffectWaypoints.FirstOrDefault()?.PlannedArrivalTime
-                                       ?? default;
+            GetRequiredWaypoint(AirWaypointAction.Takeoff).PlannedArrivalTime;
+        public DateTime EffectStart => EffectWaypoints.First().PlannedArrivalTime;
         public bool HasSustainedEffect =>
             EffectWaypoints.Any(waypoint => waypoint.Action == AirWaypointAction.StationEntry);
         public DateTime EffectEnd
@@ -130,37 +119,38 @@ namespace Models.Gameplay.Campaign
             {
                 var effectWaypoints = EffectWaypoints;
                 if (effectWaypoints.Count == 0)
-                    return default;
+                {
+                    throw new InvalidOperationException(
+                        $"Flight {FlightId} route has no effect waypoint.");
+                }
 
                 var last = effectWaypoints[effectWaypoints.Count - 1];
                 if (last.Action == AirWaypointAction.MissionAction)
                     return last.PlannedArrivalTime;
 
-                var endpoint = route?
-                    .Where(waypoint => waypoint?.Action == AirWaypointAction.StationEndpoint
-                                       && waypoint.HasRepeat
-                                       && waypoint.RepeatFromWaypointId == last.WaypointId)
-                    .LastOrDefault();
-                return endpoint?.RepeatUntil ?? last.PlannedArrivalTime;
+                var endpoint = route
+                    .LastOrDefault(waypoint => waypoint.Action == AirWaypointAction.StationEndpoint
+                                               && waypoint.HasRepeat
+                                               && waypoint.RepeatFromWaypointId == last.WaypointId);
+                return (endpoint ?? throw new InvalidOperationException(
+                    $"Flight {FlightId} station has no endpoint.")).RepeatUntil;
             }
         }
-        public AirMissionArea MissionArea => EffectWaypoints.FirstOrDefault()?.EffectArea;
+        public AirMissionArea MissionArea =>
+            EffectWaypoints.First().EffectArea
+            ?? throw new InvalidOperationException(
+                $"Flight {FlightId} effect waypoint has no mission area.");
         public Guid LaunchAirportBuildingId =>
-            route?.FirstOrDefault(waypoint =>
-                waypoint?.Action == AirWaypointAction.Takeoff)?.AirportBuildingId
-            ?? Guid.Empty;
+            GetRequiredWaypoint(AirWaypointAction.Takeoff).AirportBuildingId;
         public Guid RecoveryAirportBuildingId =>
-            route?.LastOrDefault(waypoint =>
-                waypoint?.Action == AirWaypointAction.Land)?.AirportBuildingId
-            ?? Guid.Empty;
+            GetRequiredWaypoint(AirWaypointAction.Land, last: true).AirportBuildingId;
         public IReadOnlyList<FlightExecutionEvent> ExecutionEvents =>
-            executionEventView ??=
-                (executionEvents ??= new List<FlightExecutionEvent>()).AsReadOnly();
+            executionEventView ??= executionEvents.AsReadOnly();
 
         private IReadOnlyList<AirWaypoint> EffectWaypoints =>
-            (route ??= new List<AirWaypoint>())
-            .Where(waypoint => waypoint?.Action == AirWaypointAction.StationEntry
-                               || waypoint?.Action == AirWaypointAction.MissionAction)
+            route
+            .Where(waypoint => waypoint.Action == AirWaypointAction.StationEntry
+                               || waypoint.Action == AirWaypointAction.MissionAction)
             .ToList();
 
         public bool IsTerminal =>
@@ -196,9 +186,9 @@ namespace Models.Gameplay.Campaign
                      index--)
                 {
                     var waypoint = route[index];
-                    if (waypoint?.Action == AirWaypointAction.StationEntry)
+                    if (waypoint.Action == AirWaypointAction.StationEntry)
                         return waypoint.EffectArea;
-                    if (waypoint?.Action == AirWaypointAction.ReturnToBase)
+                    if (waypoint.Action == AirWaypointAction.ReturnToBase)
                         return null;
                 }
 
@@ -217,8 +207,7 @@ namespace Models.Gameplay.Campaign
                     "A flight route can only be materialized once before takeoff.");
             }
 
-            var materializedRoute = waypoints?.ToList()
-                                    ?? throw new ArgumentNullException(nameof(waypoints));
+            var materializedRoute = waypoints?.ToList();
             if (!TryValidateRoute(materializedRoute, out var reason))
             {
                 throw new ArgumentException(
@@ -244,7 +233,7 @@ namespace Models.Gameplay.Campaign
             if (lifecycleState != AirTaskingLifecycleState.Committed
                 || executionPhase != FlightExecutionPhase.AwaitingTakeoff
                 || route.Count < 2
-                || route[0]?.Action != AirWaypointAction.Takeoff)
+                || route[0].Action != AirWaypointAction.Takeoff)
                 return false;
 
             var takeoff = route[0];
@@ -274,8 +263,8 @@ namespace Models.Gameplay.Campaign
             var waypoint = CurrentWaypoint;
             if (!IsAirborne || waypoint == null)
             {
-                Fail(occurredAt, "Flight encountered an invalid waypoint.");
-                return FlightWaypointTransition.Failed;
+                throw new InvalidOperationException(
+                    $"Flight {FlightId} cannot cross a waypoint in its current state.");
             }
 
             switch (waypoint.Action)
@@ -302,8 +291,7 @@ namespace Models.Gameplay.Campaign
                     if (waypoint.HasRepeat && occurredAt < waypoint.RepeatUntil)
                     {
                         var repeatIndex = route.FindIndex(candidate =>
-                            candidate != null
-                            && candidate.WaypointId == waypoint.RepeatFromWaypointId);
+                            candidate.WaypointId == waypoint.RepeatFromWaypointId);
                         if (repeatIndex < 0)
                         {
                             Fail(occurredAt, "Station loop target is missing.");
@@ -402,10 +390,9 @@ namespace Models.Gameplay.Campaign
                     "Only a returning flight can replace its unflown recovery route.");
             }
 
-            var replacement = recoveryWaypoints?.ToList()
-                              ?? throw new ArgumentNullException(nameof(recoveryWaypoints));
+            var replacement = recoveryWaypoints?.ToList();
             if (replacement.Count == 0
-                || replacement[replacement.Count - 1]?.Action != AirWaypointAction.Land)
+                || replacement[replacement.Count - 1].Action != AirWaypointAction.Land)
             {
                 throw new ArgumentException(
                     "A recovery route must end with a landing waypoint.",
@@ -451,7 +438,7 @@ namespace Models.Gameplay.Campaign
             RecordEvent(
                 CurrentWaypoint,
                 occurredAt,
-                reason ?? string.Empty,
+                reason,
                 AirWaypointAction.ReturnToBase);
         }
 
@@ -461,12 +448,22 @@ namespace Models.Gameplay.Campaign
             string detail,
             AirWaypointAction fallbackAction = AirWaypointAction.Transit)
         {
-            executionEvents ??= new List<FlightExecutionEvent>();
             executionEvents.Add(new FlightExecutionEvent(
-                waypoint?.WaypointId ?? Guid.Empty,
-                waypoint?.Action ?? fallbackAction,
+                waypoint.WaypointId,
+                waypoint.Action,
                 occurredAt,
                 detail));
+        }
+
+        private AirWaypoint GetRequiredWaypoint(
+            AirWaypointAction action,
+            bool last = false)
+        {
+            var waypoint = last
+                ? route.LastOrDefault(candidate => candidate.Action == action)
+                : route.FirstOrDefault(candidate => candidate.Action == action);
+            return waypoint ?? throw new InvalidOperationException(
+                $"Flight {FlightId} route has no {action} waypoint.");
         }
 
         private void BeginAbortRecovery(DateTime occurredAt, string reason)
@@ -478,7 +475,7 @@ namespace Models.Gameplay.Campaign
 
             var returnIndex = route.FindIndex(
                 Math.Max(0, currentWaypointIndex),
-                waypoint => waypoint?.Action == AirWaypointAction.ReturnToBase);
+                waypoint => waypoint.Action == AirWaypointAction.ReturnToBase);
             if (returnIndex < 0)
             {
                 Fail(

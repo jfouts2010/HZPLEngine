@@ -37,17 +37,11 @@ namespace Models.Gameplay.Campaign
 
         public Division(DivisionStartingCondition startingCondition, DivisionCombatStats fullStrengthStats)
         {
-            if (startingCondition == null)
-                throw new ArgumentNullException(nameof(startingCondition));
-
-            if (fullStrengthStats == null)
-                throw new ArgumentNullException(nameof(fullStrengthStats));
-
             DivisionId = startingCondition.DivisionId;
             DivisionTemplateId = startingCondition.DivisionTemplateId;
             CountryId = startingCondition.CountryId;
             TileId = startingCondition.TileId;
-            Name = startingCondition.Name ?? string.Empty;
+            Name = startingCondition.Name;
             MaxStrength = fullStrengthStats.MaxStrength;
             MaxOrganization = fullStrengthStats.MaxOrganization;
             Recovery = fullStrengthStats.Recovery;

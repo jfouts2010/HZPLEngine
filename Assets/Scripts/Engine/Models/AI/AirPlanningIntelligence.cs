@@ -34,10 +34,10 @@ namespace Engine.Models
             Alliance = alliance;
             CurrentTime = currentTime;
             TileDistanceKm = Math.Max(1, tileDistanceKm);
-            FriendlySquadrons = friendlySquadrons ?? Array.Empty<AirPlanningSquadronSnapshot>();
-            HostileSquadrons = hostileSquadrons ?? Array.Empty<AirPlanningSquadronSnapshot>();
-            FriendlyAirportTiles = friendlyAirportTiles ?? Array.Empty<Vector3Int>();
-            HostileAirportTiles = hostileAirportTiles ?? Array.Empty<Vector3Int>();
+            FriendlySquadrons = friendlySquadrons;
+            HostileSquadrons = hostileSquadrons;
+            FriendlyAirportTiles = friendlyAirportTiles;
+            HostileAirportTiles = hostileAirportTiles;
         }
     }
 
@@ -73,7 +73,7 @@ namespace Engine.Models
 
         public PerfectAirPlanningIntelligence(GameManager gameManager)
         {
-            this.gameManager = gameManager ?? throw new ArgumentNullException(nameof(gameManager));
+            this.gameManager = gameManager;
         }
 
         public AirPlanningSnapshot CreateSnapshot(Alliance alliance)
@@ -81,8 +81,7 @@ namespace Engine.Models
             var friendlySquadrons = new List<AirPlanningSquadronSnapshot>();
             var hostileSquadrons = new List<AirPlanningSquadronSnapshot>();
 
-            foreach (var squadron in (gameManager.squadronSystem?.Squadrons ?? new List<Squadron>())
-                         .Where(candidate => candidate != null)
+            foreach (var squadron in gameManager.squadronSystem.Squadrons
                          .OrderBy(candidate => candidate.SquadronId))
             {
                 if (!gameManager.buildingSystem.TryGetBuilding(
@@ -110,7 +109,7 @@ namespace Engine.Models
             return new AirPlanningSnapshot(
                 alliance,
                 gameManager.CurrentTime,
-                gameManager.SimulationSettings?.TileDistanceKM ?? SimulationSettings.DefaultTileDistanceKM,
+                gameManager.SimulationSettings.TileDistanceKM,
                 friendlySquadrons,
                 hostileSquadrons,
                 GetAirportTiles(alliance, friendly: true),
@@ -120,11 +119,8 @@ namespace Engine.Models
         private IReadOnlyList<Vector3Int> GetAirportTiles(Alliance alliance, bool friendly)
         {
             var airportTiles = new HashSet<Vector3Int>();
-            foreach (var squadron in gameManager.squadronSystem?.Squadrons ?? new List<Squadron>())
+            foreach (var squadron in gameManager.squadronSystem.Squadrons)
             {
-                if (squadron == null)
-                    continue;
-
                 var squadronAlliance = gameManager.GetCountryAlliance(squadron.CountryId);
                 var include = friendly
                     ? squadronAlliance == alliance

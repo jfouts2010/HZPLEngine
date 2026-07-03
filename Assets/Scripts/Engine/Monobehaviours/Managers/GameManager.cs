@@ -70,9 +70,6 @@ namespace Engine.Monobehaviours.Managers
 
         public void StartCampaign(CampaignTemplate template)
         {
-            if (template == null)
-                throw new ArgumentNullException(nameof(template));
-
             template.RebuildDerivedData();
 
             TemplateName = template.Name;
@@ -149,8 +146,7 @@ namespace Engine.Monobehaviours.Managers
 
         public IReadOnlyList<AirFlight> GetAirborneFlights()
         {
-            return _airTaskingSystem?.GetAirborneFlights().ToList()
-                   ?? new List<AirFlight>();
+            return _airTaskingSystem.GetAirborneFlights().ToList();
         }
 
         public AllianceIADS GetAllianceIADS(Alliance alliance)
@@ -165,7 +161,7 @@ namespace Engine.Monobehaviours.Managers
         {
             var assignment = CampaignTemplate?.CountryAllianceAssignments?
                 .FirstOrDefault(candidate => candidate.CountryId == countryId);
-            return assignment?.Alliance ?? Alliance.Neutral;
+            return assignment.Alliance;
         }
 
         public bool IsDivisionEngagedInGroundCombat(Guid divisionId)
@@ -188,9 +184,9 @@ namespace Engine.Monobehaviours.Managers
 
         public IReadOnlyList<GroundCombat> GetActiveGroundCombats()
         {
-            return _groundCombatSystem?.ActiveCombats ?? Array.Empty<GroundCombat>();
+            return _groundCombatSystem.ActiveCombats;
         }
-        
+
 
         public void PauseCampaign()
         {
@@ -233,7 +229,7 @@ namespace Engine.Monobehaviours.Managers
 
         private IEnumerator SlowGameTurn()
         {
-            yield return null;// yield return new WaitForSeconds(0.16f);
+            yield return null; // yield return new WaitForSeconds(0.16f);
             GameTurn();
             GameTurnCoroutine = null;
         }
@@ -284,7 +280,7 @@ namespace Engine.Monobehaviours.Managers
 
         private static List<TileData> CopyTileData(List<TileData> startingTileData)
         {
-            return (startingTileData ?? new List<TileData>())
+            return (startingTileData)
                 .Select(CopyTileData)
                 .ToList();
         }
@@ -292,7 +288,7 @@ namespace Engine.Monobehaviours.Managers
         private static List<CountryAllianceAssignment> CopyCountryAllianceAssignments(
             List<CountryAllianceAssignment> assignments)
         {
-            return (assignments ?? new List<CountryAllianceAssignment>())
+            return (assignments)
                 .Select(assignment => new CountryAllianceAssignment
                 {
                     CountryId = assignment.CountryId,
@@ -310,16 +306,16 @@ namespace Engine.Monobehaviours.Managers
         private static Dictionary<Alliance, List<Guid>> CopyGuidAllowances(
             Dictionary<Alliance, List<Guid>> allowances)
         {
-            return (allowances ?? new Dictionary<Alliance, List<Guid>>())
+            return allowances
                 .ToDictionary(
                     allowance => allowance.Key,
-                    allowance => new List<Guid>(allowance.Value ?? new List<Guid>()));
+                    allowance => new List<Guid>(allowance.Value));
         }
 
         private static List<SupplyCapitalStartingCondition> CopySupplyCapitals(
             List<SupplyCapitalStartingCondition> supplyCapitals)
         {
-            return (supplyCapitals ?? new List<SupplyCapitalStartingCondition>())
+            return supplyCapitals
                 .Select(supplyCapital => new SupplyCapitalStartingCondition
                 {
                     Alliance = supplyCapital.Alliance,
@@ -330,7 +326,7 @@ namespace Engine.Monobehaviours.Managers
 
         private static List<Tile> CopyTiles(List<Tile> tiles)
         {
-            return (tiles ?? new List<Tile>())
+            return (tiles)
                 .Select(CopyTile)
                 .ToList();
         }
@@ -340,8 +336,8 @@ namespace Engine.Monobehaviours.Managers
             return new Tile
             {
                 Coordinates = tile.Coordinates,
-                NeighborTileIds = new List<Vector3Int>(tile.NeighborTileIds ?? new List<Vector3Int>()),
-                RiverNeighborTileIds = new List<Vector3Int>(tile.RiverNeighborTileIds ?? new List<Vector3Int>()),
+                NeighborTileIds = new List<Vector3Int>(tile.NeighborTileIds),
+                RiverNeighborTileIds = new List<Vector3Int>(tile.RiverNeighborTileIds),
                 Surface = tile.Surface,
                 Terrain = tile.Terrain,
                 Urbanization = tile.Urbanization,
@@ -351,9 +347,6 @@ namespace Engine.Monobehaviours.Managers
 
         private static TileData CopyTileData(TileData data)
         {
-            if (data == null)
-                throw new ArgumentNullException(nameof(data));
-
             if (data is LandTileData landData)
             {
                 return new LandTileData
@@ -383,10 +376,7 @@ namespace Engine.Monobehaviours.Managers
             List<BuildingStartingCondition> startingConditions,
             ModuleDefinition module)
         {
-            if (module == null)
-                throw new ArgumentNullException(nameof(module));
-
-            return (startingConditions ?? new List<BuildingStartingCondition>())
+            return startingConditions
                 .Select(CreateRuntimeBuilding)
                 .ToList();
         }
@@ -424,16 +414,13 @@ namespace Engine.Monobehaviours.Managers
             List<MobileSamSiteStartingCondition> mobileStartingConditions,
             ModuleDefinition module)
         {
-            if (module == null)
-                throw new ArgumentNullException(nameof(module));
-
             var samSiteTemplates = module.SamSiteTemplates
                 .ToDictionary(template => template.SamSiteTemplateId);
 
             var samComponentDefinitions = module.SamComponentDefinitions
                 .ToDictionary(definition => definition.SamComponentDefinitionId);
 
-            var staticSites = (buildingStartingConditions ?? new List<BuildingStartingCondition>())
+            var staticSites = buildingStartingConditions
                 .Where(startingCondition => startingCondition.Type == BuildingType.AirDefense)
                 .Select(startingCondition => new SamSite(
                     startingCondition,
@@ -443,7 +430,7 @@ namespace Engine.Monobehaviours.Managers
                         samComponentDefinitions,
                         SamSiteHostConstraint.MobileOnly)));
 
-            var mobileSites = (mobileStartingConditions ?? new List<MobileSamSiteStartingCondition>())
+            var mobileSites = mobileStartingConditions
                 .Select(startingCondition => new SamSite(
                     startingCondition,
                     CreateAirDefenseComponentsFromTemplate(
@@ -508,13 +495,16 @@ namespace Engine.Monobehaviours.Managers
             return definition switch
             {
                 RadarAirDefenseComponentDefinition radarDefinition => new RadarAirDefenseComponent(radarDefinition),
-                LauncherAirDefenseComponentDefinition launcherDefinition => new LauncherAirDefenseComponent(launcherDefinition),
-                CommandAirDefenseComponentDefinition commandDefinition => new CommandAirDefenseComponent(commandDefinition),
-                SupportAirDefenseComponentDefinition supportDefinition => new SupportAirDefenseComponent(supportDefinition),
+                LauncherAirDefenseComponentDefinition launcherDefinition => new LauncherAirDefenseComponent(
+                    launcherDefinition),
+                CommandAirDefenseComponentDefinition commandDefinition => new CommandAirDefenseComponent(
+                    commandDefinition),
+                SupportAirDefenseComponentDefinition supportDefinition => new SupportAirDefenseComponent(
+                    supportDefinition),
                 _ => throw new ArgumentOutOfRangeException(
                     nameof(definition),
                     definition,
-                    $"Unsupported SAM component definition type {definition?.GetType().Name ?? "null"}.")
+                    $"Unsupported SAM component definition type {definition?.GetType().Name}.")
             };
         }
 
@@ -522,16 +512,13 @@ namespace Engine.Monobehaviours.Managers
             List<DivisionStartingCondition> startingConditions,
             ModuleDefinition module)
         {
-            if (module == null)
-                throw new ArgumentNullException(nameof(module));
-
             var battalionDefinitions = module.BattalionDefinitions
                 .ToDictionary(battalion => battalion.BattalionDefinitionId);
 
             var divisionTemplates = module.DivisionTemplates
                 .ToDictionary(template => template.DivisionTemplateId);
 
-            return (startingConditions ?? new List<DivisionStartingCondition>())
+            return startingConditions
                 .Select(startingCondition => CreateRuntimeDivision(
                     startingCondition,
                     divisionTemplates,
@@ -564,13 +551,10 @@ namespace Engine.Monobehaviours.Managers
             List<SquadronStartingCondition> startingConditions,
             ModuleDefinition module)
         {
-            if (module == null)
-                throw new ArgumentNullException(nameof(module));
-
             var aircraftTypeDefinitions = module.AircraftTypeDefinitions
                 .ToDictionary(aircraftType => aircraftType.AircraftTypeDefinitionId);
 
-            return (startingConditions ?? new List<SquadronStartingCondition>())
+            return startingConditions
                 .Select(startingCondition => CreateRuntimeSquadron(
                     startingCondition,
                     aircraftTypeDefinitions))

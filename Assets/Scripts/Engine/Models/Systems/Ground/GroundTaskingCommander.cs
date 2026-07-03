@@ -251,7 +251,7 @@ namespace Engine.Models
                 CanBeReplaced = true,
                 Rationale = removedFromOffensive
                     ? "Detached from viable offensive to refill front"
-                    : rationale ?? "Refilling front",
+                    : rationale,
                 Purpose = MoveGroundOrderPurpose.Normal,
                 Path = path,
                 MovementProgress = 0f
@@ -928,7 +928,7 @@ namespace Engine.Models
 
         private static int CountAssaultAssignments(IEnumerable<OffensivePlanAssignment> assignments)
         {
-            return (assignments ?? Enumerable.Empty<OffensivePlanAssignment>())
+            return assignments
                 .Count(assignment => assignment.Intent == GroundOrderAIIntent.Assault);
         }
 
@@ -955,7 +955,7 @@ namespace Engine.Models
 
                 division.CurrentOrder = new HoldGroundOrder(
                     GroundOrderAssignmentSource.AI,
-                    reason ?? "Offensive plan aborted")
+                    reason)
                 {
                     AIIntent = _frontTileIds.Contains(division.TileId)
                         ? GroundOrderAIIntent.HoldFront
@@ -1099,7 +1099,7 @@ namespace Engine.Models
         {
             var value = 0f;
             if (GroundSystemUtility.TryGetLandTileData(_gameManager, tileId, out var landTileData))
-                value += landTileData.Infrastructure?.FunctionalLevel ?? 0;
+                value += landTileData.Infrastructure.FunctionalLevel;
 
             foreach (var building in _gameManager.buildingSystem.GetBuildingsOnTile(tileId))
             {
@@ -1276,7 +1276,7 @@ namespace Engine.Models
                     continue;
 
                 neighborsByTileId[tile.Coordinates] =
-                    tile.NeighborTileIds ?? new List<Vector3Int>();
+                    tile.NeighborTileIds;
             }
 
             return neighborsByTileId;
@@ -1284,7 +1284,7 @@ namespace Engine.Models
 
         private static IOrderedEnumerable<Vector3Int> OrderTileIds(IEnumerable<Vector3Int> tileIds)
         {
-            return (tileIds ?? Enumerable.Empty<Vector3Int>())
+            return tileIds
                 .OrderBy(tileId => tileId.x)
                 .ThenBy(tileId => tileId.y)
                 .ThenBy(tileId => tileId.z);
@@ -1301,7 +1301,7 @@ namespace Engine.Models
         public OffensivePlan(Vector3Int targetTileId, IEnumerable<OffensivePlanAssignment> assignments)
         {
             TargetTileId = targetTileId;
-            Assignments = assignments?.ToList() ?? new List<OffensivePlanAssignment>();
+            Assignments = assignments.ToList();
         }
     }
 

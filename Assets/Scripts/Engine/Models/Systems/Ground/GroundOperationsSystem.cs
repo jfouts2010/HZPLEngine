@@ -56,7 +56,7 @@ namespace Engine.Models.Ground
 
                 var tileDistanceKm = Mathf.Max(
                     SimulationSettings.MinTileDistanceKM,
-                    gameManager.SimulationSettings?.TileDistanceKM ?? SimulationSettings.DefaultTileDistanceKM);
+                    gameManager.SimulationSettings.TileDistanceKM);
                 var progressPerHour = Mathf.Max(0f, division.Speed) / tileDistanceKm;
                 if (!moveOrder.IsRetreat && gameManager.IsDivisionAttackingInGroundCombat(division.DivisionId))
                     continue;
@@ -212,7 +212,7 @@ namespace Engine.Models.Ground
                 {
                     AssignmentSource = GroundOrderAssignmentSource.System,
                     CanBeReplaced = false,
-                    Rationale = rationale ?? "Retreating after combat defeat",
+                    Rationale = rationale,
                     Purpose = MoveGroundOrderPurpose.Retreat
                 };
 

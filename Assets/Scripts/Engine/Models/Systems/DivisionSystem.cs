@@ -175,20 +175,17 @@ namespace Models.Gameplay.Campaign
 
         public void RebuildIndex()
         {
-            var divisions = (Divisions ?? new List<Division>())
-                .ToList();
-
-            foreach (var division in divisions)
+            foreach (var division in Divisions)
             {
                 division.CurrentOrder ??= new HoldGroundOrder();
                 division.EnsureSupplyStore();
             }
 
-            divisionsByTileId = divisions
+            divisionsByTileId = Divisions
                 .GroupBy(division => division.TileId)
                 .ToDictionary(group => group.Key, group => group.ToList());
 
-            divisionsById = divisions
+            divisionsById = Divisions
                 .GroupBy(division => division.DivisionId)
                 .ToDictionary(group => group.Key, group => group.First());
         }

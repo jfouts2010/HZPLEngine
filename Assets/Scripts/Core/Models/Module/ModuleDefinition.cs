@@ -39,14 +39,14 @@ namespace Models.Module
             DisplayName = string.IsNullOrWhiteSpace(displayName) ? Id.ToString() : displayName.Trim();
             Name = string.IsNullOrWhiteSpace(name) ? DisplayName : name.Trim();
             GameName = string.IsNullOrWhiteSpace(gameName) ? DisplayName : gameName.Trim();
-            SimAdapter = simAdapter ?? new NoOpSimAdapter();
-            Countries = countries ?? new List<CountryDefinition>();
-            AircraftTypeDefinitions = aircraftTypeDefinitions ?? new List<AircraftTypeDefinition>();
-            OrdnanceTypeDefinitions = ordnanceTypeDefinitions ?? new List<OrdnanceTypeDefinition>();
-            SamComponentDefinitions = samComponentDefinitions ?? new List<AirDefenseComponentDefinition>();
-            SamSiteTemplates = samSiteTemplates ?? new List<SamSiteTemplate>();
-            BattalionDefinitions = battalionDefinitions ?? new List<BattalionDefinition>();
-            DivisionTemplates = divisionTemplates ?? new List<DivisionTemplate>();
+            SimAdapter = simAdapter;
+            Countries = countries;
+            AircraftTypeDefinitions = aircraftTypeDefinitions;
+            OrdnanceTypeDefinitions = ordnanceTypeDefinitions;
+            SamComponentDefinitions = samComponentDefinitions;
+            SamSiteTemplates = samSiteTemplates;
+            BattalionDefinitions = battalionDefinitions;
+            DivisionTemplates = divisionTemplates;
         }
     }
 }

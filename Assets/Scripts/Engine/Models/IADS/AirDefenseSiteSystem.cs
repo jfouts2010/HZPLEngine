@@ -26,11 +26,6 @@ namespace Models.Gameplay.Campaign
             getCountryAlliance = countryAllianceResolver;
         }
 
-        public IEnumerable<SamSite> GetAirDefenseSites()
-        {
-            return Sites ?? Enumerable.Empty<SamSite>();
-        }
-
         public Alliance GetEffectiveAlliance(SamSite site)
         {
             if (site == null)
@@ -43,7 +38,7 @@ namespace Models.Gameplay.Campaign
                 && buildingSystem.TryGetBuilding(site.HostId, out var building)
                 && building is AirDefenseBuilding airDefenseBuilding)
             {
-                return getCountryAlliance?.Invoke(airDefenseBuilding.CountryId) ?? Alliance.Neutral;
+                return getCountryAlliance.Invoke(airDefenseBuilding.CountryId);
             }
 
             return Alliance.Neutral;
@@ -84,7 +79,7 @@ namespace Models.Gameplay.Campaign
                 return Enumerable.Empty<AirDefenseComponent>();
             }
 
-            return site.Components ?? Enumerable.Empty<AirDefenseComponent>();
+            return site.Components;
         }
 
         public List<SamSite> GetSitesForHost(Guid hostId)
@@ -117,7 +112,7 @@ namespace Models.Gameplay.Campaign
 
         public void DisableSitesOnTileCapture(Vector3Int tileId)
         {
-            foreach (var site in Sites ?? Enumerable.Empty<SamSite>())
+            foreach (var site in Sites)
             {
                 if (site == null
                     || site.HostType != SamSiteHostType.StaticBuilding
@@ -142,15 +137,11 @@ namespace Models.Gameplay.Campaign
 
         public void RebuildIndex()
         {
-            var sites = (Sites ?? new List<SamSite>())
-                .Where(site => site != null)
-                .ToList();
-
-            sitesById = sites
+            sitesById = Sites
                 .GroupBy(site => site.SiteId)
                 .ToDictionary(group => group.Key, group => group.First());
 
-            sitesByHostId = sites
+            sitesByHostId = Sites
                 .GroupBy(site => site.HostId)
                 .ToDictionary(group => group.Key, group => group.ToList());
         }

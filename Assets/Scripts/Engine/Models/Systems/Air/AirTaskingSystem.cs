@@ -27,12 +27,8 @@ namespace Engine.Models
             ModuleDefinition module,
             IAirPlanningIntelligence planningIntelligence = null)
         {
-            this.gameManager = gameManager ?? throw new ArgumentNullException(nameof(gameManager));
-            if (module == null)
-                throw new ArgumentNullException(nameof(module));
-
-            this.planningIntelligence = planningIntelligence
-                                        ?? new PerfectAirPlanningIntelligence(gameManager);
+            this.gameManager = gameManager;
+            this.planningIntelligence = planningIntelligence;
             var projectedEffects = new ProjectedAirEffectService();
             var priorityService = new AirMissionPriorityService(module);
             requestGenerator = new AirMissionRequestGenerator(priorityService);
@@ -63,15 +59,14 @@ namespace Engine.Models
         public IEnumerable<AirPackage> GetPackages()
         {
             return GetCommanders()
-                .SelectMany(commander => commander.Packages ?? Array.Empty<AirPackage>())
-                .Where(package => package != null);
+                .SelectMany(commander => commander.Packages);
         }
 
         public IEnumerable<AirFlight> GetAirborneFlights()
         {
             return GetPackages()
-                .SelectMany(package => package.Flights ?? new List<AirFlight>())
-                .Where(flight => flight != null && flight.IsAirborne && !flight.HasPhysicallyEnded);
+                .SelectMany(package => package.Flights)
+                .Where(flight => flight.IsAirborne && !flight.HasPhysicallyEnded);
         }
 
         public void Initialize()
@@ -113,8 +108,7 @@ namespace Engine.Models
         {
             commander.BeginPlanningCycle(gameManager.CurrentTime);
             var snapshot = planningIntelligence.CreateSnapshot(commander.Alliance);
-            var cadenceHours = gameManager.SimulationSettings?.OperationalCadenceHours
-                               ?? SimulationSettings.DefaultOperationalCadenceHours;
+            var cadenceHours = gameManager.SimulationSettings.OperationalCadenceHours;
             var generatedRequests = requestGenerator.Generate(
                 commander,
                 snapshot,
@@ -126,9 +120,8 @@ namespace Engine.Models
         {
             var evaluations = 0;
             var packagesCreated = 0;
-            var requests = (commander.MissionRequests ?? new List<AirMissionRequest>())
-                .Where(request => request != null
-                                  && !request.IsTerminal
+            var requests = commander.MissionRequests
+                .Where(request => !request.IsTerminal
                                   && request.PlanningCycle == commander.PlanningCycle
                                   && request.EffectEnd > gameManager.CurrentTime)
                 .OrderBy(request => request.IsSupportRequest ? 0 : 1)

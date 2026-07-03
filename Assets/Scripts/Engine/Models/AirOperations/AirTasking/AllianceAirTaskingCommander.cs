@@ -46,20 +46,18 @@ namespace Models.Gameplay.Campaign
         public AllianceAirTaskingCommander(Alliance alliance, AllianceAirDoctrine doctrine)
         {
             Alliance = alliance;
-            Doctrine = doctrine?.Clone() ?? AllianceAirDoctrine.CreateDefault();
+            Doctrine = doctrine.Clone();
         }
 
         public void BeginPlanningCycle(DateTime currentTime)
         {
-            EnsureCollections();
             PlanningCycle++;
 
             var retainedRequests = new List<AirMissionRequest>();
-            foreach (var request in missionRequests.Where(request => request != null))
+            foreach (var request in missionRequests)
             {
                 var linkedPackages = packages
-                    .Where(package => package != null
-                                      && package.MissionRequestId == request.MissionRequestId)
+                    .Where(package => package.MissionRequestId == request.MissionRequestId)
                     .ToList();
                 if (linkedPackages.Any(package => !package.HasPhysicallyEnded))
                 {
@@ -97,9 +95,8 @@ namespace Models.Gameplay.Campaign
                 .Select(request => request.MissionRequestId)
                 .ToHashSet();
             packages = packages
-                .Where(package => package != null
-                                  && (!package.HasPhysicallyEnded
-                                      || retainedRequestIds.Contains(package.MissionRequestId)))
+                .Where(package => !package.HasPhysicallyEnded
+                                  || retainedRequestIds.Contains(package.MissionRequestId))
                 .ToList();
         }
 
@@ -107,11 +104,9 @@ namespace Models.Gameplay.Campaign
             IEnumerable<AirMissionRequest> requests,
             DateTime currentTime)
         {
-            EnsureCollections();
-            foreach (var request in requests ?? Enumerable.Empty<AirMissionRequest>())
+            foreach (var request in requests)
             {
-                if (request == null
-                    || request.Alliance != Alliance
+                if (request.Alliance != Alliance
                     || request.PlanningCycle != PlanningCycle)
                     continue;
 
@@ -136,13 +131,6 @@ namespace Models.Gameplay.Campaign
             DateTime currentTime,
             out string reason)
         {
-            EnsureCollections();
-            if (aircraftReservations == null)
-            {
-                reason = "Aircraft reservations are required.";
-                return false;
-            }
-
             reason = ValidatePackageProposal(package, currentTime);
             if (!string.IsNullOrEmpty(reason))
                 return false;
@@ -219,30 +207,24 @@ namespace Models.Gameplay.Campaign
             DateTime currentTime,
             string reason)
         {
-            EnsureCollections();
             var package = GetPackage(packageId);
             if (package == null
-                || (package.Flights ?? new List<AirFlight>())
-                .Where(flight => flight != null)
+                || package.Flights
                 .All(flight => flight.IsTerminal))
                 return false;
 
-            var aborted = (package.Flights ?? new List<AirFlight>())
-                .Where(flight => flight != null)
+            var aborted = package.Flights
                 .Any(flight => flight.LifecycleState == AirTaskingLifecycleState.Aborted);
             foreach (var supportFlight in packages
-                         .Where(candidate => candidate != null)
-                         .SelectMany(candidate => candidate.Flights ?? new List<AirFlight>())
-                         .Where(flight => flight != null))
+                         .SelectMany(candidate => candidate.Flights))
             {
-                supportFlight.SupportReservations?.RemoveAll(
-                    reservation => reservation != null
-                                   && reservation.ConsumingPackageId == package.PackageId);
+                supportFlight.SupportReservations.RemoveAll(
+                    reservation => reservation.ConsumingPackageId == package.PackageId);
             }
 
-            foreach (var flight in package.Flights ?? new List<AirFlight>())
+            foreach (var flight in package.Flights)
             {
-                if (flight == null || flight.IsTerminal)
+                if (flight.IsTerminal)
                     continue;
 
                 var cancellation = flight.Cancel(currentTime, reason);
@@ -253,7 +235,13 @@ namespace Models.Gameplay.Campaign
             }
 
             var request = GetRequest(package.MissionRequestId);
-            if (request != null && !aborted)
+            if (request == null)
+            {
+                throw new InvalidOperationException(
+                    $"Package {package.PackageId} references missing mission request "
+                    + $"{package.MissionRequestId}.");
+            }
+            if (!aborted)
                 request.State = AirMissionRequestState.Actionable;
 
             AddDiagnostic(new AirTaskingDiagnostic
@@ -262,7 +250,7 @@ namespace Models.Gameplay.Campaign
                 MissionRequestId = package.MissionRequestId,
                 PackageId = package.PackageId,
                 Code = aborted ? "package-aborted" : "package-cancelled",
-                Message = reason ?? string.Empty
+                Message = reason
             });
             return true;
         }
@@ -271,15 +259,13 @@ namespace Models.Gameplay.Campaign
             AircraftReservationService aircraftReservations,
             DateTime currentTime)
         {
-            EnsureCollections();
             foreach (var package in packages
-                         .Where(candidate => candidate != null
-                                             && (candidate.Flights ?? new List<AirFlight>())
-                                             .Any(flight => flight != null && !flight.IsTerminal))
+                         .Where(candidate => candidate.Flights
+                                             .Any(flight => !flight.IsTerminal))
                          .ToList())
             {
-                var requiredFlights = (package.Flights ?? new List<AirFlight>())
-                    .Where(flight => flight != null && flight.IsRequired)
+                var requiredFlights = package.Flights
+                    .Where(flight => flight.IsRequired)
                     .ToList();
                 if (requiredFlights.Count > 0
                     && requiredFlights.All(flight =>
@@ -323,59 +309,43 @@ namespace Models.Gameplay.Campaign
                 RecordedAt = currentTime,
                 MissionRequestId = requestId,
                 Code = "request-deferred",
-                Message = reason ?? string.Empty
+                Message = reason
             });
         }
 
         public void AddDiagnostic(AirTaskingDiagnostic diagnostic)
         {
-            if (diagnostic == null)
-                return;
-
-            EnsureCollections();
             diagnostics.Add(diagnostic);
             TrimOldest(diagnostics, MaximumDiagnosticEntries);
         }
 
         public void AddHistory(AirTaskingHistoryEntry historyEntry)
         {
-            if (historyEntry == null)
-                return;
-
-            EnsureCollections();
             history.Add(historyEntry);
             TrimOldest(history, MaximumHistoryEntries);
         }
 
         public void AddSupportDemand(SupportDemandSample demandSample)
         {
-            if (demandSample == null)
-                return;
-
-            EnsureCollections();
             supportDemandHistory.Add(demandSample);
             TrimOldest(supportDemandHistory, MaximumSupportDemandSamples);
         }
 
         public AirMissionRequest GetRequest(Guid requestId)
         {
-            EnsureCollections();
             return missionRequests.FirstOrDefault(
                 request => request.MissionRequestId == requestId);
         }
 
         public AirPackage GetPackage(Guid packageId)
         {
-            EnsureCollections();
             return packages.FirstOrDefault(package => package.PackageId == packageId);
         }
 
         private string ValidatePackageProposal(AirPackage package, DateTime currentTime)
         {
-            if (package == null)
-                return "A package proposal is required.";
             if (package.PackageId == Guid.Empty || packages.Any(candidate =>
-                    candidate != null && candidate.PackageId == package.PackageId))
+                    candidate.PackageId == package.PackageId))
                 return "The package proposal has an invalid or duplicate identifier.";
             if (package.Alliance != Alliance)
                 return "The package proposal belongs to another alliance.";
@@ -393,10 +363,8 @@ namespace Models.Gameplay.Campaign
                 && package.EffectEnd == package.EffectStart)
                 return "The package proposal has an invalid effect window.";
 
-            var flights = (package.Flights ?? new List<AirFlight>())
-                .Where(flight => flight != null)
-                .ToList();
-            if (flights.Count == 0 || flights.Count != package.Flights.Count)
+            var flights = package.Flights;
+            if (flights.Count == 0)
                 return "The package proposal must contain valid flights.";
             foreach (var flight in flights)
             {
@@ -406,7 +374,6 @@ namespace Models.Gameplay.Campaign
                     || flight.EffectStart < request.EffectStart
                     || flight.EffectEnd > request.EffectEnd
                     || flight.EffectEnd < flight.EffectStart
-                    || flight.MissionArea == null
                     || !request.MissionArea.Contains(flight.MissionArea.CenterTileId))
                 {
                     return "A proposed flight route does not satisfy its request.";
@@ -416,7 +383,6 @@ namespace Models.Gameplay.Campaign
                     flight.FlightId == Guid.Empty
                     || flight.SquadronId == Guid.Empty
                     || flight.MissionType != request.RequestType
-                    || flight.AircraftIds == null
                     || flight.AircraftIds.Count == 0))
                 return "A proposed flight is incomplete.";
             if (flights.Select(flight => flight.FlightId).Distinct().Count() != flights.Count)
@@ -426,7 +392,7 @@ namespace Models.Gameplay.Campaign
             if (aircraftIds.Any(id => id == Guid.Empty)
                 || aircraftIds.Distinct().Count() != aircraftIds.Count)
                 return "The package proposal contains invalid or duplicate aircraft.";
-            var supportingFlightIds = package.SupportingFlightIds ?? new List<Guid>();
+            var supportingFlightIds = package.SupportingFlightIds;
             if (supportingFlightIds.Any(id => id == Guid.Empty)
                 || supportingFlightIds.Distinct().Count() != supportingFlightIds.Count)
                 return "The package proposal contains invalid or duplicate support flights.";
@@ -447,13 +413,12 @@ namespace Models.Gameplay.Campaign
             var requiredSlots = package.Flights.Sum(flight => flight.AircraftIds.Count);
             var remainingSlots = requiredSlots;
 
-            foreach (var supportFlightId in package.SupportingFlightIds ?? new List<Guid>())
+            foreach (var supportFlightId in package.SupportingFlightIds)
             {
                 var supportFlight = packages
-                    .Where(candidate => candidate != null && !candidate.IsTerminal)
-                    .SelectMany(candidate => candidate.Flights ?? new List<AirFlight>())
-                    .FirstOrDefault(flight => flight != null
-                                              && flight.FlightId == supportFlightId
+                    .Where(candidate => !candidate.IsTerminal)
+                    .SelectMany(candidate => candidate.Flights)
+                    .FirstOrDefault(flight => flight.FlightId == supportFlightId
                                               && !flight.IsTerminal);
                 if (supportFlight == null
                     || supportFlight.EffectStart > package.EffectStart
@@ -463,10 +428,8 @@ namespace Models.Gameplay.Campaign
                     return false;
                 }
 
-                supportFlight.SupportReservations ??= new List<AirSupportReservation>();
                 var alreadyReserved = supportFlight.SupportReservations
-                    .Where(reservation => reservation != null
-                                          && reservation.StartTime < package.SupportWindowEnd
+                    .Where(reservation => reservation.StartTime < package.SupportWindowEnd
                                           && reservation.EndTime > package.EffectStart)
                     .Sum(reservation => Math.Max(0, reservation.SlotCount));
                 var slots = Math.Min(
@@ -490,7 +453,7 @@ namespace Models.Gameplay.Campaign
                     break;
             }
 
-            if ((package.SupportingFlightIds?.Count ?? 0) > 0 && remainingSlots > 0)
+            if (package.SupportingFlightIds.Count > 0 && remainingSlots > 0)
             {
                 reason = "Required support capacity is no longer available.";
                 return false;
@@ -507,7 +470,10 @@ namespace Models.Gameplay.Campaign
             string reason)
         {
             var request = GetRequest(requestId);
-            if (request == null || request.IsTerminal)
+            if (request == null)
+                throw new InvalidOperationException(
+                    $"Mission request {requestId} does not exist.");
+            if (request.IsTerminal)
                 return;
 
             request.State = state;
@@ -516,17 +482,8 @@ namespace Models.Gameplay.Campaign
                 RecordedAt = currentTime,
                 MissionRequestId = requestId,
                 Code = code,
-                Message = reason ?? string.Empty
+                Message = reason
             });
-        }
-
-        private void EnsureCollections()
-        {
-            missionRequests ??= new List<AirMissionRequest>();
-            packages ??= new List<AirPackage>();
-            supportDemandHistory ??= new List<SupportDemandSample>();
-            diagnostics ??= new List<AirTaskingDiagnostic>();
-            history ??= new List<AirTaskingHistoryEntry>();
         }
 
         private static void TrimOldest<T>(List<T> entries, int maximumEntries)

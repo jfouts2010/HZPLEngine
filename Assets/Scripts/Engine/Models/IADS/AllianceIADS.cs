@@ -53,8 +53,8 @@ namespace Models.Gameplay.Campaign
         {
             EnsureIndex();
 
-            var allianceByFlightId = flightAllianceById ?? new Dictionary<Guid, Alliance>();
-            var activeHostileFlights = (activeFlights ?? Enumerable.Empty<AirFlight>())
+            var allianceByFlightId = flightAllianceById;
+            var activeHostileFlights = (activeFlights)
                 .Where(flight => flight != null
                                  && flight.FlightId != Guid.Empty
                                  && flight.IsAirborne
@@ -68,7 +68,7 @@ namespace Models.Gameplay.Campaign
             RemoveInactiveTracks(activeHostileFlights);
 
             var refreshedFlightIds = new HashSet<Guid>();
-            var availableSites = (airDefenseSites ?? Enumerable.Empty<SamSite>())
+            var availableSites = (airDefenseSites)
                 .Where(site => site != null
                                && siteQuery != null
                                && siteQuery.GetEffectiveAlliance(site) == Alliance)
@@ -105,7 +105,7 @@ namespace Models.Gameplay.Campaign
                 var aircraftCount = aircraftCountByFlightId != null
                                     && aircraftCountByFlightId.TryGetValue(flight.FlightId, out var count)
                     ? count
-                    : flight.AircraftIds?.Count ?? 0;
+                    : flight.AircraftIds.Count;
 
                 if (existingTrack != null)
                 {
@@ -138,7 +138,7 @@ namespace Models.Gameplay.Campaign
 
         public void RebuildIndex()
         {
-            tracksByFlightId = (Tracks ?? new List<IADSTrack>())
+            tracksByFlightId = (Tracks)
                 .Where(track => track != null && track.FlightId != Guid.Empty)
                 .GroupBy(track => track.FlightId)
                 .ToDictionary(group => group.Key, group => group.First());
@@ -155,16 +155,15 @@ namespace Models.Gameplay.Campaign
             if (siteQuery == null)
                 yield break;
 
-            foreach (var site in airDefenseSites ?? Enumerable.Empty<SamSite>())
+            foreach (var site in airDefenseSites)
             {
                 if (!siteQuery.TryGetTileId(site, out var siteTileId))
                     continue;
 
-                foreach (var radarComponent in (siteQuery.GetAvailableComponents(site) ?? Enumerable.Empty<AirDefenseComponent>())
+                foreach (var radarComponent in siteQuery.GetAvailableComponents(site)
                              .OfType<RadarAirDefenseComponent>())
                 {
-                    if (radarComponent == null
-                        || radarComponent.IsDamaged
+                    if (radarComponent.IsDamaged
                         || radarDefinitionLookup == null
                         || !radarDefinitionLookup.TryGetValue(
                             radarComponent.SamComponentDefinitionId,
@@ -183,8 +182,10 @@ namespace Models.Gameplay.Campaign
 
                     var rangeFactor = Mathf.Clamp01(1f - distanceKm / definition.DetectionRangeKm);
                     var detectabilityFactor = Mathf.Clamp01(aircraftTypeDefinition.RadarQuality);
-                    var qualityCap = Mathf.Clamp01(definition.TrackQuality * detectabilityFactor * (0.5f + 0.5f * rangeFactor));
-                    var qualityIncrease = Mathf.Clamp01(BaseTrackBuildRatePerTurn * definition.TrackQuality * detectabilityFactor * rangeFactor);
+                    var qualityCap =
+                        Mathf.Clamp01(definition.TrackQuality * detectabilityFactor * (0.5f + 0.5f * rangeFactor));
+                    var qualityIncrease = Mathf.Clamp01(BaseTrackBuildRatePerTurn * definition.TrackQuality *
+                                                        detectabilityFactor * rangeFactor);
 
                     if (qualityCap <= 0f || qualityIncrease <= 0f)
                         continue;
@@ -258,5 +259,4 @@ namespace Models.Gameplay.Campaign
             }
         }
     }
-
 }

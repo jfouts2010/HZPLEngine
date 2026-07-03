@@ -14,10 +14,10 @@ namespace Models.Gameplay.Campaign
         public string Name = string.Empty;
         public List<CampaignAircraft> Aircraft = new List<CampaignAircraft>();
 
-        public int ReadyAircraft => Aircraft?.Count(aircraft => aircraft.Status == CampaignAircraftStatus.Ready) ?? 0;
-        public int DamagedAircraft => Aircraft?.Count(aircraft => aircraft.Status == CampaignAircraftStatus.Damaged) ?? 0;
-        public int LostAircraft => Aircraft?.Count(aircraft => aircraft.Status == CampaignAircraftStatus.Lost) ?? 0;
-        public int AssignedAircraft => Aircraft?.Count(aircraft => aircraft.Status == CampaignAircraftStatus.Assigned) ?? 0;
+        public int ReadyAircraft => Aircraft.Count(aircraft => aircraft.Status == CampaignAircraftStatus.Ready);
+        public int DamagedAircraft => Aircraft.Count(aircraft => aircraft.Status == CampaignAircraftStatus.Damaged);
+        public int LostAircraft => Aircraft.Count(aircraft => aircraft.Status == CampaignAircraftStatus.Lost);
+        public int AssignedAircraft => Aircraft.Count(aircraft => aircraft.Status == CampaignAircraftStatus.Assigned);
 
         public Squadron()
         {
@@ -25,14 +25,11 @@ namespace Models.Gameplay.Campaign
 
         public Squadron(SquadronStartingCondition startingCondition)
         {
-            if (startingCondition == null)
-                throw new ArgumentNullException(nameof(startingCondition));
-
             SquadronId = startingCondition.SquadronId;
             AircraftTypeDefinitionId = startingCondition.AircraftTypeDefinitionId;
             CountryId = startingCondition.CountryId;
             AirportBuildingId = startingCondition.StartingAirportBuildingId;
-            Name = startingCondition.Name ?? string.Empty;
+            Name = startingCondition.Name;
             Aircraft = CreateAircraft(Math.Max(0, startingCondition.AircraftCount));
         }
 

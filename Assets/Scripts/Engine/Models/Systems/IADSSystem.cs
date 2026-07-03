@@ -22,9 +22,9 @@ namespace Engine.Models
 
         public IADSSystem(GameManager gameManager, AllianceIADS blueforIads, AllianceIADS redforIads)
         {
-            this.gameManager = gameManager ?? throw new ArgumentNullException(nameof(gameManager));
-            this.blueforIads = blueforIads ?? new AllianceIADS(Alliance.Bluefor);
-            this.redforIads = redforIads ?? new AllianceIADS(Alliance.Redfor);
+            this.gameManager = gameManager;
+            this.blueforIads = blueforIads;
+            this.redforIads = redforIads;
             this.blueforIads.Alliance = Alliance.Bluefor;
             this.redforIads.Alliance = Alliance.Redfor;
         }
@@ -47,10 +47,8 @@ namespace Engine.Models
             var radarDefinitionLookup = activeModule.SamComponentDefinitions
                 .OfType<RadarAirDefenseComponentDefinition>()
                 .ToDictionary(definition => definition.SamComponentDefinitionId);
-            var airDefenseSites = gameManager.airDefenseSiteSystem
-                .GetAirDefenseSites()
-                .ToList();
-            var tileDistanceKm = gameManager.SimulationSettings?.TileDistanceKM ?? 0f;
+            var airDefenseSites = gameManager.airDefenseSiteSystem.Sites.ToList();
+            var tileDistanceKm = gameManager.SimulationSettings.TileDistanceKM;
             var activeFlights = gameManager.GetAirborneFlights().ToList();
             var flightContexts = BuildFlightContexts(activeFlights);
             blueforIads.RefreshTracks(
@@ -77,13 +75,12 @@ namespace Engine.Models
 
         private FlightContexts BuildFlightContexts(IEnumerable<AirFlight> flights)
         {
-            var squadronById = (gameManager.squadronSystem.Squadrons ?? new List<Squadron>())
-                .Where(squadron => squadron != null)
+            var squadronById = gameManager.squadronSystem.Squadrons
                 .GroupBy(squadron => squadron.SquadronId)
                 .ToDictionary(group => group.Key, group => group.First());
 
             var contexts = new FlightContexts();
-            foreach (var flight in flights ?? Enumerable.Empty<AirFlight>())
+            foreach (var flight in flights)
             {
                 if (flight == null
                     || !squadronById.TryGetValue(flight.SquadronId, out var squadron))
@@ -94,9 +91,8 @@ namespace Engine.Models
                 contexts.AircraftTypeByFlightId[flight.FlightId] =
                     squadron.AircraftTypeDefinitionId;
                 contexts.AircraftCountByFlightId[flight.FlightId] =
-                    (squadron.Aircraft ?? new List<CampaignAircraft>())
-                    .Count(aircraft => aircraft != null
-                                       && aircraft.AssignedFlightId == flight.FlightId
+                    (squadron.Aircraft)
+                    .Count(aircraft => aircraft.AssignedFlightId == flight.FlightId
                                        && aircraft.Status != CampaignAircraftStatus.Lost);
             }
 
@@ -107,8 +103,10 @@ namespace Engine.Models
         {
             public readonly Dictionary<Guid, Alliance> AllianceByFlightId =
                 new Dictionary<Guid, Alliance>();
+
             public readonly Dictionary<Guid, Guid> AircraftTypeByFlightId =
                 new Dictionary<Guid, Guid>();
+
             public readonly Dictionary<Guid, int> AircraftCountByFlightId =
                 new Dictionary<Guid, int>();
         }

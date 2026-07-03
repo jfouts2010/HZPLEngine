@@ -9,16 +9,15 @@ namespace Engine.Service
     {
         private readonly SquadronSystem squadronSystem;
 
-        public AircraftReservationService(SquadronSystem squadronSystem)
+        public AircraftReservationService(SquadronSystem _squadronSystem)
         {
-            this.squadronSystem = squadronSystem
-                                  ?? throw new ArgumentNullException(nameof(squadronSystem));
+            squadronSystem = _squadronSystem;
         }
 
         public bool TryReserve(AirPackage package, out string reason)
         {
             reason = string.Empty;
-            if (package?.Flights == null || package.Flights.Count == 0)
+            if (package.Flights.Count == 0)
             {
                 reason = "A package with flights is required.";
                 return false;
@@ -28,16 +27,13 @@ namespace Engine.Service
             var seenAircraft = new HashSet<Guid>();
             foreach (var flight in package.Flights)
             {
-                if (flight == null
-                    || !squadronSystem.TryGetSquadron(flight.SquadronId, out var squadron))
+                if (!squadronSystem.TryGetSquadron(flight.SquadronId, out var squadron))
                 {
                     reason = "A proposed flight references an unavailable squadron.";
                     return false;
                 }
 
-                var squadronAircraft = (squadron.Aircraft ?? new List<CampaignAircraft>())
-                    .Where(aircraft => aircraft != null)
-                    .ToList();
+                var squadronAircraft = squadron.Aircraft;
                 if (squadronAircraft
                     .GroupBy(aircraft => aircraft.AircraftId)
                     .Any(group => group.Key == Guid.Empty || group.Count() > 1))
@@ -48,7 +44,7 @@ namespace Engine.Service
 
                 var aircraftById = squadronAircraft.ToDictionary(
                     aircraft => aircraft.AircraftId);
-                foreach (var aircraftId in flight.AircraftIds ?? new List<Guid>())
+                foreach (var aircraftId in flight.AircraftIds)
                 {
                     if (!seenAircraft.Add(aircraftId)
                         || !aircraftById.TryGetValue(aircraftId, out var aircraft)
@@ -83,22 +79,24 @@ namespace Engine.Service
 
         public void ReleaseUnlaunched(AirPackage package)
         {
-            foreach (var flight in package?.Flights ?? new List<AirFlight>())
+            foreach (var flight in package.Flights)
             {
-                if (flight != null
-                    && !flight.IsAirborne)
+                if (!flight.IsAirborne)
                     ReleaseFlight(flight);
             }
         }
 
         public void ReleaseFlight(AirFlight flight)
         {
-            if (flight == null
-                || !squadronSystem.TryGetSquadron(flight.SquadronId, out var squadron))
-                return;
+            if (!squadronSystem.TryGetSquadron(flight.SquadronId, out var squadron))
+            {
+                throw new InvalidOperationException(
+                    $"Flight {flight.FlightId} references missing squadron "
+                    + $"{flight.SquadronId}.");
+            }
 
-            foreach (var aircraft in squadron.Aircraft ?? new List<CampaignAircraft>())
-                aircraft?.ReleaseFromFlight(flight.FlightId);
+            foreach (var aircraft in squadron.Aircraft)
+                aircraft.ReleaseFromFlight(flight.FlightId);
         }
 
         private sealed class AircraftAssignment

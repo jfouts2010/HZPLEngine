@@ -29,14 +29,11 @@ namespace Models.Gameplay.Campaign
 
         public void RebuildIndex()
         {
-            var squadrons = (Squadrons ?? new List<Squadron>())
-                .ToList();
-
-            squadronsById = squadrons
+            squadronsById = Squadrons
                 .GroupBy(squadron => squadron.SquadronId)
                 .ToDictionary(group => group.Key, group => group.First());
 
-            squadronsByAirportBuildingId = squadrons
+            squadronsByAirportBuildingId = Squadrons
                 .GroupBy(squadron => squadron.AirportBuildingId)
                 .ToDictionary(group => group.Key, group => group.ToList());
         }

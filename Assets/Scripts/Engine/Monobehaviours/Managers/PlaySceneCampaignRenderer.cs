@@ -651,23 +651,22 @@ namespace Engine.Monobehaviours.Managers
                     gameManager.GetAllianceAirTaskingCommander(Alliance.Bluefor),
                     gameManager.GetAllianceAirTaskingCommander(Alliance.Redfor)
                 }
-                .Where(commander => commander != null)
                 .ToList();
             var requests = commanders
-                .SelectMany(commander => commander.MissionRequests ?? Array.Empty<AirMissionRequest>())
-                .Where(request => request != null && !request.IsTerminal)
+                .SelectMany(commander => commander.MissionRequests)
+                .Where(request => !request.IsTerminal)
                 .OrderBy(request => request.Alliance)
                 .ThenByDescending(request => request.Priority)
                 .ToList();
             var packages = commanders
-                .SelectMany(commander => commander.Packages ?? Array.Empty<AirPackage>())
-                .Where(package => package != null && !package.HasPhysicallyEnded)
+                .SelectMany(commander => commander.Packages)
+                .Where(package => !package.HasPhysicallyEnded)
                 .OrderBy(package => package.Alliance)
                 .ThenBy(package => package.EarliestTakeoffTime)
                 .ToList();
             var flights = packages
-                .SelectMany(package => package.Flights ?? new List<AirFlight>())
-                .Where(flight => flight != null && !flight.HasPhysicallyEnded)
+                .SelectMany(package => package.Flights)
+                .Where(flight => !flight.HasPhysicallyEnded)
                 .OrderBy(flight => flight.PlannedTakeoffTime)
                 .ToList();
             var airborneCount = flights.Count(flight => flight.IsAirborne);
@@ -725,7 +724,7 @@ namespace Engine.Monobehaviours.Managers
                 {
                     new AirCardField("Request ID", ShortId(request.MissionRequestId)),
                     new AirCardField("Priority", request.Priority.ToString("0.0")),
-                    new AirCardField("Mission area", $"Hex {FormatTile(request.MissionArea?.CenterTileId ?? default)}"),
+                    new AirCardField("Mission area", $"Hex {FormatTile(request.MissionArea.CenterTileId)}"),
                     new AirCardField("Effect window", $"{request.EffectStart:MM-dd HH:mm} – {request.EffectEnd:MM-dd HH:mm}"),
                     new AirCardField(
                         "Demand",
@@ -757,22 +756,21 @@ namespace Engine.Monobehaviours.Managers
             foreach (var package in packages)
             {
                 var request = commanders
-                    .FirstOrDefault(commander => commander.Alliance == package.Alliance)?
-                    .MissionRequests?
-                    .FirstOrDefault(candidate => candidate.MissionRequestId == package.MissionRequestId);
-                var aircraftCount = (package.Flights ?? new List<AirFlight>())
-                    .Where(flight => flight != null)
-                    .Sum(flight => flight.AircraftIds?.Count ?? 0);
+                    .First(commander => commander.Alliance == package.Alliance)
+                    .MissionRequests
+                    .First(candidate => candidate.MissionRequestId == package.MissionRequestId);
+                var aircraftCount = package.Flights
+                    .Sum(flight => flight.AircraftIds.Count);
                 var title =
                     $"{GetAllianceLabel(package.Alliance)} PKG {ShortId(package.PackageId)}  •  {package.LifecycleState}";
                 var fields = new List<AirCardField>
                 {
                     new AirCardField(
                         "Mission",
-                        GetMissionLabel(request?.RequestType ?? package.Flights?.FirstOrDefault()?.MissionType ?? default)),
-                    new AirCardField("Composition", $"{package.Flights?.Count ?? 0} flights / {aircraftCount} aircraft"),
+                        GetMissionLabel(request.RequestType)),
+                    new AirCardField("Composition", $"{package.Flights.Count} flights / {aircraftCount} aircraft"),
                     new AirCardField("Earliest launch", package.EarliestTakeoffTime.ToString("MM-dd HH:mm")),
-                    request?.FulfillmentPattern == AirMissionRequestFulfillmentPattern.Discrete
+                    request.FulfillmentPattern == AirMissionRequestFulfillmentPattern.Discrete
                         ? new AirCardField("Effect time", package.EffectStart.ToString("MM-dd HH:mm"))
                         : new AirCardField("Effect window", $"{package.EffectStart:MM-dd HH:mm} – {package.EffectEnd:MM-dd HH:mm}"),
                     new AirCardField("Source request", ShortId(package.MissionRequestId))
@@ -808,11 +806,10 @@ namespace Engine.Monobehaviours.Managers
             foreach (var flight in flights)
             {
                 var package = GetOwningPackage(flight, packages);
-                var alliance = package?.Alliance ?? Alliance.Neutral;
-                var squadron = gameManager.squadronSystem?.Squadrons?
-                    .FirstOrDefault(candidate => candidate.SquadronId == flight.SquadronId);
-                var nextWaypoint = flight.Route != null
-                                   && flight.CurrentWaypointIndex >= 0
+                var alliance = package.Alliance;
+                var squadron = gameManager.squadronSystem.Squadrons
+                    .First(candidate => candidate.SquadronId == flight.SquadronId);
+                var nextWaypoint = flight.CurrentWaypointIndex >= 0
                                    && flight.CurrentWaypointIndex < flight.Route.Count
                     ? flight.Route[flight.CurrentWaypointIndex]
                     : null;
@@ -822,7 +819,7 @@ namespace Engine.Monobehaviours.Managers
                 var fields = new List<AirCardField>
                 {
                     new AirCardField("Mission", GetMissionLabel(flight.MissionType)),
-                    new AirCardField("Aircraft", (flight.AircraftIds?.Count ?? 0).ToString()),
+                    new AirCardField("Aircraft", flight.AircraftIds.Count.ToString()),
                     new AirCardField("Execution", $"{flight.LifecycleState} / {flight.ExecutionPhase}"),
                     new AirCardField(
                         "Position",
@@ -830,7 +827,7 @@ namespace Engine.Monobehaviours.Managers
                     new AirCardField(
                         "Next action",
                         nextWaypoint == null ? "—" : GetWaypointLabel(nextWaypoint.Action)),
-                    new AirCardField("Package", ShortId(package?.PackageId ?? Guid.Empty))
+                    new AirCardField("Package", ShortId(package.PackageId))
                 };
                 airFlightsList.Add(CreateAirCard(
                     alliance,
@@ -883,7 +880,7 @@ namespace Engine.Monobehaviours.Managers
             ApplyRuntimeFont(titleLabelElement);
             card.Add(titleLabelElement);
 
-            foreach (var field in fields ?? Array.Empty<AirCardField>())
+            foreach (var field in fields)
             {
                 var row = new VisualElement();
                 row.AddToClassList("campaign-air-field-row");
@@ -903,7 +900,7 @@ namespace Engine.Monobehaviours.Managers
                 card.Add(row);
             }
 
-            card.style.minHeight = 48f + Math.Max(1, fields?.Count ?? 0) * 24f;
+            card.style.minHeight = 48f + Math.Max(1, fields.Count) * 24f;
             return card;
         }
 
@@ -940,7 +937,7 @@ namespace Engine.Monobehaviours.Managers
                 return;
             }
 
-            if (!flight.HasPosition && (flight.Route == null || flight.Route.Count == 0))
+            if (!flight.HasPosition && flight.Route.Count == 0)
             {
                 SetAirInspectionStatus("This flight has no position or planned route to display.");
                 return;
@@ -951,8 +948,8 @@ namespace Engine.Monobehaviours.Managers
             CreateAirInspection();
             FrameAirInspection(flight);
 
-            var squadron = gameManager.squadronSystem?.Squadrons?
-                .FirstOrDefault(candidate => candidate.SquadronId == flight.SquadronId);
+            var squadron = gameManager.squadronSystem.Squadrons
+                .First(candidate => candidate.SquadronId == flight.SquadronId);
             SetAirInspectionStatus(
                 $"Inspecting {GetFlightName(flight, squadron)}. Route highlight clears on the next game turn.");
         }
@@ -962,7 +959,7 @@ namespace Engine.Monobehaviours.Managers
             if (airInspectionStatus == null)
                 return;
 
-            airInspectionStatus.text = message ?? string.Empty;
+            airInspectionStatus.text = message;
             airInspectionStatus.EnableInClassList(
                 "campaign-air-inspection-status--visible",
                 !string.IsNullOrWhiteSpace(message));
@@ -979,11 +976,10 @@ namespace Engine.Monobehaviours.Managers
                 return;
             }
 
-            var alliance = package?.Alliance ?? commander?.Alliance ?? Alliance.Neutral;
-            var squadron = gameManager.squadronSystem?.Squadrons?
-                .FirstOrDefault(candidate => candidate.SquadronId == flight.SquadronId);
-            var nextWaypoint = flight.Route != null
-                               && flight.CurrentWaypointIndex >= 0
+            var alliance = package.Alliance;
+            var squadron = gameManager.squadronSystem.Squadrons
+                .First(candidate => candidate.SquadronId == flight.SquadronId);
+            var nextWaypoint = flight.CurrentWaypointIndex >= 0
                                && flight.CurrentWaypointIndex < flight.Route.Count
                 ? flight.Route[flight.CurrentWaypointIndex]
                 : null;
@@ -992,17 +988,17 @@ namespace Engine.Monobehaviours.Managers
             flightDetailSubtitle.text =
                 $"{GetAllianceLabel(alliance)}  •  {GetMissionLabel(flight.MissionType)}  •  " +
                 $"{flight.ExecutionPhase}";
-            var previousScrollOffset = flightDetailScroll?.scrollOffset ?? Vector2.zero;
+            var previousScrollOffset = flightDetailScroll.scrollOffset;
             flightDetailContent.Clear();
 
             AddFlightDetailSection(
                 "IDENTITY & TASKING",
                 $"Flight ID: {flight.FlightId:N}",
-                $"Squadron: {(string.IsNullOrWhiteSpace(squadron?.Name) ? "Unknown" : squadron.Name)}",
-                $"Package: {(package == null ? "Unknown" : package.PackageId.ToString("N"))}",
+                $"Squadron: {squadron.Name}",
+                $"Package: {package.PackageId:N}",
                 $"Mission: {GetMissionLabel(flight.MissionType)}",
                 $"Role in package: {(flight.IsRequired ? "Required" : "Supporting")}",
-                $"Assigned aircraft: {flight.AircraftIds?.Count ?? 0}");
+                $"Assigned aircraft: {flight.AircraftIds.Count}");
 
             AddFlightDetailSection(
                 "EXECUTION STATE",
@@ -1010,7 +1006,7 @@ namespace Engine.Monobehaviours.Managers
                 $"Phase: {flight.ExecutionPhase}",
                 $"Mission achieved: {(flight.MissionAchieved ? "Yes" : "No")}",
                 $"Rendezvous hold: {(flight.IsWaitingAtRendezvous ? "Waiting" : "No")}",
-                $"Route progress: {Mathf.Clamp(flight.CurrentWaypointIndex + 1, 0, flight.Route?.Count ?? 0)} of {flight.Route?.Count ?? 0}",
+                $"Route progress: {Mathf.Clamp(flight.CurrentWaypointIndex + 1, 0, flight.Route.Count)} of {flight.Route.Count}",
                 $"Next action: {(nextWaypoint == null ? "None" : GetWaypointLabel(nextWaypoint.Action))}");
 
             AddFlightDetailSection(
@@ -1026,7 +1022,7 @@ namespace Engine.Monobehaviours.Managers
                 flight.HasSustainedEffect
                     ? $"Effect window: {flight.EffectStart:yyyy-MM-dd HH:mm} – {flight.EffectEnd:yyyy-MM-dd HH:mm}"
                     : $"Effect time: {flight.EffectStart:yyyy-MM-dd HH:mm}",
-                $"Mission area: Hex {FormatTile(flight.MissionArea?.CenterTileId ?? default)}");
+                $"Mission area: Hex {FormatTile(flight.MissionArea.CenterTileId)}");
 
             AddAircraftDetailSection(flight, squadron);
             AddRouteDetailSection(flight);
@@ -1051,10 +1047,10 @@ namespace Engine.Monobehaviours.Managers
                 if (candidateCommander == null)
                     continue;
 
-                foreach (var candidatePackage in candidateCommander.Packages ?? Array.Empty<AirPackage>())
+                foreach (var candidatePackage in candidateCommander.Packages)
                 {
-                    var candidateFlight = candidatePackage?.Flights?
-                        .FirstOrDefault(item => item != null && item.FlightId == flightId);
+                    var candidateFlight = candidatePackage.Flights
+                        .FirstOrDefault(item => item.FlightId == flightId);
                     if (candidateFlight == null)
                         continue;
 
@@ -1088,11 +1084,16 @@ namespace Engine.Monobehaviours.Managers
 
         private void AddAircraftDetailSection(AirFlight flight, Squadron squadron)
         {
+            if (squadron == null)
+            {
+                throw new InvalidOperationException(
+                    $"Flight {flight.FlightId} references a missing squadron.");
+            }
+
             var section = CreateFlightDetailSection("ASSIGNED AIRCRAFT");
-            var aircraftById = (squadron?.Aircraft ?? new List<CampaignAircraft>())
-                .Where(aircraft => aircraft != null)
+            var aircraftById = squadron.Aircraft
                 .ToDictionary(aircraft => aircraft.AircraftId);
-            var aircraftIds = flight.AircraftIds ?? new List<Guid>();
+            var aircraftIds = flight.AircraftIds;
             if (aircraftIds.Count == 0)
             {
                 AddFlightDetailMessage(section, "No aircraft assigned.");
@@ -1101,12 +1102,12 @@ namespace Engine.Monobehaviours.Managers
             {
                 for (var index = 0; index < aircraftIds.Count; index++)
                 {
-                    aircraftById.TryGetValue(aircraftIds[index], out var aircraft);
-                    var loadoutCount = aircraft?.Loadout?.Sum(item => item?.Count ?? 0) ?? 0;
+                    var aircraft = aircraftById[aircraftIds[index]];
+                    var loadoutCount = aircraft.Loadout.Sum(item => item.Count);
                     AddFlightDetailMessage(
                         section,
                         $"{index + 1}. Aircraft {ShortId(aircraftIds[index])}  •  " +
-                        $"{aircraft?.Status.ToString() ?? "Unknown"}  •  {loadoutCount} stores");
+                        $"{aircraft.Status}  •  {loadoutCount} stores");
                 }
             }
 
@@ -1116,8 +1117,8 @@ namespace Engine.Monobehaviours.Managers
 
         private void AddRouteDetailSection(AirFlight flight)
         {
-            var section = CreateFlightDetailSection($"ROUTE ({flight.Route?.Count ?? 0} WAYPOINTS)");
-            var route = flight.Route ?? new List<AirWaypoint>();
+            var section = CreateFlightDetailSection($"ROUTE ({flight.Route.Count} WAYPOINTS)");
+            var route = flight.Route;
             if (route.Count == 0)
             {
                 AddFlightDetailMessage(section, "No route was planned.");
@@ -1127,9 +1128,6 @@ namespace Engine.Monobehaviours.Managers
                 for (var index = 0; index < route.Count; index++)
                 {
                     var waypoint = route[index];
-                    if (waypoint == null)
-                        continue;
-
                     var row = new Label(
                         $"{index + 1}. {GetWaypointLabel(waypoint.Action)}  •  " +
                         $"{waypoint.PlannedArrivalTime:MM-dd HH:mm}\n" +
@@ -1150,7 +1148,7 @@ namespace Engine.Monobehaviours.Managers
 
         private void AddSupportDetailSection(AirFlight flight)
         {
-            var reservations = flight.SupportReservations ?? new List<AirSupportReservation>();
+            var reservations = flight.SupportReservations;
             if (reservations.Count == 0 && flight.ProvidedSupportSlots <= 0)
                 return;
 
@@ -1158,8 +1156,6 @@ namespace Engine.Monobehaviours.Managers
             AddFlightDetailMessage(section, $"Support capacity: {flight.ProvidedSupportSlots} slots");
             foreach (var reservation in reservations)
             {
-                if (reservation == null)
-                    continue;
                 AddFlightDetailMessage(
                     section,
                     $"{reservation.SlotCount} slots for PKG {ShortId(reservation.ConsumingPackageId)}  •  " +
@@ -1171,9 +1167,8 @@ namespace Engine.Monobehaviours.Managers
 
         private void AddExecutionEventSection(AirFlight flight)
         {
-            var section = CreateFlightDetailSection($"EXECUTION LOG ({flight.ExecutionEvents?.Count ?? 0})");
-            var events = (flight.ExecutionEvents ?? new List<FlightExecutionEvent>())
-                .Where(entry => entry != null)
+            var section = CreateFlightDetailSection($"EXECUTION LOG ({flight.ExecutionEvents.Count})");
+            var events = flight.ExecutionEvents
                 .OrderByDescending(entry => entry.OccurredAt)
                 .ToList();
             if (events.Count == 0)
@@ -1228,18 +1223,17 @@ namespace Engine.Monobehaviours.Managers
             AirFlight flight,
             IReadOnlyList<AirPackage> packages)
         {
-            return GetOwningPackage(flight, packages)?.Alliance ?? Alliance.Neutral;
+            return GetOwningPackage(flight, packages).Alliance;
         }
 
         private static AirPackage GetOwningPackage(
             AirFlight flight,
             IReadOnlyList<AirPackage> packages)
         {
-            if (flight == null || packages == null)
-                return null;
-
             return packages.FirstOrDefault(package =>
-                package?.Flights?.Contains(flight) == true);
+                       package.Flights.Contains(flight))
+                   ?? throw new InvalidOperationException(
+                       $"Flight {flight.FlightId} has no owning package.");
         }
 
         private static string ShortId(Guid id)
@@ -1283,7 +1277,7 @@ namespace Engine.Monobehaviours.Managers
 
         private static string GetFlightName(AirFlight flight, Squadron squadron)
         {
-            return string.IsNullOrWhiteSpace(squadron?.Name)
+            return string.IsNullOrWhiteSpace(squadron.Name)
                 ? $"FLT {ShortId(flight.FlightId)}"
                 : squadron.Name;
         }
@@ -1300,8 +1294,8 @@ namespace Engine.Monobehaviours.Managers
 
             public AirCardField(string label, string value)
             {
-                Label = label ?? string.Empty;
-                Value = value ?? string.Empty;
+                Label = label;
+                Value = value;
             }
         }
 
@@ -1369,7 +1363,7 @@ namespace Engine.Monobehaviours.Managers
 
             var neighborCount = 0;
             if (selectedCell.HasValue && tilesByCell.TryGetValue(selectedCell.Value, out var selectedTile))
-                neighborCount = selectedTile.NeighborTileIds?.Count ?? 0;
+                neighborCount = selectedTile.NeighborTileIds.Count;
 
             neighborsFoldout.text = neighborCount == 0 ? "Neighbors" : $"Neighbors ({neighborCount})";
 
@@ -1402,14 +1396,14 @@ namespace Engine.Monobehaviours.Managers
                 return;
             }
 
-            var neighborIds = selectedTile.NeighborTileIds ?? new List<Vector3Int>();
+            var neighborIds = selectedTile.NeighborTileIds;
             if (neighborIds.Count == 0)
             {
                 neighborsList.Add(CreateNeighborMessage("No neighbors."));
                 return;
             }
 
-            var riverNeighbors = new HashSet<Vector3Int>(selectedTile.RiverNeighborTileIds ?? new List<Vector3Int>());
+            var riverNeighbors = new HashSet<Vector3Int>(selectedTile.RiverNeighborTileIds);
 
             foreach (var neighborId in neighborIds)
             {
@@ -1450,7 +1444,7 @@ namespace Engine.Monobehaviours.Managers
             if (!selectedCell.HasValue || !tilesByCell.TryGetValue(selectedCell.Value, out var selectedTile))
                 return new List<Division>();
 
-            return gameManager?.divisionSystem?.GetDivisionsOnTile(selectedTile.Coordinates) ?? new List<Division>();
+            return gameManager.divisionSystem.GetDivisionsOnTile(selectedTile.Coordinates);
         }
 
         private VisualElement CreateUnitCard(Division division)
@@ -1621,14 +1615,11 @@ namespace Engine.Monobehaviours.Managers
             foreach (var alliance in new[] { Alliance.Bluefor, Alliance.Redfor })
             {
                 var commander = gameManager.GetAllianceAirTaskingCommander(alliance);
-                if (commander == null)
-                    continue;
-
-                foreach (var package in commander.Packages ?? Array.Empty<AirPackage>())
+                foreach (var package in commander.Packages)
                 {
-                    foreach (var flight in package?.Flights ?? new List<AirFlight>())
+                    foreach (var flight in package.Flights)
                     {
-                        if (flight == null || !flight.IsAirborne || !flight.HasPosition)
+                        if (!flight.IsAirborne || !flight.HasPosition)
                             continue;
 
                         CreateAirRoute(flight, alliance);
@@ -1645,10 +1636,9 @@ namespace Engine.Monobehaviours.Managers
                 || !TryFindFlight(inspectedFlightId, out var flight, out var package, out var commander))
                 return;
 
-            var alliance = package?.Alliance ?? commander?.Alliance ?? Alliance.Neutral;
+            var alliance = package.Alliance;
             var allianceColor = GetAirAllianceColor(alliance);
-            var route = (flight.Route ?? new List<AirWaypoint>())
-                .Where(waypoint => waypoint != null)
+            var route = flight.Route
                 .ToList();
 
             if (route.Count >= 2)
@@ -1800,11 +1790,7 @@ namespace Engine.Monobehaviours.Managers
 
         private void FrameAirInspection(AirFlight flight)
         {
-            if (sceneCamera == null || flight == null)
-                return;
-
-            var points = (flight.Route ?? new List<AirWaypoint>())
-                .Where(waypoint => waypoint != null)
+            var points = flight.Route
                 .Select(waypoint => AirPositionToMapPosition(waypoint.PositionFeet))
                 .ToList();
             if (flight.HasPosition)
@@ -1833,13 +1819,9 @@ namespace Engine.Monobehaviours.Managers
         private void CreateAirRoute(AirFlight flight, Alliance alliance)
         {
             var routePoints = new List<Vector3> { AirPositionToMapPosition(flight.PositionFeet) };
-            if (flight.Route != null)
-            {
-                routePoints.AddRange(flight.Route
-                    .Skip(Mathf.Clamp(flight.CurrentWaypointIndex, 0, flight.Route.Count))
-                    .Where(waypoint => waypoint != null)
-                    .Select(waypoint => AirPositionToMapPosition(waypoint.PositionFeet)));
-            }
+            routePoints.AddRange(flight.Route
+                .Skip(Mathf.Clamp(flight.CurrentWaypointIndex, 0, flight.Route.Count))
+                .Select(waypoint => AirPositionToMapPosition(waypoint.PositionFeet)));
 
             var distinctPoints = routePoints
                 .Where((point, index) => index == 0 || Vector3.Distance(point, routePoints[index - 1]) > 0.01f)
@@ -1892,8 +1874,8 @@ namespace Engine.Monobehaviours.Managers
             markerLine.endColor = GetAirAllianceColor(alliance);
             markerLine.sortingOrder = 27;
 
-            var squadron = gameManager.squadronSystem?.Squadrons?
-                .FirstOrDefault(candidate => candidate.SquadronId == flight.SquadronId);
+            var squadron = gameManager.squadronSystem.Squadrons
+                .First(candidate => candidate.SquadronId == flight.SquadronId);
             var labelObject = new GameObject("Flight Label");
             labelObject.transform.SetParent(markerObject.transform, false);
             labelObject.transform.localPosition = new Vector3(0.17f, 0.11f, -0.36f);
@@ -1904,7 +1886,7 @@ namespace Engine.Monobehaviours.Managers
             text.fontSize = 22;
             text.color = Color.white;
             text.text =
-                $"{GetFlightName(flight, squadron)} ×{flight.AircraftIds?.Count ?? 0}\n" +
+                $"{GetFlightName(flight, squadron)} ×{flight.AircraftIds.Count}\n" +
                 $"{GetMissionLabel(flight.MissionType)} • {flight.PositionFeet.y / 1000f:0.#}k ft";
             labelObject.GetComponent<MeshRenderer>().sortingOrder = 28;
         }
@@ -1913,7 +1895,7 @@ namespace Engine.Monobehaviours.Managers
         {
             var spacingFeet = Math.Max(
                 0.001f,
-                (gameManager.SimulationSettings?.TileDistanceKM ?? 1f)
+                gameManager.SimulationSettings.TileDistanceKM
                 * AirspaceGeometry.FeetPerKilometer);
             return new Vector3(
                 positionFeet.x / spacingFeet * (HexHorizontalSpacing / 0.8660254f),
@@ -2166,7 +2148,7 @@ namespace Engine.Monobehaviours.Managers
 
         private Vector3 GetAverageAttackerCenter(GroundCombat combat)
         {
-            var centers = (combat.AttackerDivisionIds ?? new List<Guid>())
+            var centers = combat.AttackerDivisionIds
                 .Select(divisionId => gameManager.divisionSystem.TryGetDivision(divisionId, out var division)
                     ? division
                     : null)
@@ -2204,7 +2186,7 @@ namespace Engine.Monobehaviours.Managers
         private float CalculateSideCombatPower(IEnumerable<Guid> divisionIds)
         {
             var total = 0f;
-            foreach (var divisionId in divisionIds ?? Enumerable.Empty<Guid>())
+            foreach (var divisionId in divisionIds)
             {
                 if (!gameManager.divisionSystem.TryGetDivision(divisionId, out var division) || division == null)
                     continue;
@@ -2326,7 +2308,7 @@ namespace Engine.Monobehaviours.Managers
 
             var assignment = gameManager.CampaignTemplate.CountryAllianceAssignments
                 .FirstOrDefault(candidate => candidate != null && candidate.CountryId == division.CountryId);
-            return assignment?.Alliance ?? Alliance.Neutral;
+            return assignment.Alliance;
         }
 
         private void HandleTileSelection()

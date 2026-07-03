@@ -36,7 +36,7 @@ namespace Models.Gameplay.Campaign
         }
 
         public RadarAirDefenseComponent(RadarAirDefenseComponentDefinition definition)
-            : base(definition?.SamComponentDefinitionId ?? Guid.Empty)
+            : base(definition.SamComponentDefinitionId)
         {
         }
     }
@@ -52,10 +52,10 @@ namespace Models.Gameplay.Campaign
         }
 
         public LauncherAirDefenseComponent(LauncherAirDefenseComponentDefinition definition)
-            : base(definition?.SamComponentDefinitionId ?? Guid.Empty)
+            : base(definition.SamComponentDefinitionId)
         {
-            ReadyRounds = Math.Max(0, definition?.ReadyRoundCapacity ?? 0);
-            ReserveRounds = Math.Max(0, definition?.ReserveRoundCapacity ?? 0);
+            ReadyRounds = Math.Max(0, definition.ReadyRoundCapacity);
+            ReserveRounds = Math.Max(0, definition.ReserveRoundCapacity);
         }
 
         public override void Damage()
@@ -74,7 +74,7 @@ namespace Models.Gameplay.Campaign
         }
 
         public CommandAirDefenseComponent(CommandAirDefenseComponentDefinition definition)
-            : base(definition?.SamComponentDefinitionId ?? Guid.Empty)
+            : base(definition.SamComponentDefinitionId)
         {
         }
     }
@@ -87,7 +87,7 @@ namespace Models.Gameplay.Campaign
         }
 
         public SupportAirDefenseComponent(SupportAirDefenseComponentDefinition definition)
-            : base(definition?.SamComponentDefinitionId ?? Guid.Empty)
+            : base(definition.SamComponentDefinitionId)
         {
         }
     }

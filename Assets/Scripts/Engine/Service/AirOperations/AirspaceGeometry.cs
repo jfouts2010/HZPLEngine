@@ -60,8 +60,6 @@ namespace Engine.Service
             Vector3 recoveryPosition,
             DateTime recoveryStart)
         {
-            if (aircraftType == null)
-                throw new ArgumentNullException(nameof(aircraftType));
             if (recoveryAirportId == Guid.Empty)
                 throw new ArgumentException(
                     "A recovery airport is required.",

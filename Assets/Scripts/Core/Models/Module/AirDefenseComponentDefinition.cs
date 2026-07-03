@@ -22,7 +22,7 @@ namespace Models.Module
 
             SamComponentDefinitionId = samComponentDefinitionId;
             Name = string.IsNullOrWhiteSpace(name) ? samComponentDefinitionId.ToString() : name.Trim();
-            ThirdPartyId = thirdPartyId ?? string.Empty;
+            ThirdPartyId = thirdPartyId;
             TargetCategory = targetCategory;
             TargetToughness = Math.Max(1, targetToughness);
         }
