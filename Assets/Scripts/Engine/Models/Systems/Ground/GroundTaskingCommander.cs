@@ -7,46 +7,46 @@ using Models.Gameplay.Campaign;
 using UnityEngine;
 using Random = UnityEngine.Random;
 
-namespace Engine.Models
+namespace Engine.Models.Systems.Ground
 {
     public class GroundTaskingCommander
     {
-        private const int MaxDefensivePathLength = 10;
-        private const int MaxOffensivePathLength = 12;
-        private const int RequiredHoldingDivisionsPerFrontTile = 1;
-        private const int MinAssaultDivisionsPerOffensiveTarget = 2;
-        private const int MaxAssaultDivisionsPerOffensiveTarget = 4;
-        private const float OffensiveFeasibilityThreshold = 0.55f;
-        private const float CombatUtilityWeight = 0.65f;
-        private const float StrategicValueUtilityWeight = 0.35f;
-        private const float OffensivePlanUtilityRandomVariance = 0.2f;
-        private const float DefensiveRedeploymentThreatRatio = 1.25f;
-        private const float DefensiveStrategicValueThreatWeight = 0.25f;
+        private const int MAX_DEFENSIVE_PATH_LENGTH = 10;
+        private const int MAX_OFFENSIVE_PATH_LENGTH = 12;
+        private const int REQUIRED_HOLDING_DIVISIONS_PER_FRONT_TILE = 1;
+        private const int MIN_ASSAULT_DIVISIONS_PER_OFFENSIVE_TARGET = 2;
+        private const int MAX_ASSAULT_DIVISIONS_PER_OFFENSIVE_TARGET = 4;
+        private const float OFFENSIVE_FEASIBILITY_THRESHOLD = 0.55f;
+        private const float COMBAT_UTILITY_WEIGHT = 0.65f;
+        private const float STRATEGIC_VALUE_UTILITY_WEIGHT = 0.35f;
+        private const float OFFENSIVE_PLAN_UTILITY_RANDOM_VARIANCE = 0.2f;
+        private const float DEFENSIVE_REDEPLOYMENT_THREAT_RATIO = 1.25f;
+        private const float DEFENSIVE_STRATEGIC_VALUE_THREAT_WEIGHT = 0.25f;
 
-        private readonly GameManager _gameManager;
-        private readonly HashSet<Vector3Int> _frontTileIds = new HashSet<Vector3Int>();
-        private Dictionary<Vector3Int, float> _supplyStrategicValueByTileId;
+        private readonly GameManager gameManager;
+        private readonly HashSet<Vector3Int> frontTileIds = new HashSet<Vector3Int>();
+        private Dictionary<Vector3Int, float> supplyStrategicValueByTileId;
 
         public Alliance Alliance { get; }
         public OffensivePlan ActiveOffensivePlan { get; private set; }
 
-        public IReadOnlyCollection<Vector3Int> FrontTileIds => _frontTileIds;
+        public IReadOnlyCollection<Vector3Int> FrontTileIds => frontTileIds;
 
         public GroundTaskingCommander(GameManager gameManager, Alliance alliance)
         {
-            _gameManager = gameManager;
+            this.gameManager = gameManager;
             Alliance = alliance;
         }
 
         internal void RefreshFront()
         {
-            _frontTileIds.Clear();
+            frontTileIds.Clear();
 
             if (!TryGetHostileAlliance(Alliance, out var hostileAlliance))
                 return;
 
-            var controllersByTileId = BuildControllerLookup(_gameManager.Tiles);
-            var neighborsByTileId = BuildNeighborLookup(_gameManager.CampaignTiles);
+            var controllersByTileId = BuildControllerLookup(gameManager.Tiles);
+            var neighborsByTileId = BuildNeighborLookup(gameManager.CampaignTiles);
 
             foreach (var entry in controllersByTileId)
             {
@@ -61,7 +61,7 @@ namespace Engine.Models
                     if (controllersByTileId.TryGetValue(neighborTileId, out var neighborController)
                         && neighborController == hostileAlliance)
                     {
-                        _frontTileIds.Add(entry.Key);
+                        frontTileIds.Add(entry.Key);
                         break;
                     }
                 }
@@ -70,7 +70,7 @@ namespace Engine.Models
 
         internal void AssignMovementOrders()
         {
-            _supplyStrategicValueByTileId = null;
+            supplyStrategicValueByTileId = null;
 
             if (!TryGetHostileAlliance(Alliance, out var hostileAlliance))
                 return;
@@ -145,11 +145,11 @@ namespace Engine.Models
                 if (!CanReplaceOrder(division))
                     continue;
 
-                if (_frontTileIds.Contains(division.TileId))
+                if (frontTileIds.Contains(division.TileId))
                 {
                     var adjacentHostileTileCount = CountAdjacentHostileTiles(division.TileId, hostileAlliance);
                     assignedHoldersByTileId.TryGetValue(division.TileId, out var assignedHolders);
-                    if (assignedHolders >= RequiredHoldingDivisionsPerFrontTile)
+                    if (assignedHolders >= REQUIRED_HOLDING_DIVISIONS_PER_FRONT_TILE)
                     {
                         holdOrder.AssignmentSource = GroundOrderAssignmentSource.AI;
                         holdOrder.AIIntent = GroundOrderAIIntent.Flex;
@@ -175,7 +175,7 @@ namespace Engine.Models
         private bool EnsureFrontCoverage()
         {
             var allCovered = true;
-            foreach (var frontTileId in OrderTileIds(_frontTileIds))
+            foreach (var frontTileId in OrderTileIds(frontTileIds))
             {
                 if (HasProjectedDefensiveCoverage(frontTileId))
                     continue;
@@ -184,12 +184,12 @@ namespace Engine.Models
                 TryAssignDefensiveMove(frontTileId, "Refilling uncovered front tile");
             }
 
-            return allCovered || _frontTileIds.All(HasProjectedDefensiveCoverage);
+            return allCovered || frontTileIds.All(HasProjectedDefensiveCoverage);
         }
 
         private void ReinforceThreatenedFrontTiles()
         {
-            foreach (var frontTileId in OrderTileIds(_frontTileIds)
+            foreach (var frontTileId in OrderTileIds(frontTileIds)
                          .OrderByDescending(GetTileStrategicValue))
             {
                 var desiredDefenders = CalculateDesiredDefenderCount(frontTileId);
@@ -213,13 +213,9 @@ namespace Engine.Models
             var friendlyPower = SumCombatPower(GetPhysicalDefenders(frontTileId));
             var enemyPower = SumCombatPower(GetAdjacentHostileDivisions(frontTileId));
             var desired = 1;
-
-            /*if (enemyPower > friendlyPower * 1.1f)
-                desired++;*/
+            
             if (enemyPower > friendlyPower * 1.6f)
                 desired++;
-          /*  if (GetTileStrategicValue(frontTileId) >= 8f)
-                desired++;*/
 
             return Mathf.Clamp(desired, 1, 4);
         }
@@ -288,14 +284,14 @@ namespace Engine.Models
                     continue;
 
                 if (!GroundPathfindingService.TryFindFriendlyPath(
-                        _gameManager,
+                        gameManager,
                         candidate.TileId,
                         targetTileId,
                         Alliance,
                         out var candidatePath))
                     continue;
 
-                if (candidatePath.StepCount > MaxDefensivePathLength)
+                if (candidatePath.StepCount > MAX_DEFENSIVE_PATH_LENGTH)
                     continue;
 
                 var candidatePower = GroundCombatEstimationService.CalculateDivisionCombatPower(candidate);
@@ -337,7 +333,7 @@ namespace Engine.Models
                 return false;
 
             return EstimateAssignments(ActiveOffensivePlan.TargetTileId, remainingAssignments, out var estimate)
-                   && estimate.VictoryLikelihood >= OffensiveFeasibilityThreshold;
+                   && estimate.VictoryLikelihood >= OFFENSIVE_FEASIBILITY_THRESHOLD;
         }
 
         private bool TryRemoveDivisionFromOffensivePlan(Guid divisionId)
@@ -363,7 +359,7 @@ namespace Engine.Models
             if (division.TileId == targetTileId)
                 return false;
 
-            if (!_frontTileIds.Contains(division.TileId))
+            if (!frontTileIds.Contains(division.TileId))
                 return true;
 
             return CountAvailablePhysicalDefendersForSourceTile(division.TileId) >= 2
@@ -375,13 +371,13 @@ namespace Engine.Models
         {
             var targetThreat = CalculateDefensiveThreatScore(targetTileId);
             var currentThreat = CalculateDefensiveThreatScore(currentTileId);
-            return targetThreat > currentThreat * DefensiveRedeploymentThreatRatio;
+            return targetThreat > currentThreat * DEFENSIVE_REDEPLOYMENT_THREAT_RATIO;
         }
 
         private float CalculateDefensiveThreatScore(Vector3Int frontTileId)
         {
             var enemyPower = SumCombatPower(GetAdjacentHostileDivisions(frontTileId));
-            var strategicValue = GetTileStrategicValue(frontTileId) * DefensiveStrategicValueThreatWeight;
+            var strategicValue = GetTileStrategicValue(frontTileId) * DEFENSIVE_STRATEGIC_VALUE_THREAT_WEIGHT;
             return enemyPower + strategicValue;
         }
 
@@ -446,7 +442,7 @@ namespace Engine.Models
                 if (!EstimatePlanAssault(plan, out var estimate))
                     continue;
 
-                if (estimate.VictoryLikelihood < OffensiveFeasibilityThreshold)
+                if (estimate.VictoryLikelihood < OFFENSIVE_FEASIBILITY_THRESHOLD)
                     continue;
 
                 var utility = GetOffensivePlanUtility(estimate, targetTileId);
@@ -507,7 +503,7 @@ namespace Engine.Models
 
                 if (EstimateAssignments(targetTileId, assignments, out var estimate)
                     && CountAssaultAssignments(assignments) >= requiredAssaultCount
-                    && estimate.VictoryLikelihood >= OffensiveFeasibilityThreshold)
+                    && estimate.VictoryLikelihood >= OFFENSIVE_FEASIBILITY_THRESHOLD)
                     break;
             }
 
@@ -515,7 +511,7 @@ namespace Engine.Models
                 return null;
 
             if (!EstimateAssignments(targetTileId, assignments, out var finalEstimate)
-                || finalEstimate.VictoryLikelihood < OffensiveFeasibilityThreshold)
+                || finalEstimate.VictoryLikelihood < OFFENSIVE_FEASIBILITY_THRESHOLD)
                 return null;
 
             AddPinAssignments(targetTileId, stagingTiles, assignments, usedDivisionIds, departingDivisionIds);
@@ -566,7 +562,7 @@ namespace Engine.Models
             if (!DoesOffensiveAssignmentDepartCurrentTile(division, intent, stagingTileId))
                 return true;
 
-            if (!_frontTileIds.Contains(division.TileId))
+            if (!frontTileIds.Contains(division.TileId))
                 return true;
 
             if (DoesCapturingTargetRemoveSourceFromFront(division.TileId, targetTileId))
@@ -574,14 +570,14 @@ namespace Engine.Models
 
             return CountAvailablePhysicalDefendersForSourceTile(
                 division.TileId,
-                departingDivisionIds) > RequiredHoldingDivisionsPerFrontTile;
+                departingDivisionIds) > REQUIRED_HOLDING_DIVISIONS_PER_FRONT_TILE;
         }
 
         private bool CanSupportAttackFromCurrentTile(Division division, Vector3Int targetTileId)
         {
             return division != null
-                   && _frontTileIds.Contains(division.TileId)
-                   && GroundSystemUtility.AreNeighbors(_gameManager, division.TileId, targetTileId);
+                   && frontTileIds.Contains(division.TileId)
+                   && GroundSystemUtility.AreNeighbors(gameManager, division.TileId, targetTileId);
         }
 
         private static bool DoesOffensiveAssignmentDepartCurrentTile(
@@ -610,7 +606,7 @@ namespace Engine.Models
                 .Where(division => assignedDivisionIds.Contains(division.DivisionId)
                                    && IsEligibleForOffense(division, targetTileId)
                                    && IsFriendlyControlledLandTile(division.TileId)
-                                   && GroundSystemUtility.AreNeighbors(_gameManager, division.TileId, targetTileId)
+                                   && GroundSystemUtility.AreNeighbors(gameManager, division.TileId, targetTileId)
                                    && CanSupportAttackFromCurrentTile(division, targetTileId))
                 .OrderByDescending(GroundCombatEstimationService.CalculateDivisionCombatPower)
                 .ThenBy(division => division.DivisionId);
@@ -628,13 +624,13 @@ namespace Engine.Models
             {
                 case GroundOrderAIIntent.Flex:
                 case GroundOrderAIIntent.None:
-                    return !_frontTileIds.Contains(division.TileId)
-                           || CountEligiblePhysicalDefenders(division.TileId) > RequiredHoldingDivisionsPerFrontTile;
+                    return !frontTileIds.Contains(division.TileId)
+                           || CountEligiblePhysicalDefenders(division.TileId) > REQUIRED_HOLDING_DIVISIONS_PER_FRONT_TILE;
                 case GroundOrderAIIntent.HoldFront:
-                    return GroundSystemUtility.AreNeighbors(_gameManager, division.TileId, targetTileId);
+                    return GroundSystemUtility.AreNeighbors(gameManager, division.TileId, targetTileId);
                 case GroundOrderAIIntent.HoldEdge:
                     return CountAdjacentHostileTiles(division.TileId, GroundSystemUtility.GetHostileAlliance(Alliance)) == 1
-                           && GroundSystemUtility.AreNeighbors(_gameManager, division.TileId, targetTileId);
+                           && GroundSystemUtility.AreNeighbors(gameManager, division.TileId, targetTileId);
                 default:
                     return false;
             }
@@ -703,7 +699,7 @@ namespace Engine.Models
             var allReady = true;
             foreach (var assignment in ActiveOffensivePlan.Assignments)
             {
-                if (!_gameManager.divisionSystem.TryGetDivision(assignment.DivisionId, out var division))
+                if (!gameManager.divisionSystem.TryGetDivision(assignment.DivisionId, out var division))
                 {
                     allReady = false;
                     continue;
@@ -737,7 +733,7 @@ namespace Engine.Models
                 };
 
                 if (!GroundPathfindingService.TryPrepareMoveGroundOrder(
-                        _gameManager,
+                        gameManager,
                         division.TileId,
                         assignment.StagingTileId,
                         Alliance,
@@ -761,7 +757,7 @@ namespace Engine.Models
         {
             foreach (var assignment in ActiveOffensivePlan.Assignments)
             {
-                if (!_gameManager.divisionSystem.TryGetDivision(assignment.DivisionId, out var division))
+                if (!gameManager.divisionSystem.TryGetDivision(assignment.DivisionId, out var division))
                     continue;
 
                 if (assignment.Intent == GroundOrderAIIntent.SupportAttack
@@ -802,7 +798,7 @@ namespace Engine.Models
                 };
 
                 if (!GroundPathfindingService.TryPrepareMoveGroundOrder(
-                        _gameManager,
+                        gameManager,
                         division.TileId,
                         assignment.EngagementTileId,
                         Alliance,
@@ -837,7 +833,7 @@ namespace Engine.Models
             }
 
             if (!EstimatePlanAssault(proposedPlan, out var estimate)
-                || estimate.VictoryLikelihood < OffensiveFeasibilityThreshold)
+                || estimate.VictoryLikelihood < OFFENSIVE_FEASIBILITY_THRESHOLD)
             {
                 reason = "Offensive feasibility failed";
                 return false;
@@ -845,10 +841,10 @@ namespace Engine.Models
 
             foreach (var assignment in proposedPlan.Assignments)
             {
-                if (!_gameManager.divisionSystem.TryGetDivision(assignment.DivisionId, out var division)
+                if (!gameManager.divisionSystem.TryGetDivision(assignment.DivisionId, out var division)
                     || !IsCombatReady(division)
                     || GroundSystemUtility.IsRetreating(division)
-                    || _gameManager.IsDivisionDefendingInGroundCombat(division.DivisionId))
+                    || gameManager.IsDivisionDefendingInGroundCombat(division.DivisionId))
                 {
                     reason = "Assigned division became unavailable";
                     return false;
@@ -876,13 +872,13 @@ namespace Engine.Models
             var departingDivisionIds = new HashSet<Guid>();
             foreach (var assignment in plan.Assignments)
             {
-                if (!_gameManager.divisionSystem.TryGetDivision(assignment.DivisionId, out var division))
+                if (!gameManager.divisionSystem.TryGetDivision(assignment.DivisionId, out var division))
                     continue;
 
                 if (!DoesOffensiveAssignmentDepartCurrentTile(division, assignment.Intent, assignment.StagingTileId))
                     continue;
 
-                if (!_frontTileIds.Contains(division.TileId))
+                if (!frontTileIds.Contains(division.TileId))
                     continue;
 
                 if (DoesCapturingTargetRemoveSourceFromFront(division.TileId, assignment.EngagementTileId))
@@ -898,7 +894,7 @@ namespace Engine.Models
 
                 if (CountAvailablePhysicalDefendersForSourceTile(
                         division.TileId,
-                        projectedDepartingDivisionIds) < RequiredHoldingDivisionsPerFrontTile)
+                        projectedDepartingDivisionIds) < REQUIRED_HOLDING_DIVISIONS_PER_FRONT_TILE)
                     return false;
 
                 departingDivisionIds.Add(division.DivisionId);
@@ -912,7 +908,7 @@ namespace Engine.Models
             if (!HasHostilePhysicalDefender(targetTileId))
                 return 1;
 
-            var desired = MinAssaultDivisionsPerOffensiveTarget;
+            var desired = MIN_ASSAULT_DIVISIONS_PER_OFFENSIVE_TARGET;
 
             if (GetAdjacentHostileDivisions(targetTileId).Count() >= 3)
                 desired++;
@@ -922,8 +918,8 @@ namespace Engine.Models
 
             return Mathf.Clamp(
                 desired,
-                MinAssaultDivisionsPerOffensiveTarget,
-                MaxAssaultDivisionsPerOffensiveTarget);
+                MIN_ASSAULT_DIVISIONS_PER_OFFENSIVE_TARGET,
+                MAX_ASSAULT_DIVISIONS_PER_OFFENSIVE_TARGET);
         }
 
         private static int CountAssaultAssignments(IEnumerable<OffensivePlanAssignment> assignments)
@@ -944,7 +940,7 @@ namespace Engine.Models
 
             foreach (var assignment in ActiveOffensivePlan.Assignments)
             {
-                if (!_gameManager.divisionSystem.TryGetDivision(assignment.DivisionId, out var division))
+                if (!gameManager.divisionSystem.TryGetDivision(assignment.DivisionId, out var division))
                     continue;
 
                 if (division.CurrentOrder == null || !division.CurrentOrder.CanBeReplaced)
@@ -957,7 +953,7 @@ namespace Engine.Models
                     GroundOrderAssignmentSource.AI,
                     reason)
                 {
-                    AIIntent = _frontTileIds.Contains(division.TileId)
+                    AIIntent = frontTileIds.Contains(division.TileId)
                         ? GroundOrderAIIntent.HoldFront
                         : GroundOrderAIIntent.Flex
                 };
@@ -982,7 +978,7 @@ namespace Engine.Models
                 .Select(assignment => assignment.DivisionId);
 
             return GroundCombatEstimationService.TryEstimateTileAssault(
-                _gameManager,
+                gameManager,
                 assaultingDivisionIds,
                 targetTileId,
                 GroundCombatAssaultIntent.Capture,
@@ -992,7 +988,7 @@ namespace Engine.Models
         private IEnumerable<Vector3Int> GetOffensiveTargetCandidates(Alliance hostileAlliance)
         {
             var candidates = new HashSet<Vector3Int>();
-            foreach (var frontTileId in _frontTileIds)
+            foreach (var frontTileId in frontTileIds)
             {
                 foreach (var neighborTileId in GetNeighborTileIds(frontTileId))
                 {
@@ -1018,14 +1014,14 @@ namespace Engine.Models
             foreach (var candidateTileId in OrderTileIds(stagingTiles))
             {
                 if (!GroundPathfindingService.TryFindFriendlyPath(
-                        _gameManager,
+                        gameManager,
                         division.TileId,
                         candidateTileId,
                         Alliance,
                         out var candidatePath))
                     continue;
 
-                if (candidatePath.StepCount > MaxOffensivePathLength || candidatePath.StepCount >= bestPathLength)
+                if (candidatePath.StepCount > MAX_OFFENSIVE_PATH_LENGTH || candidatePath.StepCount >= bestPathLength)
                     continue;
 
                 stagingTileId = candidateTileId;
@@ -1040,7 +1036,7 @@ namespace Engine.Models
         {
             return GetNeighborTileIds(targetTileId)
                 .Where(IsFriendlyControlledLandTile)
-                .Where(tileId => GroundPathfindingService.IsSafeFriendlyWaypoint(_gameManager, tileId, Alliance));
+                .Where(tileId => GroundPathfindingService.IsSafeFriendlyWaypoint(gameManager, tileId, Alliance));
         }
 
         private bool HasProjectedDefensiveCoverage(Vector3Int frontTileId)
@@ -1067,8 +1063,8 @@ namespace Engine.Models
 
         private IEnumerable<Division> GetPhysicalDefenders(Vector3Int tileId)
         {
-            return _gameManager.divisionSystem.GetDivisionsOnTile(tileId)
-                .Where(division => GroundSystemUtility.TryGetDivisionAlliance(_gameManager, division, out var alliance)
+            return gameManager.divisionSystem.GetDivisionsOnTile(tileId)
+                .Where(division => GroundSystemUtility.TryGetDivisionAlliance(gameManager, division, out var alliance)
                                    && alliance == Alliance
                                    && IsCombatReady(division));
         }
@@ -1076,16 +1072,16 @@ namespace Engine.Models
         private IEnumerable<Division> GetAdjacentHostileDivisions(Vector3Int tileId)
         {
             return GetNeighborTileIds(tileId)
-                .SelectMany(neighborTileId => _gameManager.divisionSystem.GetDivisionsOnTile(neighborTileId))
-                .Where(division => GroundSystemUtility.TryGetDivisionAlliance(_gameManager, division, out var alliance)
+                .SelectMany(neighborTileId => gameManager.divisionSystem.GetDivisionsOnTile(neighborTileId))
+                .Where(division => GroundSystemUtility.TryGetDivisionAlliance(gameManager, division, out var alliance)
                                    && GroundSystemUtility.AreHostile(Alliance, alliance)
                                    && IsCombatReady(division));
         }
 
         private bool HasHostilePhysicalDefender(Vector3Int tileId)
         {
-            return _gameManager.divisionSystem.GetDivisionsOnTile(tileId)
-                .Any(division => GroundSystemUtility.TryGetDivisionAlliance(_gameManager, division, out var alliance)
+            return gameManager.divisionSystem.GetDivisionsOnTile(tileId)
+                .Any(division => GroundSystemUtility.TryGetDivisionAlliance(gameManager, division, out var alliance)
                                  && GroundSystemUtility.AreHostile(Alliance, alliance)
                                  && IsCombatReady(division));
         }
@@ -1098,10 +1094,10 @@ namespace Engine.Models
         private float GetTileStrategicValue(Vector3Int tileId)
         {
             var value = 0f;
-            if (GroundSystemUtility.TryGetLandTileData(_gameManager, tileId, out var landTileData))
+            if (GroundSystemUtility.TryGetLandTileData(gameManager, tileId, out var landTileData))
                 value += landTileData.Infrastructure.FunctionalLevel;
 
-            foreach (var building in _gameManager.buildingSystem.GetBuildingsOnTile(tileId))
+            foreach (var building in gameManager.buildingSystem.GetBuildingsOnTile(tileId))
             {
                 var functionalLevel = Mathf.Max(1, building.FunctionalLevel);
                 value += building.Type switch
@@ -1125,8 +1121,8 @@ namespace Engine.Models
 
         private float GetSupplyStrategicValue(Vector3Int tileId)
         {
-            _supplyStrategicValueByTileId ??= SupplyStrategicValueService.BuildSupplyStrategicValueLookup(_gameManager);
-            return _supplyStrategicValueByTileId.TryGetValue(tileId, out var value) ? value : 0f;
+            supplyStrategicValueByTileId ??= SupplyStrategicValueService.BuildSupplyStrategicValueLookup(gameManager);
+            return supplyStrategicValueByTileId.TryGetValue(tileId, out var value) ? value : 0f;
         }
 
         private static float NormalizeStrategicValue(float value)
@@ -1136,11 +1132,11 @@ namespace Engine.Models
 
         private float GetOffensivePlanUtility(GroundCombatEstimate estimate, Vector3Int targetTileId)
         {
-            var baseUtility = estimate.VictoryLikelihood * CombatUtilityWeight
-                              + NormalizeStrategicValue(GetTileStrategicValue(targetTileId)) * StrategicValueUtilityWeight;
+            var baseUtility = estimate.VictoryLikelihood * COMBAT_UTILITY_WEIGHT
+                              + NormalizeStrategicValue(GetTileStrategicValue(targetTileId)) * STRATEGIC_VALUE_UTILITY_WEIGHT;
             var randomMultiplier = Random.Range(
-                1f - OffensivePlanUtilityRandomVariance,
-                1f + OffensivePlanUtilityRandomVariance);
+                1f - OFFENSIVE_PLAN_UTILITY_RANDOM_VARIANCE,
+                1f + OFFENSIVE_PLAN_UTILITY_RANDOM_VARIANCE);
 
             return baseUtility * randomMultiplier;
         }
@@ -1150,7 +1146,7 @@ namespace Engine.Models
             if (!CanReplaceOrder(division))
                 return false;
 
-            if (_gameManager.IsDivisionEngagedInGroundCombat(division.DivisionId))
+            if (gameManager.IsDivisionEngagedInGroundCombat(division.DivisionId))
                 return false;
 
             return division.CurrentOrder is not MoveGroundOrder;
@@ -1187,7 +1183,7 @@ namespace Engine.Models
         {
             return GetNeighborTileIds(tileId)
                 .Count(neighborTileId => GroundSystemUtility.TryGetLandTileData(
-                                             _gameManager,
+                                             gameManager,
                                              neighborTileId,
                                              out var landTileData)
                                          && landTileData.Controller == hostileAlliance);
@@ -1195,10 +1191,10 @@ namespace Engine.Models
 
         private bool DoesCapturingTargetRemoveSourceFromFront(Vector3Int sourceTileId, Vector3Int targetTileId)
         {
-            if (!_frontTileIds.Contains(sourceTileId))
+            if (!frontTileIds.Contains(sourceTileId))
                 return false;
 
-            if (!GroundSystemUtility.AreNeighbors(_gameManager, sourceTileId, targetTileId))
+            if (!GroundSystemUtility.AreNeighbors(gameManager, sourceTileId, targetTileId))
                 return false;
 
             if (!IsHostileControlledLandTile(targetTileId))
@@ -1211,25 +1207,25 @@ namespace Engine.Models
 
         private bool IsFriendlyControlledLandTile(Vector3Int tileId)
         {
-            return GroundSystemUtility.TryGetLandTileData(_gameManager, tileId, out var landTileData)
+            return GroundSystemUtility.TryGetLandTileData(gameManager, tileId, out var landTileData)
                    && landTileData.Controller == Alliance;
         }
 
         private bool IsHostileControlledLandTile(Vector3Int tileId)
         {
-            return GroundSystemUtility.TryGetLandTileData(_gameManager, tileId, out var landTileData)
+            return GroundSystemUtility.TryGetLandTileData(gameManager, tileId, out var landTileData)
                    && GroundSystemUtility.AreHostile(Alliance, landTileData.Controller);
         }
 
         private IEnumerable<Vector3Int> GetNeighborTileIds(Vector3Int tileId)
         {
-            return GroundSystemUtility.GetNeighborTileIds(_gameManager, tileId);
+            return GroundSystemUtility.GetNeighborTileIds(gameManager, tileId);
         }
 
         private IEnumerable<Division> GetAllianceDivisions()
         {
-            return _gameManager.divisionSystem.Divisions
-                .Where(division => GroundSystemUtility.TryGetDivisionAlliance(_gameManager, division, out var alliance)
+            return gameManager.divisionSystem.Divisions
+                .Where(division => GroundSystemUtility.TryGetDivisionAlliance(gameManager, division, out var alliance)
                                    && alliance == Alliance);
         }
 
