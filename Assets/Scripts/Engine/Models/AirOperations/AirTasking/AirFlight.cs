@@ -74,7 +74,6 @@ namespace Models.Gameplay.Campaign
     public sealed class AirFlight
     {
         public Guid FlightId = Guid.NewGuid();
-        public Guid OwningPackageId;
         public Guid SquadronId;
         public AirMissionRequestType MissionType;
         public bool IsRequired = true;

@@ -127,7 +127,6 @@ namespace Engine.Service
             var effectEnd = request.EffectEnd;
             package = CreatePackage(request, currentTime);
             var flight = CreateFlight(
-                package,
                 request,
                 candidates.Squadron,
                 selectedAircraft);
@@ -220,7 +219,6 @@ namespace Engine.Service
             foreach (var selected in selectedCandidates)
             {
                 var flight = CreateFlight(
-                    package,
                     request,
                     selected.Squadron,
                     selected.Aircraft);
@@ -302,14 +300,12 @@ namespace Engine.Service
         }
 
         private static AirFlight CreateFlight(
-            AirPackage package,
             AirMissionRequest request,
             Squadron squadron,
             IReadOnlyCollection<CampaignAircraft> aircraft)
         {
             return new AirFlight
             {
-                OwningPackageId = package.PackageId,
                 SquadronId = squadron.SquadronId,
                 MissionType = request.RequestType,
                 IsRequired = true,

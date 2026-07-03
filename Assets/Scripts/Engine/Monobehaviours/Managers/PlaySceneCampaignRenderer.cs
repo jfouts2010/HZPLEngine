@@ -807,7 +807,7 @@ namespace Engine.Monobehaviours.Managers
 
             foreach (var flight in flights)
             {
-                var package = packages.FirstOrDefault(candidate => candidate.PackageId == flight.OwningPackageId);
+                var package = GetOwningPackage(flight, packages);
                 var alliance = package?.Alliance ?? Alliance.Neutral;
                 var squadron = gameManager.squadronSystem?.Squadrons?
                     .FirstOrDefault(candidate => candidate.SquadronId == flight.SquadronId);
@@ -830,7 +830,7 @@ namespace Engine.Monobehaviours.Managers
                     new AirCardField(
                         "Next action",
                         nextWaypoint == null ? "—" : GetWaypointLabel(nextWaypoint.Action)),
-                    new AirCardField("Package", ShortId(flight.OwningPackageId))
+                    new AirCardField("Package", ShortId(package?.PackageId ?? Guid.Empty))
                 };
                 airFlightsList.Add(CreateAirCard(
                     alliance,
@@ -1228,14 +1228,18 @@ namespace Engine.Monobehaviours.Managers
             AirFlight flight,
             IReadOnlyList<AirPackage> packages)
         {
-            if (flight == null || packages == null)
-                return Alliance.Neutral;
+            return GetOwningPackage(flight, packages)?.Alliance ?? Alliance.Neutral;
+        }
 
-            return packages
-                       .FirstOrDefault(package =>
-                           package != null && package.PackageId == flight.OwningPackageId)?
-                       .Alliance
-                   ?? Alliance.Neutral;
+        private static AirPackage GetOwningPackage(
+            AirFlight flight,
+            IReadOnlyList<AirPackage> packages)
+        {
+            if (flight == null || packages == null)
+                return null;
+
+            return packages.FirstOrDefault(package =>
+                package?.Flights?.Contains(flight) == true);
         }
 
         private static string ShortId(Guid id)

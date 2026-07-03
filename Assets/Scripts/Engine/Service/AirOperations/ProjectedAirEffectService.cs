@@ -129,12 +129,10 @@ namespace Engine.Service
             AllianceAirTaskingCommander commander,
             AirMissionRequest request)
         {
-            var packageIds = new HashSet<Guid>(request.PackageIds ?? new List<Guid>());
             return (commander.Packages ?? new List<AirPackage>())
                 .Where(package => package != null
                                   && !package.IsTerminal
-                                  && (package.MissionRequestId == request.MissionRequestId
-                                      || packageIds.Contains(package.PackageId)))
+                                  && package.MissionRequestId == request.MissionRequestId)
                 .SelectMany(package => package.Flights ?? new List<AirFlight>())
                 .Where(flight => flight != null && !flight.IsTerminal);
         }

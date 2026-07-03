@@ -21,7 +21,6 @@ namespace Models.Gameplay.Campaign
         public float Priority;
         public Dictionary<string, float> PriorityComponents = new Dictionary<string, float>();
         public string Rationale = string.Empty;
-        public List<Guid> PackageIds = new List<Guid>();
 
         public bool IsSupportRequest =>
             RequestType == AirMissionRequestType.ProvideAirborneC2

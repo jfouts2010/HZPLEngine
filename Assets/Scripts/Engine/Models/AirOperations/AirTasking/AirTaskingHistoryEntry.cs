@@ -10,7 +10,6 @@ namespace Models.Gameplay.Campaign
         public Guid MissionRequestId;
         public AirMissionRequestType RequestType;
         public AirMissionRequestState RequestState;
-        public List<Guid> PackageIds = new List<Guid>();
         public AirMissionRequest RequestSnapshot;
         public List<AirPackage> PackageSnapshots = new List<AirPackage>();
         public string Summary = string.Empty;

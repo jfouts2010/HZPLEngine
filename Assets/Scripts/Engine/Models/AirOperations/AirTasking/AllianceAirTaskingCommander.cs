@@ -75,7 +75,6 @@ namespace Models.Gameplay.Campaign
                         MissionRequestId = request.MissionRequestId,
                         RequestType = request.RequestType,
                         RequestState = request.State,
-                        PackageIds = linkedPackages.Select(package => package.PackageId).ToList(),
                         RequestSnapshot = request,
                         PackageSnapshots = linkedPackages,
                         Summary = "Mission request and terminal packages archived at global replanning."
@@ -164,8 +163,6 @@ namespace Models.Gameplay.Campaign
                     reservation.Flight.SupportReservations.Add(reservation.Reservation);
 
                 packages.Add(package);
-                request.PackageIds ??= new List<Guid>();
-                request.PackageIds.Add(package.PackageId);
                 request.State = request.IsSupportRequest
                     ? AirMissionRequestState.PartiallyFulfilled
                     : AirMissionRequestState.InProgress;
@@ -208,7 +205,6 @@ namespace Models.Gameplay.Campaign
                 foreach (var reservation in supportReservations)
                     reservation.Flight.SupportReservations.Remove(reservation.Reservation);
                 packages.Remove(package);
-                request.PackageIds?.Remove(package.PackageId);
                 request.State = previousRequestState;
                 RemoveEntriesAddedAfter(diagnostics, previousDiagnosticCount);
                 RemoveEntriesAddedAfter(supportDemandHistory, previousSupportDemandCount);
@@ -418,7 +414,6 @@ namespace Models.Gameplay.Campaign
             }
             if (flights.Any(flight =>
                     flight.FlightId == Guid.Empty
-                    || flight.OwningPackageId != package.PackageId
                     || flight.SquadronId == Guid.Empty
                     || flight.MissionType != request.RequestType
                     || flight.AircraftIds == null
