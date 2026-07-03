@@ -223,6 +223,10 @@ V1 ordnance target categories:
 - **Radar** — emitting air-defense sensors and similar radiating targets
 - **Ship** — naval surface targets
 
+**Ordnance employment category** — the loadout-composition role of an ordnance type, such as radar-guided air-to-air, infrared air-to-air, anti-radiation, precision air-to-ground, or unguided air-to-ground. Employment category is separate from **ordnance target category**: target category describes what the store can affect, while employment category describes why a loadout planner would include it.
+
+_Avoid_: weapon category when the concept is specifically classifying air-launched ordnance for loadout planning.
+
 **Ordnance effectiveness** — a 0–1 rating of how well an ordnance type performs against one ordnance target category. Sortie and loadout planning compare effectiveness against expected target categories rather than mission-role tags. In code, effectiveness is keyed by ordnance target category so lookups answer "how effective is this store against vehicles?" directly.
 
 _Avoid_: using "weapon" alone when the concept is specifically air-launched stores modeled in the third-party sim; ground unit armament belongs to battalion definitions unless a future rule needs separate treatment.
@@ -259,11 +263,21 @@ In v1, a loadout is an abstract count per ordnance type, such as four AIM-120 an
 
 A loadout must satisfy the aircraft type's ordnance capacity: the sum of each carried store's ordnance weight may not exceed that aircraft's ordnance capacity. Each carried store must also be on that aircraft type's compatible ordnance allow-list and allowed for the aircraft's alliance.
 
+**Mission-useful ordnance** — the carried ordnance that can still contribute to a flight's assigned mission effect. Time-based air-combat missions such as defensive counter-air patrols and offensive counter-air sweeps become unable to continue their mission when no air-to-air mission-useful ordnance remains; support missions such as airborne C2 and aerial refueling do not depend on ordnance.
+
+For aggregate DCA/OCA execution, mission-useful ordnance exhaustion is evaluated at the flight formation level rather than per aircraft. A flight should continue while any assigned aircraft still carries mission-useful air-to-air ordnance; it should return to base only when the formation as a whole has no mission-useful ordnance remaining.
+
+If a time-based combat flight returns to base early because the formation has exhausted mission-useful ordnance before satisfying its assigned effect, the flight is aborted rather than completed. If the assigned effect has already been satisfied, ordnance exhaustion does not change normal recovery.
+
 V1 loadout planning is demand-driven. The planner should not fill unused ordnance capacity simply because capacity remains; carrying unnecessary stores increases fuel burden and should be avoided.
 
 For a sortie's primary target category, the planned primary ordnance quantity should cover the expected target need plus a reserve of either 25% extra or one additional store, whichever is higher. Self-defense ordnance is planned separately and scales with expected enemy air threat: clear skies need little reserve, while enemy air superiority justifies a higher self-defense allocation.
 
 In v1, self-defense ordnance is based on fixed desired shot counts by air-threat level. Longer term, self-defense planning may derive desired hits from expected aircraft threats. Determining the current air-threat level is outside the ordnance foundation.
+
+For v1 defensive counter-air patrol and offensive counter-air sweep loadouts, each assigned combat aircraft plans a fixed mission shot budget of four air-to-air shots when capacity allows. At least two air-to-air shots must fit for the aircraft to be feasible; longer term, this budget may be replaced by expected engagement forecasting.
+
+The preferred v1 air-to-air loadout split is two radar-guided air-to-air shots and two infrared air-to-air shots. If one employment category is unavailable or cannot fit, the planner may fill the remaining budget with the other air-to-air category; it should not exceed the fixed shot budget simply because unused capacity remains.
 
 The game should only create sorties whose required loadout can fit the assigned aircraft. Detailed policy for resolving capacity conflicts between primary ordnance and self-defense ordnance is deferred until sortie generation is designed.
 

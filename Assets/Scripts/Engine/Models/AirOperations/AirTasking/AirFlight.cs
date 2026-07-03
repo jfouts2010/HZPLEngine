@@ -71,6 +71,29 @@ namespace Models.Gameplay.Campaign
     }
 
     [Serializable]
+    public sealed class PlannedAircraftLoadout
+    {
+        public Guid AircraftId;
+        public List<AircraftLoadoutItem> Loadout = new List<AircraftLoadoutItem>();
+
+        public PlannedAircraftLoadout()
+        {
+        }
+
+        public PlannedAircraftLoadout(
+            Guid aircraftId,
+            IEnumerable<AircraftLoadoutItem> loadout)
+        {
+            AircraftId = aircraftId;
+            Loadout = loadout
+                .Select(item => new AircraftLoadoutItem(
+                    item.OrdnanceTypeDefinitionId,
+                    item.Count))
+                .ToList();
+        }
+    }
+
+    [Serializable]
     public sealed class AirFlight
     {
         public Guid FlightId = Guid.NewGuid();
@@ -78,6 +101,8 @@ namespace Models.Gameplay.Campaign
         public AirMissionRequestType MissionType;
         public bool IsRequired = true;
         private List<Guid> aircraftIds = new List<Guid>();
+        private List<PlannedAircraftLoadout> plannedAircraftLoadouts =
+            new List<PlannedAircraftLoadout>();
         private AirTaskingLifecycleState lifecycleState = AirTaskingLifecycleState.Committed;
         private FlightExecutionPhase executionPhase = FlightExecutionPhase.AwaitingTakeoff;
         private List<AirWaypoint> route = new List<AirWaypoint>();
@@ -97,6 +122,7 @@ namespace Models.Gameplay.Campaign
             new List<AirSupportReservation>();
 
         public List<Guid> AircraftIds => aircraftIds;
+        public List<PlannedAircraftLoadout> PlannedAircraftLoadouts => plannedAircraftLoadouts;
         public List<AirSupportReservation> SupportReservations => supportReservations;
         public AirTaskingLifecycleState LifecycleState => lifecycleState;
         public FlightExecutionPhase ExecutionPhase => executionPhase;

@@ -44,6 +44,7 @@ namespace Engine.Models
     public sealed class AirPlanningSquadronSnapshot
     {
         public Guid SquadronId { get; }
+        public Alliance Alliance { get; }
         public Guid AircraftTypeDefinitionId { get; }
         public Guid AirportBuildingId { get; }
         public Vector3Int AirportTileId { get; }
@@ -52,6 +53,7 @@ namespace Engine.Models
 
         public AirPlanningSquadronSnapshot(
             Guid squadronId,
+            Alliance alliance,
             Guid aircraftTypeDefinitionId,
             Guid airportBuildingId,
             Vector3Int airportTileId,
@@ -59,6 +61,7 @@ namespace Engine.Models
             int assignedAircraftCount)
         {
             SquadronId = squadronId;
+            Alliance = alliance;
             AircraftTypeDefinitionId = aircraftTypeDefinitionId;
             AirportBuildingId = airportBuildingId;
             AirportTileId = airportTileId;
@@ -91,14 +94,15 @@ namespace Engine.Models
                     || airportBuilding.FunctionalLevel <= 0)
                     continue;
 
+                var squadronAlliance = gameManager.GetCountryAlliance(squadron.CountryId);
                 var snapshot = new AirPlanningSquadronSnapshot(
                     squadron.SquadronId,
+                    squadronAlliance,
                     squadron.AircraftTypeDefinitionId,
                     squadron.AirportBuildingId,
                     airportBuilding.TileId,
                     squadron.ReadyAircraft,
                     squadron.AssignedAircraft);
-                var squadronAlliance = gameManager.GetCountryAlliance(squadron.CountryId);
 
                 if (squadronAlliance == alliance)
                     friendlySquadrons.Add(snapshot);

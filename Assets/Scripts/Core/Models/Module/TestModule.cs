@@ -203,7 +203,8 @@ namespace Models.Module
                     effectivenessByTargetCategory: new Dictionary<OrdnanceTargetCategory, float>
                     {
                         { OrdnanceTargetCategory.Aircraft, 0.95f }
-                    }),
+                    },
+                    employmentCategory: OrdnanceEmploymentCategory.AirToAirRadar),
                 new OrdnanceTypeDefinition(
                     Aim9OrdnanceTypeId,
                     "AIM-9 Sidewinder",
@@ -212,7 +213,8 @@ namespace Models.Module
                     effectivenessByTargetCategory: new Dictionary<OrdnanceTargetCategory, float>
                     {
                         { OrdnanceTargetCategory.Aircraft, 0.75f }
-                    }),
+                    },
+                    employmentCategory: OrdnanceEmploymentCategory.AirToAirInfrared),
                 new OrdnanceTypeDefinition(
                     Agm88OrdnanceTypeId,
                     "AGM-88 HARM",
@@ -222,7 +224,8 @@ namespace Models.Module
                     {
                         { OrdnanceTargetCategory.Radar, 1f },
                         { OrdnanceTargetCategory.Building, 0.15f }
-                    }),
+                    },
+                    employmentCategory: OrdnanceEmploymentCategory.AntiRadiation),
                 new OrdnanceTypeDefinition(
                     Gbu38OrdnanceTypeId,
                     "GBU-38 JDAM",
@@ -232,7 +235,8 @@ namespace Models.Module
                     {
                         { OrdnanceTargetCategory.Vehicle, 0.55f },
                         { OrdnanceTargetCategory.Building, 0.8f }
-                    }),
+                    },
+                    employmentCategory: OrdnanceEmploymentCategory.AirToGroundPrecision),
                 new OrdnanceTypeDefinition(
                     Agm65OrdnanceTypeId,
                     "AGM-65 Maverick",
@@ -242,7 +246,8 @@ namespace Models.Module
                     {
                         { OrdnanceTargetCategory.Vehicle, 0.9f },
                         { OrdnanceTargetCategory.Building, 0.45f }
-                    }),
+                    },
+                    employmentCategory: OrdnanceEmploymentCategory.AirToGroundPrecision),
                 new OrdnanceTypeDefinition(
                     R27OrdnanceTypeId,
                     "R-27 Alamo",
@@ -251,7 +256,8 @@ namespace Models.Module
                     effectivenessByTargetCategory: new Dictionary<OrdnanceTargetCategory, float>
                     {
                         { OrdnanceTargetCategory.Aircraft, 0.85f }
-                    }),
+                    },
+                    employmentCategory: OrdnanceEmploymentCategory.AirToAirRadar),
                 new OrdnanceTypeDefinition(
                     R73OrdnanceTypeId,
                     "R-73 Archer",
@@ -260,7 +266,8 @@ namespace Models.Module
                     effectivenessByTargetCategory: new Dictionary<OrdnanceTargetCategory, float>
                     {
                         { OrdnanceTargetCategory.Aircraft, 0.75f }
-                    })
+                    },
+                    employmentCategory: OrdnanceEmploymentCategory.AirToAirInfrared)
             };
         }
 

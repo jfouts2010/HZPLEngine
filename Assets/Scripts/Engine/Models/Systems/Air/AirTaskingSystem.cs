@@ -30,14 +30,26 @@ namespace Engine.Models
             this.gameManager = gameManager;
             this.planningIntelligence = planningIntelligence;
             var projectedEffects = new ProjectedAirEffectService();
-            var priorityService = new AirMissionPriorityService(module);
+            var priorityService = new AirMissionPriorityService(
+                module,
+                alliance =>
+                    gameManager.OrdnanceAllowances.TryGetValue(alliance, out var allowed)
+                        ? allowed
+                        : Array.Empty<Guid>());
             requestGenerator = new AirMissionRequestGenerator(priorityService);
             packageBuilder = new AirPackageBuilder(
                 gameManager,
                 module,
                 projectedEffects,
                 priorityService);
-            aircraftReservations = new AircraftReservationService(gameManager.squadronSystem);
+            aircraftReservations = new AircraftReservationService(
+                gameManager.squadronSystem,
+                module,
+                gameManager.GetCountryAlliance,
+                alliance =>
+                    gameManager.OrdnanceAllowances.TryGetValue(alliance, out var allowed)
+                        ? allowed
+                        : Array.Empty<Guid>());
             blueforCommander = new AllianceAirTaskingCommander(
                 Alliance.Bluefor,
                 GetDoctrine(Alliance.Bluefor));

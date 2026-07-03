@@ -3,6 +3,16 @@ using System.Collections.Generic;
 
 namespace Models.Module
 {
+    public enum OrdnanceEmploymentCategory
+    {
+        None = 0,
+        AirToAirRadar = 1,
+        AirToAirInfrared = 2,
+        AntiRadiation = 3,
+        AirToGroundPrecision = 4,
+        AirToGroundUnguided = 5
+    }
+
     public sealed class OrdnanceTypeDefinition
     {
         public Guid OrdnanceTypeDefinitionId { get; }
@@ -10,6 +20,7 @@ namespace Models.Module
         public string ThirdPartyId { get; }
         public float Weight { get; }
         public int EffectPower { get; }
+        public OrdnanceEmploymentCategory EmploymentCategory { get; }
         public Dictionary<OrdnanceTargetCategory, float> EffectivenessByTargetCategory { get; }
 
         public OrdnanceTypeDefinition(
@@ -18,6 +29,7 @@ namespace Models.Module
             float weight,
             int effectPower,
             Dictionary<OrdnanceTargetCategory, float> effectivenessByTargetCategory = null,
+            OrdnanceEmploymentCategory employmentCategory = OrdnanceEmploymentCategory.None,
             string thirdPartyId = "")
         {
             if (ordnanceTypeDefinitionId == Guid.Empty)
@@ -28,6 +40,7 @@ namespace Models.Module
             ThirdPartyId = thirdPartyId;
             Weight = Math.Max(0f, weight);
             EffectPower = Math.Max(0, effectPower);
+            EmploymentCategory = employmentCategory;
             EffectivenessByTargetCategory = ClampEffectiveness(effectivenessByTargetCategory);
         }
 

@@ -17,6 +17,7 @@ namespace Engine.Models
         private readonly GameManager gameManager;
         private readonly AirTaskingSystem airTaskingSystem;
         private readonly IReadOnlyDictionary<Guid, AircraftTypeDefinition> aircraftTypes;
+        private readonly AirLoadoutPlanner loadoutPlanner;
 
         public AirExecutionSystem(
             GameManager gameManager,
@@ -27,6 +28,12 @@ namespace Engine.Models
             this.airTaskingSystem = airTaskingSystem;
             aircraftTypes = module.AircraftTypeDefinitions
                 .ToDictionary(definition => definition.AircraftTypeDefinitionId);
+            loadoutPlanner = new AirLoadoutPlanner(
+                module,
+                alliance =>
+                    gameManager.OrdnanceAllowances.TryGetValue(alliance, out var allowed)
+                        ? allowed
+                        : Array.Empty<Guid>());
         }
 
         public void GameTurn(DateTime previousTime, DateTime currentTime)
@@ -125,9 +132,35 @@ namespace Engine.Models
                 return null;
 
             flight.ContinueAbortRecovery(cursor);
+            AbortIfMissionUsefulOrdnanceExhausted(flight, squadron, cursor);
             return new FlightTickState(
                 cursor,
                 Math.Max(0d, (currentTime - cursor).TotalSeconds));
+        }
+
+        private void AbortIfMissionUsefulOrdnanceExhausted(
+            AirFlight flight,
+            Squadron squadron,
+            DateTime occurredAt)
+        {
+            if (!IsTimeBasedAirCombatMission(flight.MissionType)
+                || flight.LifecycleState != AirTaskingLifecycleState.Active
+                || flight.ExecutionPhase == FlightExecutionPhase.Returning
+                || flight.ExecutionPhase == FlightExecutionPhase.Landing
+                || flight.ExecutionPhase == FlightExecutionPhase.Ended
+                || flight.MissionAchieved)
+                return;
+
+            var hasMissionUsefulOrdnance = squadron.Aircraft
+                .Where(aircraft => aircraft.AssignedFlightId == flight.FlightId
+                                   && aircraft.Status != CampaignAircraftStatus.Lost)
+                .Any(loadoutPlanner.HasMissionUsefulAirCombatOrdnance);
+            if (hasMissionUsefulOrdnance)
+                return;
+
+            flight.Cancel(
+                occurredAt,
+                "Flight exhausted mission-useful air-to-air ordnance.");
         }
 
         private void AdvanceFlight(
@@ -363,6 +396,12 @@ namespace Engine.Models
                    && aircraftTypes.TryGetValue(
                        squadron.AircraftTypeDefinitionId,
                        out aircraftType);
+        }
+
+        private static bool IsTimeBasedAirCombatMission(AirMissionRequestType missionType)
+        {
+            return missionType == AirMissionRequestType.DefensiveCounterAirPatrol
+                   || missionType == AirMissionRequestType.OffensiveCounterAirSweep;
         }
 
         private float GetGuidanceSpeedKnots(

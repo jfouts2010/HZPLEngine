@@ -13,13 +13,19 @@ namespace Engine.Service
     {
         private readonly IReadOnlyDictionary<Guid, AircraftTypeDefinition> aircraftTypes;
         private readonly IReadOnlyDictionary<Guid, OrdnanceTypeDefinition> ordnanceTypes;
+        private readonly AirLoadoutPlanner loadoutPlanner;
 
-        public AirMissionPriorityService(ModuleDefinition module)
+        public AirMissionPriorityService(
+            ModuleDefinition module,
+            Func<Alliance, IReadOnlyCollection<Guid>> allowedOrdnanceForAlliance)
         {
             aircraftTypes = module.AircraftTypeDefinitions
                 .ToDictionary(definition => definition.AircraftTypeDefinitionId);
             ordnanceTypes = module.OrdnanceTypeDefinitions
                 .ToDictionary(definition => definition.OrdnanceTypeDefinitionId);
+            loadoutPlanner = new AirLoadoutPlanner(
+                module,
+                allowedOrdnanceForAlliance);
         }
 
         public void Score(
@@ -65,11 +71,15 @@ namespace Engine.Service
         public float CalculateAirCombatPower(AirPlanningSquadronSnapshot squadron)
         {
             var aircraftType = aircraftTypes[squadron.AircraftTypeDefinitionId];
-            if (!CanPerformAirCombat(aircraftType))
+            if (!loadoutPlanner.TryPlanAirCombatLoadout(
+                    aircraftType,
+                    squadron.Alliance,
+                    out var loadout,
+                    out _))
                 return 0f;
 
-            var bestAirWeaponEffectiveness = aircraftType.CompatibleOrdnanceTypeDefinitionIds
-                .Select(ordnanceTypeId => ordnanceTypes[ordnanceTypeId]
+            var bestAirWeaponEffectiveness = loadout
+                .Select(item => ordnanceTypes[item.OrdnanceTypeDefinitionId]
                     .GetEffectiveness(OrdnanceTargetCategory.Aircraft))
                 .DefaultIfEmpty(0f)
                 .Max();
@@ -82,14 +92,18 @@ namespace Engine.Service
             return perAircraftPower * Math.Max(0, squadron.ReadyAircraftCount + squadron.AssignedAircraftCount);
         }
 
-        public bool CanPerformAirCombat(AircraftTypeDefinition aircraftType)
+        public bool CanPerformAirCombat(
+            AircraftTypeDefinition aircraftType,
+            Alliance alliance)
         {
             if (aircraftType.SupportCapability != AirSupportCapability.None)
                 return false;
 
-            return aircraftType.CompatibleOrdnanceTypeDefinitionIds
-                .Any(ordnanceTypeId => ordnanceTypes[ordnanceTypeId]
-                    .GetEffectiveness(OrdnanceTargetCategory.Aircraft) > 0f);
+            return loadoutPlanner.TryPlanAirCombatLoadout(
+                aircraftType,
+                alliance,
+                out _,
+                out _);
         }
 
         public float CalculatePowerNear(

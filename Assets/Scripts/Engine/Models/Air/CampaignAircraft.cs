@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace Models.Gameplay.Campaign
 {
@@ -27,6 +28,16 @@ namespace Models.Gameplay.Campaign
         public void ClearLoadout()
         {
             Loadout.Clear();
+        }
+
+        public void SetLoadout(IEnumerable<AircraftLoadoutItem> loadout)
+        {
+            Loadout = loadout
+                .Select(item => new AircraftLoadoutItem(
+                    item.OrdnanceTypeDefinitionId,
+                    item.Count))
+                .Where(item => item.Count > 0)
+                .ToList();
         }
 
         public bool TryAssignToFlight(Guid flightId)

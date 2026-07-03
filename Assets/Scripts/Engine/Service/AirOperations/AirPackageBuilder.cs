@@ -27,6 +27,7 @@ namespace Engine.Service
         private readonly ProjectedAirEffectService projectedEffects;
         private readonly AirMissionPriorityService priorityService;
         private readonly IReadOnlyDictionary<Guid, AircraftTypeDefinition> aircraftTypes;
+        private readonly AirLoadoutPlanner loadoutPlanner;
         private readonly IAirRouteGeometryPlanner routeGeometryPlanner;
 
         public AirPackageBuilder(
@@ -42,6 +43,12 @@ namespace Engine.Service
             this.routeGeometryPlanner = routeGeometryPlanner;
             aircraftTypes = module.AircraftTypeDefinitions
                 .ToDictionary(definition => definition.AircraftTypeDefinitionId);
+            loadoutPlanner = new AirLoadoutPlanner(
+                module,
+                alliance =>
+                    gameManager.OrdnanceAllowances.TryGetValue(alliance, out var allowed)
+                        ? allowed
+                        : Array.Empty<Guid>());
         }
 
         public AirPackageBuildOutcome TryBuild(
@@ -180,12 +187,26 @@ namespace Engine.Service
             var squadronCandidates = GetFriendlySquadrons(commander.Alliance)
                 .Where(squadron =>
                     aircraftTypes.TryGetValue(squadron.AircraftTypeDefinitionId, out var aircraftType)
-                    && priorityService.CanPerformAirCombat(aircraftType))
-                .Select(squadron => new CombatSquadronCandidate(
-                    squadron,
-                    aircraftTypes[squadron.AircraftTypeDefinitionId],
-                    GetAvailableAircraft(squadron),
-                    GetAirportDistance(squadron, request.MissionArea.CenterTileId)))
+                    && priorityService.CanPerformAirCombat(
+                        aircraftType,
+                        commander.Alliance))
+                .Select(squadron =>
+                {
+                    var aircraftType = aircraftTypes[squadron.AircraftTypeDefinitionId];
+                    return loadoutPlanner.TryPlanAirCombatLoadout(
+                        aircraftType,
+                        commander.Alliance,
+                        out var loadout,
+                        out _)
+                        ? new CombatSquadronCandidate(
+                            squadron,
+                            aircraftType,
+                            GetAvailableAircraft(squadron),
+                            loadout,
+                            GetAirportDistance(squadron, request.MissionArea.CenterTileId))
+                        : null;
+                })
+                .Where(candidate => candidate != null)
                 .Where(candidate => candidate.AvailableAircraft.Count > 0)
                 .OrderBy(candidate => candidate.DistanceTiles)
                 .ThenBy(candidate => candidate.Squadron.AirportBuildingId)
@@ -211,6 +232,13 @@ namespace Engine.Service
                     request,
                     selected.Squadron,
                     selected.Aircraft);
+                foreach (var aircraft in selected.Aircraft)
+                {
+                    flight.PlannedAircraftLoadouts.Add(
+                        new PlannedAircraftLoadout(
+                            aircraft.AircraftId,
+                            selected.Loadout));
+                }
                 package.Flights.Add(flight);
             }
 
@@ -246,8 +274,10 @@ namespace Engine.Service
                 .OrderBy(group => group.Distance)
                 .ThenBy(group => group.Candidates[0].Squadron.AirportBuildingId)
                 .FirstOrDefault();
-            var orderedCandidates = sameAirportGroup?.Candidates;
-            return TakeAircraft(orderedCandidates, desiredStrength);
+            if (sameAirportGroup == null)
+                return new List<SelectedCombatAircraft>();
+
+            return TakeAircraft(sameAirportGroup.Candidates, desiredStrength);
         }
 
         private static List<SelectedCombatAircraft> TakeAircraft(
@@ -268,7 +298,8 @@ namespace Engine.Service
                 selected.Add(new SelectedCombatAircraft(
                     candidate.Squadron,
                     candidate.AircraftType,
-                    aircraft));
+                    aircraft,
+                    candidate.Loadout));
                 remaining -= aircraft.Count;
             }
 
@@ -655,17 +686,20 @@ namespace Engine.Service
             public Squadron Squadron { get; }
             public AircraftTypeDefinition AircraftType { get; }
             public List<CampaignAircraft> AvailableAircraft { get; }
+            public List<AircraftLoadoutItem> Loadout { get; }
             public int DistanceTiles { get; }
 
             public CombatSquadronCandidate(
                 Squadron squadron,
                 AircraftTypeDefinition aircraftType,
                 List<CampaignAircraft> availableAircraft,
+                List<AircraftLoadoutItem> loadout,
                 int distanceTiles)
             {
                 Squadron = squadron;
                 AircraftType = aircraftType;
                 AvailableAircraft = availableAircraft;
+                Loadout = loadout;
                 DistanceTiles = distanceTiles;
             }
         }
@@ -697,15 +731,18 @@ namespace Engine.Service
             public Squadron Squadron { get; }
             public AircraftTypeDefinition AircraftType { get; }
             public List<CampaignAircraft> Aircraft { get; }
+            public List<AircraftLoadoutItem> Loadout { get; }
 
             public SelectedCombatAircraft(
                 Squadron squadron,
                 AircraftTypeDefinition aircraftType,
-                List<CampaignAircraft> aircraft)
+                List<CampaignAircraft> aircraft,
+                List<AircraftLoadoutItem> loadout)
             {
                 Squadron = squadron;
                 AircraftType = aircraftType;
                 Aircraft = aircraft;
+                Loadout = loadout;
             }
         }
     }
