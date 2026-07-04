@@ -18,6 +18,15 @@ namespace Engine.Monobehaviours.Managers
         Advanced
     }
 
+    [Serializable]
+    public sealed class CampaignTurnChange
+    {
+        public DateTime OccurredAt;
+        public string System = string.Empty;
+        public string Summary = string.Empty;
+        public Guid EntityId;
+    }
+
     public class GameManager : MonoBehaviour
     {
         public event Action GameTurnCompleted;
@@ -28,6 +37,9 @@ namespace Engine.Monobehaviours.Managers
         public Guid ModuleId { get; private set; }
         public DateTime CurrentTime { get; private set; }
         public DateTime GameTime => CurrentTime;
+        public DateTime LastTurnStartedAt { get; private set; }
+        public DateTime LastTurnCompletedAt { get; private set; }
+        public IReadOnlyList<CampaignTurnChange> LastTurnChanges => _lastTurnChanges;
         public SimulationSettings SimulationSettings { get; private set; } = new SimulationSettings();
         public bool AutoStartTestCampaign = true;
         public TestCampaignKind SelectedTestCampaign = TestCampaignKind.Advanced;
@@ -40,6 +52,7 @@ namespace Engine.Monobehaviours.Managers
         private GroundTaskingSystem _groundTaskingSystem;
         private AirTaskingSystem _airTaskingSystem;
         private AirExecutionSystem _airExecutionSystem;
+        private OrdnanceEmploymentSystem _ordnanceEmploymentSystem;
         private IADSSystem _IADSSystem;
         private GroundCombatSystem _groundCombatSystem;
         private GroundOperationsSystem _groundOperationsSystem;
@@ -52,6 +65,7 @@ namespace Engine.Monobehaviours.Managers
         private Coroutine GameTurnCoroutine = null;
         private bool _campaignStarted;
         private DateTime _campaignStartTime;
+        private readonly List<CampaignTurnChange> _lastTurnChanges = new List<CampaignTurnChange>();
 
         private void Start()
         {
@@ -85,6 +99,8 @@ namespace Engine.Monobehaviours.Managers
             CampaignTemplate = template;
             _campaignStartTime = template.CampaignStartTime;
             CurrentTime = template.CampaignStartTime;
+            LastTurnStartedAt = CurrentTime;
+            LastTurnCompletedAt = CurrentTime;
             SimulationSettings = CopySimulationSettings(template.SimulationSettings);
             OrdnanceAllowances = CopyOrdnanceAllowances(template.OrdnanceAllowances);
             SamSiteTemplateAllowances = CopyGuidAllowances(template.SamSiteTemplateAllowances);
@@ -119,13 +135,18 @@ namespace Engine.Monobehaviours.Managers
             _IADSSystem = new IADSSystem(this);
             _airTaskingSystem = new AirTaskingSystem(this, activeModule);
             _airExecutionSystem = new AirExecutionSystem(this, _airTaskingSystem, activeModule);
+            _ordnanceEmploymentSystem = new OrdnanceEmploymentSystem(
+                this,
+                _airTaskingSystem,
+                _IADSSystem,
+                activeModule);
             _groundOperationsSystem = new GroundOperationsSystem(this);
             _groundCombatSystem = new GroundCombatSystem(this, _groundOperationsSystem);
             _supplySystem = new SupplySystem(this);
             _supplySystem.GameTurn();
             _groundTaskingSystem.OperationalCadenceTurn();
             _airTaskingSystem.Initialize();
-            IsGamePaused = false;
+            IsGamePaused = true;
             _campaignStarted = true;
         }
 
@@ -188,6 +209,22 @@ namespace Engine.Monobehaviours.Managers
             return _groundCombatSystem.ActiveCombats;
         }
 
+        public IReadOnlyList<ActiveOrdnanceEmploymentPass>
+            GetActiveOrdnanceEmploymentPasses()
+        {
+            return _ordnanceEmploymentSystem.ActivePasses;
+        }
+
+        public IReadOnlyList<PendingOrdnanceEffect> GetPendingOrdnanceEffects()
+        {
+            return _ordnanceEmploymentSystem.PendingEffects;
+        }
+
+        public IReadOnlyList<OrdnanceEmploymentRecord> GetOrdnanceEmploymentRecords()
+        {
+            return _ordnanceEmploymentSystem.Records;
+        }
+
 
         public void PauseCampaign()
         {
@@ -239,7 +276,9 @@ namespace Engine.Monobehaviours.Managers
         {
             var elapsedHours = SimulationSettings.SimulationTickMinutes / 60f;
             var previousTime = CurrentTime;
+            var turnSnapshot = CaptureTurnSnapshot();
             CurrentTime = CurrentTime.AddMinutes(SimulationSettings.SimulationTickMinutes);
+            LastTurnStartedAt = previousTime;
 
             var crossedOperationalCadenceBoundary =
                 SimulationSettings.CrossedOperationalCadenceBoundary(
@@ -262,8 +301,10 @@ namespace Engine.Monobehaviours.Managers
 
             _groundCombatSystem.GameTurn(resolveCombatRound);
             _groundOperationsSystem.GameTurn(elapsedHours);
+            _ordnanceEmploymentSystem.AdvanceScheduledEvents(CurrentTime);
             _airExecutionSystem.GameTurn(previousTime, CurrentTime);
             _IADSSystem.TacticalTurn();
+            _ordnanceEmploymentSystem.RefreshTacticalState(CurrentTime);
             _supplySystem.GameTurn(elapsedHours);
             _airTaskingSystem.GameTurn(crossedOperationalCadenceBoundary);
             divisionSystem.ApplyCombatSupplyPenalties(
@@ -276,7 +317,208 @@ namespace Engine.Monobehaviours.Managers
                 _groundCombatSystem.IsDivisionEngagedInCombat,
                 _supplySystem.GetSupplyRatio,
                 division => division?.CurrentOrder is not MoveGroundOrder { Purpose: MoveGroundOrderPurpose.Retreat });
+            BuildTurnChanges(turnSnapshot);
+            LastTurnCompletedAt = CurrentTime;
             GameTurnCompleted?.Invoke();
+        }
+
+        private TurnSnapshot CaptureTurnSnapshot()
+        {
+            return new TurnSnapshot
+            {
+                Divisions = divisionSystem.Divisions.ToDictionary(
+                    division => division.DivisionId,
+                    division => new DivisionTurnState(
+                        division.TileId,
+                        division.Strength,
+                        division.Organization,
+                        division.CurrentOrder?.GetType().Name ?? "None",
+                        division.CurrentOrder is MoveGroundOrder move ? move.MovementProgress : 0f)),
+                TileControllers = Tiles
+                    .OfType<LandTileData>()
+                    .ToDictionary(tile => tile.TileId, tile => tile.Controller),
+                Buildings = buildingSystem.Buildings.ToDictionary(
+                    building => building.BuildingId,
+                    building => new BuildingTurnState(
+                        building.Level.BuildLevel,
+                        building.Level.Damage,
+                        building.FunctionalLevel)),
+                SquadronLosses = squadronSystem.Squadrons.ToDictionary(
+                    squadron => squadron.SquadronId,
+                    squadron => new SquadronTurnState(
+                        squadron.ReadyAircraft,
+                        squadron.DamagedAircraft,
+                        squadron.AssignedAircraft,
+                        squadron.LostAircraft)),
+                CombatTiles = _groundCombatSystem.ActiveCombats
+                    .Select(combat => combat.DefendingTileId)
+                    .ToHashSet()
+            };
+        }
+
+        private void BuildTurnChanges(TurnSnapshot before)
+        {
+            _lastTurnChanges.Clear();
+            foreach (var division in divisionSystem.Divisions)
+            {
+                if (!before.Divisions.TryGetValue(division.DivisionId, out var previous))
+                {
+                    AddTurnChange("Ground", $"Division {division.Name} entered play.", division.DivisionId);
+                    continue;
+                }
+                if (previous.TileId != division.TileId)
+                    AddTurnChange(
+                        "Ground",
+                        $"{division.Name} moved {FormatTile(previous.TileId)} → {FormatTile(division.TileId)}.",
+                        division.DivisionId);
+                var strengthDelta = division.Strength - previous.Strength;
+                var organizationDelta = division.Organization - previous.Organization;
+                if (!Mathf.Approximately(strengthDelta, 0f)
+                    || !Mathf.Approximately(organizationDelta, 0f))
+                {
+                    AddTurnChange(
+                        "Ground",
+                        $"{division.Name}: strength {FormatDelta(strengthDelta)}, organization {FormatDelta(organizationDelta)}.",
+                        division.DivisionId);
+                }
+                var orderName = division.CurrentOrder?.GetType().Name ?? "None";
+                if (previous.OrderName != orderName)
+                    AddTurnChange(
+                        "Ground",
+                        $"{division.Name} order changed {previous.OrderName} → {orderName}.",
+                        division.DivisionId);
+                if (division.CurrentOrder is MoveGroundOrder move
+                    && !Mathf.Approximately(previous.MovementProgress, move.MovementProgress))
+                {
+                    AddTurnChange(
+                        "Ground",
+                        $"{division.Name} movement progress {previous.MovementProgress:P1} → {move.MovementProgress:P1}.",
+                        division.DivisionId);
+                }
+            }
+
+            foreach (var tile in Tiles.OfType<LandTileData>())
+            {
+                if (before.TileControllers.TryGetValue(tile.TileId, out var controller)
+                    && controller != tile.Controller)
+                    AddTurnChange(
+                        "Ground",
+                        $"Tile {FormatTile(tile.TileId)} captured: {controller} → {tile.Controller}.");
+            }
+
+            var currentCombatTiles = _groundCombatSystem.ActiveCombats
+                .Select(combat => combat.DefendingTileId)
+                .ToHashSet();
+            foreach (var tile in currentCombatTiles.Except(before.CombatTiles))
+                AddTurnChange("Ground", $"Combat started at {FormatTile(tile)}.");
+            foreach (var tile in before.CombatTiles.Except(currentCombatTiles))
+                AddTurnChange("Ground", $"Combat ended at {FormatTile(tile)}.");
+
+            foreach (var building in buildingSystem.Buildings)
+            {
+                if (!before.Buildings.TryGetValue(building.BuildingId, out var previous))
+                    continue;
+                if (previous.Damage != building.Level.Damage
+                    || previous.FunctionalLevel != building.FunctionalLevel)
+                    AddTurnChange(
+                        "Infrastructure",
+                        $"{building.Type} {ShortId(building.BuildingId)} at {FormatTile(building.TileId)}: damage {previous.Damage} → {building.Level.Damage}, functional level {previous.FunctionalLevel} → {building.FunctionalLevel}.",
+                        building.BuildingId);
+            }
+
+            foreach (var squadron in squadronSystem.Squadrons)
+            {
+                if (!before.SquadronLosses.TryGetValue(squadron.SquadronId, out var previous))
+                    continue;
+                if (previous.Lost != squadron.LostAircraft
+                    || previous.Damaged != squadron.DamagedAircraft)
+                    AddTurnChange(
+                        "Air",
+                        $"{squadron.Name}: lost {previous.Lost} → {squadron.LostAircraft}, damaged {previous.Damaged} → {squadron.DamagedAircraft}.",
+                        squadron.SquadronId);
+            }
+        }
+
+        private void AddTurnChange(string system, string summary, Guid entityId = default)
+        {
+            _lastTurnChanges.Add(new CampaignTurnChange
+            {
+                OccurredAt = CurrentTime,
+                System = system,
+                Summary = summary,
+                EntityId = entityId
+            });
+        }
+
+        private static string FormatDelta(float value) =>
+            value >= 0f ? $"+{value:0.##}" : value.ToString("0.##");
+
+        private static string FormatTile(Vector3Int tileId) =>
+            $"{tileId.x},{tileId.y},{tileId.z}";
+
+        private static string ShortId(Guid id) =>
+            id == Guid.Empty ? "—" : id.ToString("N").Substring(0, 8);
+
+        private sealed class TurnSnapshot
+        {
+            public Dictionary<Guid, DivisionTurnState> Divisions = new Dictionary<Guid, DivisionTurnState>();
+            public Dictionary<Vector3Int, Alliance> TileControllers = new Dictionary<Vector3Int, Alliance>();
+            public Dictionary<Guid, BuildingTurnState> Buildings = new Dictionary<Guid, BuildingTurnState>();
+            public Dictionary<Guid, SquadronTurnState> SquadronLosses = new Dictionary<Guid, SquadronTurnState>();
+            public HashSet<Vector3Int> CombatTiles = new HashSet<Vector3Int>();
+        }
+
+        private readonly struct DivisionTurnState
+        {
+            public readonly Vector3Int TileId;
+            public readonly float Strength;
+            public readonly float Organization;
+            public readonly string OrderName;
+            public readonly float MovementProgress;
+
+            public DivisionTurnState(
+                Vector3Int tileId,
+                float strength,
+                float organization,
+                string orderName,
+                float movementProgress)
+            {
+                TileId = tileId;
+                Strength = strength;
+                Organization = organization;
+                OrderName = orderName;
+                MovementProgress = movementProgress;
+            }
+        }
+
+        private readonly struct BuildingTurnState
+        {
+            public readonly int BuildLevel;
+            public readonly int Damage;
+            public readonly int FunctionalLevel;
+
+            public BuildingTurnState(int buildLevel, int damage, int functionalLevel)
+            {
+                BuildLevel = buildLevel;
+                Damage = damage;
+                FunctionalLevel = functionalLevel;
+            }
+        }
+
+        private readonly struct SquadronTurnState
+        {
+            public readonly int Ready;
+            public readonly int Damaged;
+            public readonly int Assigned;
+            public readonly int Lost;
+
+            public SquadronTurnState(int ready, int damaged, int assigned, int lost)
+            {
+                Ready = ready;
+                Damaged = damaged;
+                Assigned = assigned;
+                Lost = lost;
+            }
         }
 
         private static List<TileData> CopyTileData(List<TileData> startingTileData)

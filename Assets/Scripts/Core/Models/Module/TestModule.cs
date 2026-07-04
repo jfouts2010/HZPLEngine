@@ -29,6 +29,10 @@ namespace Models.Module
         public static readonly Guid Agm65OrdnanceTypeId = Guid.Parse("24d59f63-9714-4306-9ebb-f79075df0909");
         public static readonly Guid R27OrdnanceTypeId = Guid.Parse("df62234e-e894-4d4e-8d67-e4bc6fe68405");
         public static readonly Guid R73OrdnanceTypeId = Guid.Parse("fc9d6932-ef37-4fc3-b024-12fc1e2d9f1c");
+        public static readonly Guid Sa2InterceptorOrdnanceTypeId =
+            Guid.Parse("b8afb031-30a8-4de0-90a7-0cc958d8813f");
+        public static readonly Guid OsaInterceptorOrdnanceTypeId =
+            Guid.Parse("713acf12-4569-43cb-bd66-23bbbda24168");
 
         public static readonly Guid FanSongComponentId = Guid.Parse("0ec0a8c9-dc38-461c-a3f8-1831afdf43ad");
         public static readonly Guid Sa2LauncherComponentId = Guid.Parse("1ecf62f4-3034-4be3-86c3-0e8d65ecef6a");
@@ -204,7 +208,13 @@ namespace Models.Module
                     {
                         { OrdnanceTargetCategory.Aircraft, 0.95f }
                     },
-                    employmentCategory: OrdnanceEmploymentCategory.AirToAirRadar),
+                    employmentCategory: OrdnanceEmploymentCategory.AirToAirRadar,
+                    guidanceMode: OrdnanceGuidanceMode.Radar,
+                    minimumRangeKm: 2f,
+                    maximumRangeKm: 75f,
+                    maximumTargetAltitudeFeet: 80000f,
+                    preparationSeconds: 30f,
+                    effectSpeedKnots: 2400f),
                 new OrdnanceTypeDefinition(
                     Aim9OrdnanceTypeId,
                     "AIM-9 Sidewinder",
@@ -214,7 +224,13 @@ namespace Models.Module
                     {
                         { OrdnanceTargetCategory.Aircraft, 0.75f }
                     },
-                    employmentCategory: OrdnanceEmploymentCategory.AirToAirInfrared),
+                    employmentCategory: OrdnanceEmploymentCategory.AirToAirInfrared,
+                    guidanceMode: OrdnanceGuidanceMode.Infrared,
+                    minimumRangeKm: 0.5f,
+                    maximumRangeKm: 18f,
+                    maximumTargetAltitudeFeet: 60000f,
+                    preparationSeconds: 15f,
+                    effectSpeedKnots: 1600f),
                 new OrdnanceTypeDefinition(
                     Agm88OrdnanceTypeId,
                     "AGM-88 HARM",
@@ -225,7 +241,11 @@ namespace Models.Module
                         { OrdnanceTargetCategory.Radar, 1f },
                         { OrdnanceTargetCategory.Building, 0.15f }
                     },
-                    employmentCategory: OrdnanceEmploymentCategory.AntiRadiation),
+                    employmentCategory: OrdnanceEmploymentCategory.AntiRadiation,
+                    guidanceMode: OrdnanceGuidanceMode.AntiRadiation,
+                    maximumRangeKm: 150f,
+                    preparationSeconds: 45f,
+                    effectSpeedKnots: 1800f),
                 new OrdnanceTypeDefinition(
                     Gbu38OrdnanceTypeId,
                     "GBU-38 JDAM",
@@ -236,7 +256,11 @@ namespace Models.Module
                         { OrdnanceTargetCategory.Vehicle, 0.55f },
                         { OrdnanceTargetCategory.Building, 0.8f }
                     },
-                    employmentCategory: OrdnanceEmploymentCategory.AirToGroundPrecision),
+                    employmentCategory: OrdnanceEmploymentCategory.AirToGroundPrecision,
+                    guidanceMode: OrdnanceGuidanceMode.Gps,
+                    maximumRangeKm: 28f,
+                    preparationSeconds: 45f,
+                    effectSpeedKnots: 550f),
                 new OrdnanceTypeDefinition(
                     Agm65OrdnanceTypeId,
                     "AGM-65 Maverick",
@@ -247,7 +271,12 @@ namespace Models.Module
                         { OrdnanceTargetCategory.Vehicle, 0.9f },
                         { OrdnanceTargetCategory.Building, 0.45f }
                     },
-                    employmentCategory: OrdnanceEmploymentCategory.AirToGroundPrecision),
+                    employmentCategory: OrdnanceEmploymentCategory.AirToGroundPrecision,
+                    guidanceMode: OrdnanceGuidanceMode.Imaging,
+                    minimumRangeKm: 1f,
+                    maximumRangeKm: 22f,
+                    preparationSeconds: 30f,
+                    effectSpeedKnots: 650f),
                 new OrdnanceTypeDefinition(
                     R27OrdnanceTypeId,
                     "R-27 Alamo",
@@ -257,7 +286,13 @@ namespace Models.Module
                     {
                         { OrdnanceTargetCategory.Aircraft, 0.85f }
                     },
-                    employmentCategory: OrdnanceEmploymentCategory.AirToAirRadar),
+                    employmentCategory: OrdnanceEmploymentCategory.AirToAirRadar,
+                    guidanceMode: OrdnanceGuidanceMode.Radar,
+                    minimumRangeKm: 2f,
+                    maximumRangeKm: 55f,
+                    maximumTargetAltitudeFeet: 80000f,
+                    preparationSeconds: 35f,
+                    effectSpeedKnots: 2200f),
                 new OrdnanceTypeDefinition(
                     R73OrdnanceTypeId,
                     "R-73 Archer",
@@ -267,7 +302,45 @@ namespace Models.Module
                     {
                         { OrdnanceTargetCategory.Aircraft, 0.75f }
                     },
-                    employmentCategory: OrdnanceEmploymentCategory.AirToAirInfrared)
+                    employmentCategory: OrdnanceEmploymentCategory.AirToAirInfrared,
+                    guidanceMode: OrdnanceGuidanceMode.Infrared,
+                    minimumRangeKm: 0.3f,
+                    maximumRangeKm: 18f,
+                    maximumTargetAltitudeFeet: 60000f,
+                    preparationSeconds: 15f,
+                    effectSpeedKnots: 1700f),
+                new OrdnanceTypeDefinition(
+                    Sa2InterceptorOrdnanceTypeId,
+                    "V-750 SAM",
+                    weight: 0f,
+                    effectPower: 3,
+                    effectivenessByTargetCategory: new Dictionary<OrdnanceTargetCategory, float>
+                    {
+                        { OrdnanceTargetCategory.Aircraft, 0.8f }
+                    },
+                    employmentCategory: OrdnanceEmploymentCategory.SurfaceToAir,
+                    guidanceMode: OrdnanceGuidanceMode.Radar,
+                    minimumRangeKm: 7f,
+                    maximumRangeKm: 35f,
+                    minimumTargetAltitudeFeet: 984f,
+                    maximumTargetAltitudeFeet: 78740f,
+                    effectSpeedKnots: 2000f),
+                new OrdnanceTypeDefinition(
+                    OsaInterceptorOrdnanceTypeId,
+                    "9M33 SAM",
+                    weight: 0f,
+                    effectPower: 2,
+                    effectivenessByTargetCategory: new Dictionary<OrdnanceTargetCategory, float>
+                    {
+                        { OrdnanceTargetCategory.Aircraft, 0.75f }
+                    },
+                    employmentCategory: OrdnanceEmploymentCategory.SurfaceToAir,
+                    guidanceMode: OrdnanceGuidanceMode.Radar,
+                    minimumRangeKm: 1.5f,
+                    maximumRangeKm: 12f,
+                    minimumTargetAltitudeFeet: 82f,
+                    maximumTargetAltitudeFeet: 16404f,
+                    effectSpeedKnots: 1800f)
             };
         }
 
@@ -295,7 +368,8 @@ namespace Models.Module
                     maxEngagementAltitudeMeters: 24000f,
                     readyRoundCapacity: 1,
                     reserveRoundCapacity: 1,
-                    reloadMinutes: 30f),
+                    reloadMinutes: 30f,
+                    surfaceToAirOrdnanceTypeDefinitionId: Sa2InterceptorOrdnanceTypeId),
                 new CommandAirDefenseComponentDefinition(
                     SamCommandPostComponentId,
                     "SAM command post",
@@ -321,7 +395,8 @@ namespace Models.Module
                     maxEngagementAltitudeMeters: 5000f,
                     readyRoundCapacity: 6,
                     reserveRoundCapacity: 0,
-                    reloadMinutes: 0f),
+                    reloadMinutes: 0f,
+                    surfaceToAirOrdnanceTypeDefinitionId: OsaInterceptorOrdnanceTypeId),
                 new CommandAirDefenseComponentDefinition(
                     OsaCommandComponentId,
                     "SA-8 Osa command component",
@@ -440,7 +515,8 @@ namespace Models.Module
                     {
                         new DivisionTemplateBattalion(BlueInfantryBattalionId, 5),
                         new DivisionTemplateBattalion(BlueArmorBattalionId, 2)
-                    }),
+                    },
+                    NatoUnitSymbol.Armor),
                 new DivisionTemplate(
                     RedTankDivisionTemplateId,
                     RedCountryId,
@@ -449,7 +525,8 @@ namespace Models.Module
                     {
                         new DivisionTemplateBattalion(RedMotorRifleBattalionId, 3),
                         new DivisionTemplateBattalion(RedTankBattalionId, 2)
-                    })
+                    },
+                    NatoUnitSymbol.MechanizedInfantry)
             };
         }
     }

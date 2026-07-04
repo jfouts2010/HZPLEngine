@@ -188,7 +188,10 @@ namespace Engine.Models
                 var speedKnots = GetGuidanceSpeedKnots(package, flight, aircraftType);
                 if (HasReached(flight.PositionFeet, waypoint.PositionFeet))
                 {
-                    flight.UpdateKinematics(waypoint.PositionFeet, flight.HeadingDegrees);
+                    flight.UpdateKinematics(
+                        waypoint.PositionFeet,
+                        flight.HeadingDegrees,
+                        speedKnots);
                     HandleWaypoint(package, flight, state.Cursor);
                     continue;
                 }
@@ -202,7 +205,10 @@ namespace Engine.Models
                     step);
                 if (secondsToReach >= 0d)
                 {
-                    flight.UpdateKinematics(waypoint.PositionFeet, flight.HeadingDegrees);
+                    flight.UpdateKinematics(
+                        waypoint.PositionFeet,
+                        flight.HeadingDegrees,
+                        speedKnots);
                     state.Advance(secondsToReach);
                     HandleWaypoint(package, flight, state.Cursor);
                     continue;
@@ -487,7 +493,7 @@ namespace Engine.Models
                     target.y,
                     Math.Max(1f, verticalRate) * (float)seconds),
                 position.z);
-            flight.UpdateKinematics(position, heading);
+            flight.UpdateKinematics(position, heading, speedKnots);
         }
 
         private static bool HasReached(Vector3 current, Vector3 target)

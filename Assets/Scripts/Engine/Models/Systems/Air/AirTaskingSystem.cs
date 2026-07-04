@@ -28,7 +28,8 @@ namespace Engine.Models
             IAirPlanningIntelligence planningIntelligence = null)
         {
             this.gameManager = gameManager;
-            this.planningIntelligence = planningIntelligence;
+            this.planningIntelligence = planningIntelligence
+                                        ?? new PerfectAirPlanningIntelligence(gameManager);
             var projectedEffects = new ProjectedAirEffectService();
             var priorityService = new AirMissionPriorityService(
                 module,

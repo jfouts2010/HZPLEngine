@@ -5,12 +5,14 @@ using System.Linq;
 using Engine.Models.Ground;
 using Engine.Service;
 using Models.Gameplay.Campaign;
+using Models.Module;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.UI;
 using UnityEngine.Tilemaps;
 using UnityEngine.UIElements;
+using Monobehaviours.Singletons;
 using CampaignTile = Models.Gameplay.Campaign.Tile;
 using TileData = Models.Gameplay.Campaign.TileData;
 
@@ -39,7 +41,7 @@ namespace Engine.Monobehaviours.Managers
         private readonly Dictionary<string, UnityEngine.Tilemaps.Tile> renderTilesByKey = new Dictionary<string, UnityEngine.Tilemaps.Tile>();
         private readonly Dictionary<string, Sprite> spritesByKey = new Dictionary<string, Sprite>();
         private readonly Dictionary<string, Sprite> unitCounterSpritesByKey = new Dictionary<string, Sprite>();
-        private readonly Dictionary<int, Sprite> combatBubbleSpritesByScore = new Dictionary<int, Sprite>();
+        private readonly Dictionary<string, Sprite> combatBubbleSpritesByScore = new Dictionary<string, Sprite>();
         private Sprite movementArrowHeadSprite;
         private Material movementArrowMaterial;
 
@@ -94,6 +96,7 @@ namespace Engine.Monobehaviours.Managers
         private Transform railwayRoot;
         private Transform airOverlayRoot;
         private Transform airInspectionRoot;
+        private Transform ordnanceOverlayRoot;
         private Label titleLabel;
         private Label timeLabel;
         private Label selectedTileLabel;
@@ -132,19 +135,81 @@ namespace Engine.Monobehaviours.Managers
         private Button flightDetailClose;
         private ScrollView flightDetailScroll;
         private VisualElement flightDetailContent;
+        private Button groundTabButton;
+        private Button turnTabButton;
+        private Button diagnosticsTabButton;
+        private Button pinPrimaryButton;
+        private Label workbenchPageTitle;
+        private ScrollView groundOpsContent;
+        private Label groundOpsSummary;
+        private VisualElement groundCombatsList;
+        private ScrollView turnReportContent;
+        private Label turnReportSummary;
+        private VisualElement turnReportList;
+        private VisualElement diagnosticsContent;
+        private VisualElement diagnosticsList;
+        private TextField diagnosticsSearch;
+        private DropdownField diagnosticsSeverity;
+        private DropdownField diagnosticsSystem;
+        private Button diagnosticsErrorsButton;
+        private Button diagnosticsWarningsButton;
+        private Button resetLayoutButton;
+        private Foldout buildingsFoldout;
+        private VisualElement buildingsList;
+        private VisualElement airOverviewGrid;
+        private Toggle overlayUnitsToggle;
+        private Toggle overlayCombatsToggle;
+        private Toggle overlayMovementToggle;
+        private Toggle overlayRoutesToggle;
+        private Toggle overlayOrdnanceToggle;
+        private Toggle overlayRailToggle;
+        private VisualElement windowLayer;
+        private VisualElement flightDetailPopup;
+        private VisualElement flightDetailDragHandle;
+        private VisualElement flightDetailResizeHandle;
+        private Button flightDetailPin;
+        private Button flightDetailFocus;
+        private VisualElement panelResizeHandle;
+        private Button togglePanelButton;
         private Font runtimeFont;
         private Vector3Int? selectedCell;
         private Guid selectedFlightId;
         private Guid inspectedFlightId;
+        private Guid inspectedPackageId;
         private bool showingAirOps;
         private AirOperationsView airOperationsView = AirOperationsView.Flights;
         private Alliance airFlightAlliance = Alliance.Bluefor;
+        private WorkbenchPage workbenchPage = WorkbenchPage.Tile;
+        private readonly List<FlightPickTarget> flightPickTargets = new List<FlightPickTarget>();
+        private readonly List<CombatPickTarget> combatPickTargets = new List<CombatPickTarget>();
+        private Vector2 lastPickScreenPosition = new Vector2(float.MinValue, float.MinValue);
+        private int currentPickIndex;
+        private readonly List<MapPickTarget> currentPickTargets = new List<MapPickTarget>();
+        private readonly List<PinnedInspector> pinnedInspectors = new List<PinnedInspector>();
+        private int pinnedWindowSequence;
+        private bool draggingFlightWindow;
+        private bool resizingFlightWindow;
+        private Vector2 flightWindowPointerStart;
+        private Vector2 flightWindowPositionStart;
+        private Vector2 flightWindowSizeStart;
+        private bool resizingWorkbenchPanel;
+        private float workbenchPanelPointerStart;
+        private float workbenchPanelWidthStart;
 
         private enum AirOperationsView
         {
             Requests,
             Packages,
             Flights
+        }
+
+        private enum WorkbenchPage
+        {
+            Tile,
+            Ground,
+            Air,
+            LastTurn,
+            Diagnostics
         }
 
         private IEnumerator Start()
@@ -177,14 +242,48 @@ namespace Engine.Monobehaviours.Managers
                 return;
 
             UpdateTimeUi();
+            UpdateZoomAwareMarkers();
             HandleTileSelection();
+        }
+
+        private void UpdateZoomAwareMarkers()
+        {
+            if (sceneCamera == null || !sceneCamera.orthographic)
+                return;
+
+            var size = sceneCamera.orthographicSize;
+            if (unitCounterRoot != null)
+            {
+                foreach (Transform counter in unitCounterRoot)
+                {
+                    var count = counter.Find("Counter Label");
+                    var detail = counter.Find("Counter Detail");
+                    if (count != null)
+                        count.gameObject.SetActive(size > 9f);
+                    if (detail != null)
+                        detail.gameObject.SetActive(size <= 9f);
+                }
+            }
+            if (airOverlayRoot != null)
+            {
+                foreach (Transform child in airOverlayRoot)
+                {
+                    if (!child.name.StartsWith("Air Flight ", StringComparison.Ordinal))
+                        continue;
+                    var label = child.Find("Flight Label");
+                    if (label != null)
+                        label.gameObject.SetActive(size <= 14f);
+                }
+            }
         }
 
         private void RefreshCampaignAfterGameTurn()
         {
-            inspectedFlightId = Guid.Empty;
             RenderCampaign(false, true);
-            SetAirInspectionStatus(string.Empty);
+            UpdateGroundOperationsUi();
+            UpdateTurnReportUi();
+            UpdateDiagnosticsUi();
+            RefreshPinnedInspectors();
         }
 
         private void RenderCampaign(bool frameCamera = true, bool preserveSelection = false)
@@ -213,6 +312,9 @@ namespace Engine.Monobehaviours.Managers
             ClearRailwayLines();
             ClearAirOverlays();
             ClearAirInspection();
+            ClearOrdnanceOverlay();
+            flightPickTargets.Clear();
+            combatPickTargets.Clear();
 
             foreach (var campaignTile in gameManager.CampaignTiles)
             {
@@ -237,7 +339,10 @@ namespace Engine.Monobehaviours.Managers
             CreateMovementArrows();
             CreateCombatBubbles();
             CreateAirOverlays();
+            ApplySelectedFlightMarker();
             CreateAirInspection();
+            RefreshOrdnanceOverlay();
+            SetAirRouteVisibility(overlayRoutesToggle == null || overlayRoutesToggle.value);
 
             tilemap.RefreshAllTiles();
             if (frameCamera)
@@ -325,6 +430,13 @@ namespace Engine.Monobehaviours.Managers
                 var inspectionObject = new GameObject("Campaign Air Route Inspection");
                 inspectionObject.transform.SetParent(grid.transform, false);
                 airInspectionRoot = inspectionObject.transform;
+            }
+
+            if (ordnanceOverlayRoot == null)
+            {
+                var ordnanceObject = new GameObject("Campaign Ordnance Diagnostics");
+                ordnanceObject.transform.SetParent(grid.transform, false);
+                ordnanceOverlayRoot = ordnanceObject.transform;
             }
         }
 
@@ -417,6 +529,42 @@ namespace Engine.Monobehaviours.Managers
             flightDetailClose = root.Q<Button>("flight-detail-close");
             flightDetailScroll = root.Q<ScrollView>("flight-detail-scroll");
             flightDetailContent = root.Q<VisualElement>("flight-detail-content");
+            groundTabButton = root.Q<Button>("ground-tab-button");
+            turnTabButton = root.Q<Button>("turn-tab-button");
+            diagnosticsTabButton = root.Q<Button>("diagnostics-tab-button");
+            pinPrimaryButton = root.Q<Button>("pin-primary-button");
+            workbenchPageTitle = root.Q<Label>("workbench-page-title");
+            groundOpsContent = root.Q<ScrollView>("ground-ops-content");
+            groundOpsSummary = root.Q<Label>("ground-ops-summary");
+            groundCombatsList = root.Q<VisualElement>("ground-combats-list");
+            turnReportContent = root.Q<ScrollView>("turn-report-content");
+            turnReportSummary = root.Q<Label>("turn-report-summary");
+            turnReportList = root.Q<VisualElement>("turn-report-list");
+            diagnosticsContent = root.Q<VisualElement>("diagnostics-content");
+            diagnosticsList = root.Q<VisualElement>("diagnostics-list");
+            diagnosticsSearch = root.Q<TextField>("diagnostics-search");
+            diagnosticsSeverity = root.Q<DropdownField>("diagnostics-severity");
+            diagnosticsSystem = root.Q<DropdownField>("diagnostics-system");
+            diagnosticsErrorsButton = root.Q<Button>("diagnostics-errors-button");
+            diagnosticsWarningsButton = root.Q<Button>("diagnostics-warnings-button");
+            resetLayoutButton = root.Q<Button>("reset-layout-button");
+            buildingsFoldout = root.Q<Foldout>("buildings-foldout");
+            buildingsList = root.Q<VisualElement>("buildings-list");
+            airOverviewGrid = root.Q<VisualElement>("air-overview-grid");
+            overlayUnitsToggle = root.Q<Toggle>("overlay-units-toggle");
+            overlayCombatsToggle = root.Q<Toggle>("overlay-combats-toggle");
+            overlayMovementToggle = root.Q<Toggle>("overlay-movement-toggle");
+            overlayRoutesToggle = root.Q<Toggle>("overlay-routes-toggle");
+            overlayOrdnanceToggle = root.Q<Toggle>("overlay-ordnance-toggle");
+            overlayRailToggle = root.Q<Toggle>("overlay-rail-toggle");
+            windowLayer = root.Q<VisualElement>("window-layer");
+            flightDetailPopup = root.Q<VisualElement>("flight-detail-popup");
+            flightDetailDragHandle = root.Q<VisualElement>("flight-detail-drag-handle");
+            flightDetailResizeHandle = root.Q<VisualElement>("flight-detail-resize-handle");
+            flightDetailPin = root.Q<Button>("flight-detail-pin");
+            flightDetailFocus = root.Q<Button>("flight-detail-focus");
+            panelResizeHandle = root.Q<VisualElement>("panel-resize-handle");
+            togglePanelButton = root.Q<Button>("toggle-panel-button");
 
             ApplyRuntimeFont(titleLabel);
             ApplyRuntimeFont(timeLabel);
@@ -440,6 +588,19 @@ namespace Engine.Monobehaviours.Managers
             ApplyRuntimeFont(flightDetailTitle);
             ApplyRuntimeFont(flightDetailSubtitle);
             ApplyRuntimeFont(flightDetailClose);
+            ApplyRuntimeFont(groundTabButton);
+            ApplyRuntimeFont(turnTabButton);
+            ApplyRuntimeFont(diagnosticsTabButton);
+            ApplyRuntimeFont(pinPrimaryButton);
+            ApplyRuntimeFont(workbenchPageTitle);
+            ApplyRuntimeFont(groundOpsSummary);
+            ApplyRuntimeFont(turnReportSummary);
+            ApplyRuntimeFont(diagnosticsErrorsButton);
+            ApplyRuntimeFont(diagnosticsWarningsButton);
+            ApplyRuntimeFont(resetLayoutButton);
+            ApplyRuntimeFont(flightDetailPin);
+            ApplyRuntimeFont(flightDetailFocus);
+            ApplyRuntimeFont(togglePanelButton);
 
             if (hudRoot != null)
                 hudRoot.pickingMode = PickingMode.Ignore;
@@ -458,6 +619,10 @@ namespace Engine.Monobehaviours.Managers
                 simulationControls.RegisterCallback<PointerLeaveEvent>(_ => IsPointerOverCampaignUi = false);
             }
 
+            RegisterUiPointerBoundary(root.Q<VisualElement>("workbench-topbar"));
+            RegisterUiPointerBoundary(root.Q<VisualElement>("workbench-nav"));
+            RegisterUiPointerBoundary(root.Q<VisualElement>("overlay-palette"));
+
             if (airOpsContent != null)
                 airOpsContent.verticalScrollerVisibility = ScrollerVisibility.AlwaysVisible;
             if (flightDetailScroll != null)
@@ -473,6 +638,12 @@ namespace Engine.Monobehaviours.Managers
             {
                 unitsFoldout.pickingMode = PickingMode.Position;
                 unitsFoldout.RegisterValueChangedCallback(_ => UpdateUnitsList());
+            }
+
+            if (buildingsFoldout != null)
+            {
+                buildingsFoldout.pickingMode = PickingMode.Position;
+                buildingsFoldout.RegisterValueChangedCallback(_ => UpdateBuildingsList());
             }
 
             if (pauseButton != null)
@@ -491,14 +662,30 @@ namespace Engine.Monobehaviours.Managers
             if (mapTabButton != null)
             {
                 mapTabButton.pickingMode = PickingMode.Position;
-                mapTabButton.clicked += () => ShowAirOperations(false);
+                mapTabButton.clicked += () => ShowWorkbenchPage(WorkbenchPage.Tile);
             }
 
             if (airOpsTabButton != null)
             {
                 airOpsTabButton.pickingMode = PickingMode.Position;
-                airOpsTabButton.clicked += () => ShowAirOperations(true);
+                airOpsTabButton.clicked += () => ShowWorkbenchPage(WorkbenchPage.Air);
             }
+            if (groundTabButton != null)
+                groundTabButton.clicked += () => ShowWorkbenchPage(WorkbenchPage.Ground);
+            if (turnTabButton != null)
+                turnTabButton.clicked += () => ShowWorkbenchPage(WorkbenchPage.LastTurn);
+            if (diagnosticsTabButton != null)
+                diagnosticsTabButton.clicked += () => ShowWorkbenchPage(WorkbenchPage.Diagnostics);
+            if (diagnosticsErrorsButton != null)
+                diagnosticsErrorsButton.clicked += () => OpenDiagnostics("Errors");
+            if (diagnosticsWarningsButton != null)
+                diagnosticsWarningsButton.clicked += () => OpenDiagnostics("Warnings");
+            if (pinPrimaryButton != null)
+                pinPrimaryButton.clicked += PinPrimaryInspector;
+            if (resetLayoutButton != null)
+                resetLayoutButton.clicked += ResetWorkbenchLayout;
+            if (togglePanelButton != null)
+                togglePanelButton.clicked += ToggleWorkbenchPanel;
 
             if (airRequestsButton != null)
                 airRequestsButton.clicked += () => ShowAirOperationsView(AirOperationsView.Requests);
@@ -516,18 +703,22 @@ namespace Engine.Monobehaviours.Managers
                 flightDetailClose.pickingMode = PickingMode.Position;
                 flightDetailClose.clicked += CloseFlightDetails;
             }
-            if (flightDetailBackdrop != null)
-            {
-                flightDetailBackdrop.RegisterCallback<PointerEnterEvent>(_ => IsPointerOverCampaignUi = true);
-                flightDetailBackdrop.RegisterCallback<PointerLeaveEvent>(_ => IsPointerOverCampaignUi = false);
-                flightDetailBackdrop.RegisterCallback<ClickEvent>(evt =>
-                {
-                    if (evt.target == flightDetailBackdrop)
-                        CloseFlightDetails();
-                });
-            }
+            if (flightDetailPin != null)
+                flightDetailPin.clicked += PinCurrentFlightInspector;
+            if (flightDetailFocus != null)
+                flightDetailFocus.clicked += FocusSelectedFlight;
 
-            ShowAirOperations(false);
+            RegisterUiPointerBoundary(flightDetailPopup);
+            ConfigureFloatingFlightWindow();
+            ConfigureWorkbenchPanelResize();
+            ConfigureOverlayToggles();
+            ConfigureDiagnosticsFilters();
+
+            var savedPage = (WorkbenchPage)Mathf.Clamp(
+                PlayerPrefs.GetInt("HZPL.Workbench.Page", (int)WorkbenchPage.Tile),
+                (int)WorkbenchPage.Tile,
+                (int)WorkbenchPage.Diagnostics);
+            ShowWorkbenchPage(savedPage);
             ShowAirOperationsView(AirOperationsView.Flights);
             CloseFlightDetails();
 
@@ -555,6 +746,654 @@ namespace Engine.Monobehaviours.Managers
             else
                 Debug.LogWarning("PlaySceneCampaignRenderer could not load Unity's LegacyRuntime.ttf font.");
 
+        }
+
+        private void RegisterUiPointerBoundary(VisualElement element)
+        {
+            if (element == null)
+                return;
+
+            element.pickingMode = PickingMode.Position;
+            element.RegisterCallback<PointerEnterEvent>(_ => IsPointerOverCampaignUi = true);
+            element.RegisterCallback<PointerLeaveEvent>(_ => IsPointerOverCampaignUi = false);
+        }
+
+        private void ShowWorkbenchPage(WorkbenchPage page)
+        {
+            workbenchPage = page;
+            if (mapInfoContent != null)
+                mapInfoContent.style.display = page == WorkbenchPage.Tile
+                    ? DisplayStyle.Flex
+                    : DisplayStyle.None;
+            if (groundOpsContent != null)
+                groundOpsContent.style.display = page == WorkbenchPage.Ground
+                    ? DisplayStyle.Flex
+                    : DisplayStyle.None;
+            if (airOpsContent != null)
+                airOpsContent.style.display = page == WorkbenchPage.Air
+                    ? DisplayStyle.Flex
+                    : DisplayStyle.None;
+            if (turnReportContent != null)
+                turnReportContent.style.display = page == WorkbenchPage.LastTurn
+                    ? DisplayStyle.Flex
+                    : DisplayStyle.None;
+            if (diagnosticsContent != null)
+                diagnosticsContent.style.display = page == WorkbenchPage.Diagnostics
+                    ? DisplayStyle.Flex
+                    : DisplayStyle.None;
+
+            mapTabButton?.EnableInClassList("workbench-nav-button--selected", page == WorkbenchPage.Tile);
+            groundTabButton?.EnableInClassList("workbench-nav-button--selected", page == WorkbenchPage.Ground);
+            airOpsTabButton?.EnableInClassList("workbench-nav-button--selected", page == WorkbenchPage.Air);
+            turnTabButton?.EnableInClassList("workbench-nav-button--selected", page == WorkbenchPage.LastTurn);
+            diagnosticsTabButton?.EnableInClassList("workbench-nav-button--selected", page == WorkbenchPage.Diagnostics);
+
+            if (workbenchPageTitle != null)
+            {
+                workbenchPageTitle.text = page switch
+                {
+                    WorkbenchPage.Tile => "Tile Inspector",
+                    WorkbenchPage.Ground => "Ground War",
+                    WorkbenchPage.Air => "Air War",
+                    WorkbenchPage.LastTurn => "Last Turn Report",
+                    _ => "Diagnostics"
+                };
+            }
+
+            PlayerPrefs.SetInt("HZPL.Workbench.Page", (int)page);
+            switch (page)
+            {
+                case WorkbenchPage.Ground:
+                    UpdateGroundOperationsUi();
+                    break;
+                case WorkbenchPage.Air:
+                    UpdateAirOperationsUi();
+                    break;
+                case WorkbenchPage.LastTurn:
+                    UpdateTurnReportUi();
+                    break;
+                case WorkbenchPage.Diagnostics:
+                    UpdateDiagnosticsUi();
+                    break;
+            }
+        }
+
+        private void OpenDiagnostics(string severity)
+        {
+            ShowWorkbenchPage(WorkbenchPage.Diagnostics);
+            if (diagnosticsSeverity != null)
+            {
+                diagnosticsSeverity.value = severity;
+                UpdateDiagnosticsUi();
+            }
+        }
+
+        private void ConfigureDiagnosticsFilters()
+        {
+            if (diagnosticsSeverity != null)
+            {
+                diagnosticsSeverity.choices = new List<string> { "All", "Errors", "Warnings", "Info" };
+                diagnosticsSeverity.value = "All";
+                diagnosticsSeverity.RegisterValueChangedCallback(_ => UpdateDiagnosticsUi());
+            }
+            if (diagnosticsSystem != null)
+            {
+                diagnosticsSystem.choices = new List<string> { "All", "Air Planning", "Air Execution", "Ordnance" };
+                diagnosticsSystem.value = "All";
+                diagnosticsSystem.RegisterValueChangedCallback(_ => UpdateDiagnosticsUi());
+            }
+            diagnosticsSearch?.RegisterValueChangedCallback(_ => UpdateDiagnosticsUi());
+        }
+
+        private void ConfigureOverlayToggles()
+        {
+            ConfigureOverlayToggle(overlayUnitsToggle, "Units", true, value =>
+            {
+                if (unitCounterRoot != null)
+                    unitCounterRoot.gameObject.SetActive(value);
+            });
+            ConfigureOverlayToggle(overlayCombatsToggle, "Combats", true, value =>
+            {
+                if (combatBubbleRoot != null)
+                    combatBubbleRoot.gameObject.SetActive(value);
+            });
+            ConfigureOverlayToggle(overlayMovementToggle, "Movement", true, value =>
+            {
+                if (movementArrowRoot != null)
+                    movementArrowRoot.gameObject.SetActive(value);
+            });
+            ConfigureOverlayToggle(overlayRoutesToggle, "Routes", true, SetAirRouteVisibility);
+            ConfigureOverlayToggle(overlayRailToggle, "Railways", true, value =>
+            {
+                if (railwayRoot != null)
+                    railwayRoot.gameObject.SetActive(value);
+            });
+            ConfigureOverlayToggle(overlayOrdnanceToggle, "Ordnance", true, _ => RefreshOrdnanceOverlay());
+        }
+
+        private static void ConfigureOverlayToggle(
+            Toggle toggle,
+            string preferenceName,
+            bool defaultValue,
+            Action<bool> apply)
+        {
+            if (toggle == null)
+                return;
+
+            var key = $"HZPL.Workbench.Overlay.{preferenceName}";
+            var value = PlayerPrefs.GetInt(key, defaultValue ? 1 : 0) != 0;
+            toggle.SetValueWithoutNotify(value);
+            apply(value);
+            toggle.RegisterValueChangedCallback(evt =>
+            {
+                PlayerPrefs.SetInt(key, evt.newValue ? 1 : 0);
+                apply(evt.newValue);
+            });
+        }
+
+        private void SetAirRouteVisibility(bool visible)
+        {
+            if (airOverlayRoot == null)
+                return;
+
+            foreach (Transform child in airOverlayRoot)
+            {
+                if (child.name.StartsWith("Air Route ", StringComparison.Ordinal))
+                    child.gameObject.SetActive(visible);
+            }
+        }
+
+        private void ResetWorkbenchLayout()
+        {
+            PlayerPrefs.DeleteKey("HZPL.Workbench.Window.Left");
+            PlayerPrefs.DeleteKey("HZPL.Workbench.Window.Top");
+            PlayerPrefs.DeleteKey("HZPL.Workbench.Window.Width");
+            PlayerPrefs.DeleteKey("HZPL.Workbench.Window.Height");
+            PlayerPrefs.DeleteKey("HZPL.Workbench.Panel.Width");
+            PlayerPrefs.DeleteKey("HZPL.Workbench.Panel.Hidden");
+            foreach (var name in new[] { "Units", "Combats", "Movement", "Routes", "Ordnance", "Railways" })
+                PlayerPrefs.DeleteKey($"HZPL.Workbench.Overlay.{name}");
+            if (hudPanel != null)
+            {
+                hudPanel.style.display = DisplayStyle.Flex;
+                hudPanel.style.width = 438f;
+            }
+            if (togglePanelButton != null)
+                togglePanelButton.text = "HIDE PANEL";
+            SetOverlayToggleValue(overlayUnitsToggle, true);
+            SetOverlayToggleValue(overlayCombatsToggle, true);
+            SetOverlayToggleValue(overlayMovementToggle, true);
+            SetOverlayToggleValue(overlayRoutesToggle, true);
+            SetOverlayToggleValue(overlayOrdnanceToggle, true);
+            SetOverlayToggleValue(overlayRailToggle, true);
+            if (flightDetailPopup != null)
+            {
+                flightDetailPopup.style.left = 670f;
+                flightDetailPopup.style.top = 120f;
+                flightDetailPopup.style.width = 650f;
+                flightDetailPopup.style.height = 780f;
+            }
+        }
+
+        private static void SetOverlayToggleValue(Toggle toggle, bool value)
+        {
+            if (toggle != null)
+                toggle.value = value;
+        }
+
+        private void ConfigureWorkbenchPanelResize()
+        {
+            if (hudPanel == null || panelResizeHandle == null)
+                return;
+
+            hudPanel.style.width = PlayerPrefs.GetFloat("HZPL.Workbench.Panel.Width", 438f);
+            var hidden = PlayerPrefs.GetInt("HZPL.Workbench.Panel.Hidden", 0) != 0;
+            hudPanel.style.display = hidden ? DisplayStyle.None : DisplayStyle.Flex;
+            if (togglePanelButton != null)
+                togglePanelButton.text = hidden ? "SHOW PANEL" : "HIDE PANEL";
+            panelResizeHandle.RegisterCallback<PointerDownEvent>(evt =>
+            {
+                if (evt.button != 0)
+                    return;
+                resizingWorkbenchPanel = true;
+                workbenchPanelPointerStart = evt.position.x;
+                workbenchPanelWidthStart = hudPanel.resolvedStyle.width;
+                panelResizeHandle.CapturePointer(evt.pointerId);
+            });
+            panelResizeHandle.RegisterCallback<PointerMoveEvent>(evt =>
+            {
+                if (!resizingWorkbenchPanel)
+                    return;
+                hudPanel.style.width = Mathf.Clamp(
+                    workbenchPanelWidthStart + evt.position.x - workbenchPanelPointerStart,
+                    340f,
+                    720f);
+            });
+            panelResizeHandle.RegisterCallback<PointerUpEvent>(evt =>
+            {
+                resizingWorkbenchPanel = false;
+                panelResizeHandle.ReleasePointer(evt.pointerId);
+                PlayerPrefs.SetFloat("HZPL.Workbench.Panel.Width", hudPanel.resolvedStyle.width);
+            });
+        }
+
+        private void ToggleWorkbenchPanel()
+        {
+            if (hudPanel == null)
+                return;
+            var hidden = hudPanel.resolvedStyle.display != DisplayStyle.None;
+            hudPanel.style.display = hidden ? DisplayStyle.None : DisplayStyle.Flex;
+            PlayerPrefs.SetInt("HZPL.Workbench.Panel.Hidden", hidden ? 1 : 0);
+            if (togglePanelButton != null)
+                togglePanelButton.text = hidden ? "SHOW PANEL" : "HIDE PANEL";
+        }
+
+        private void ConfigureFloatingFlightWindow()
+        {
+            if (flightDetailPopup == null)
+                return;
+
+            flightDetailPopup.style.left = PlayerPrefs.GetFloat("HZPL.Workbench.Window.Left", 670f);
+            flightDetailPopup.style.top = PlayerPrefs.GetFloat("HZPL.Workbench.Window.Top", 120f);
+            flightDetailPopup.style.width = PlayerPrefs.GetFloat("HZPL.Workbench.Window.Width", 650f);
+            flightDetailPopup.style.height = PlayerPrefs.GetFloat("HZPL.Workbench.Window.Height", 780f);
+
+            flightDetailDragHandle?.RegisterCallback<PointerDownEvent>(evt =>
+            {
+                if (evt.button != 0 || evt.target is Button)
+                    return;
+                draggingFlightWindow = true;
+                flightWindowPointerStart = evt.position;
+                flightWindowPositionStart = new Vector2(
+                    flightDetailPopup.resolvedStyle.left,
+                    flightDetailPopup.resolvedStyle.top);
+                flightDetailDragHandle.CapturePointer(evt.pointerId);
+            });
+            flightDetailDragHandle?.RegisterCallback<PointerMoveEvent>(evt =>
+            {
+                if (!draggingFlightWindow)
+                    return;
+                var next = flightWindowPositionStart + (Vector2)evt.position - flightWindowPointerStart;
+                SetFloatingWindowPosition(flightDetailPopup, next);
+            });
+            flightDetailDragHandle?.RegisterCallback<PointerUpEvent>(evt =>
+            {
+                draggingFlightWindow = false;
+                flightDetailDragHandle.ReleasePointer(evt.pointerId);
+                SaveFlightWindowLayout();
+            });
+
+            flightDetailResizeHandle?.RegisterCallback<PointerDownEvent>(evt =>
+            {
+                if (evt.button != 0)
+                    return;
+                resizingFlightWindow = true;
+                flightWindowPointerStart = evt.position;
+                flightWindowSizeStart = new Vector2(
+                    flightDetailPopup.resolvedStyle.width,
+                    flightDetailPopup.resolvedStyle.height);
+                flightDetailResizeHandle.CapturePointer(evt.pointerId);
+            });
+            flightDetailResizeHandle?.RegisterCallback<PointerMoveEvent>(evt =>
+            {
+                if (!resizingFlightWindow)
+                    return;
+                var next = flightWindowSizeStart + (Vector2)evt.position - flightWindowPointerStart;
+                flightDetailPopup.style.width = Mathf.Clamp(next.x, 420f, 1000f);
+                flightDetailPopup.style.height = Mathf.Clamp(next.y, 360f, 940f);
+            });
+            flightDetailResizeHandle?.RegisterCallback<PointerUpEvent>(evt =>
+            {
+                resizingFlightWindow = false;
+                flightDetailResizeHandle.ReleasePointer(evt.pointerId);
+                SaveFlightWindowLayout();
+            });
+        }
+
+        private static void SetFloatingWindowPosition(VisualElement window, Vector2 position)
+        {
+            var width = Mathf.Max(320f, window.resolvedStyle.width);
+            var height = Mathf.Max(240f, window.resolvedStyle.height);
+            window.style.left = Mathf.Clamp(position.x, 0f, 1920f - width);
+            window.style.top = Mathf.Clamp(position.y, 58f, 1080f - height);
+        }
+
+        private void SaveFlightWindowLayout()
+        {
+            if (flightDetailPopup == null)
+                return;
+            PlayerPrefs.SetFloat("HZPL.Workbench.Window.Left", flightDetailPopup.resolvedStyle.left);
+            PlayerPrefs.SetFloat("HZPL.Workbench.Window.Top", flightDetailPopup.resolvedStyle.top);
+            PlayerPrefs.SetFloat("HZPL.Workbench.Window.Width", flightDetailPopup.resolvedStyle.width);
+            PlayerPrefs.SetFloat("HZPL.Workbench.Window.Height", flightDetailPopup.resolvedStyle.height);
+        }
+
+        private void PinPrimaryInspector()
+        {
+            switch (workbenchPage)
+            {
+                case WorkbenchPage.Tile:
+                    if (!selectedCell.HasValue || !tilesByCell.TryGetValue(selectedCell.Value, out var tile))
+                        return;
+                    CreatePinnedInspector(
+                        $"Tile {FormatTile(tile.Coordinates)}",
+                        () => BuildTileInspectorLines(tile.Coordinates),
+                        () => FocusTile(tile.Coordinates));
+                    break;
+                case WorkbenchPage.Ground:
+                    CreatePinnedInspector("Ground War", BuildGroundOverviewLines);
+                    break;
+                case WorkbenchPage.Air:
+                    if (selectedFlightId != Guid.Empty)
+                        PinCurrentFlightInspector();
+                    else
+                        CreatePinnedInspector("Air War Overview", BuildAirOverviewLines);
+                    break;
+                case WorkbenchPage.LastTurn:
+                    var turnLines = BuildLastTurnLines().ToList();
+                    CreatePinnedInspector("Last Turn Report", () => turnLines);
+                    break;
+                case WorkbenchPage.Diagnostics:
+                    CreatePinnedInspector("Diagnostics", BuildDiagnosticLines);
+                    break;
+            }
+        }
+
+        private void PinDivisionInspector(Division division)
+        {
+            if (division == null)
+                return;
+            CreatePinnedInspector(
+                string.IsNullOrWhiteSpace(division.Name) ? "Division" : division.Name,
+                () => BuildDivisionInspectorLines(division.DivisionId),
+                () =>
+                {
+                    if (gameManager.divisionSystem.TryGetDivision(division.DivisionId, out var current))
+                        FocusTile(current.TileId);
+                });
+        }
+
+        private void PinBuildingInspector(Building building)
+        {
+            if (building == null)
+                return;
+            CreatePinnedInspector(
+                $"{building.Type} {ShortId(building.BuildingId)}",
+                () =>
+                {
+                    var current = gameManager.buildingSystem.Buildings
+                        .FirstOrDefault(candidate => candidate.BuildingId == building.BuildingId);
+                    if (current == null)
+                        return new[] { "STALE", "Building no longer exists." };
+                    return new[]
+                    {
+                        $"Building ID  {current.BuildingId:N}",
+                        $"Tile  {FormatTile(current.TileId)}",
+                        $"Type  {current.Type}",
+                        $"Build level  {current.Level.BuildLevel}",
+                        $"Damage  {current.Level.Damage}",
+                        $"Functional level  {current.FunctionalLevel}",
+                        $"Target toughness  {current.TargetToughness}"
+                    };
+                },
+                () => FocusTile(building.TileId));
+        }
+
+        private void PinCurrentFlightInspector()
+        {
+            if (selectedFlightId == Guid.Empty)
+                return;
+            var flightId = selectedFlightId;
+            CreatePinnedInspector(
+                $"Flight {ShortId(flightId)}",
+                () => BuildFlightInspectorLines(flightId));
+        }
+
+        private void FocusSelectedFlight()
+        {
+            if (selectedFlightId != Guid.Empty)
+                InspectFlightRoute(selectedFlightId);
+        }
+
+        private void FocusTile(Vector3Int tileId)
+        {
+            var cell = GetCell(tileId);
+            if (!hexCentersByCell.TryGetValue(cell, out var center) || sceneCamera == null)
+                return;
+            var world = grid.transform.TransformPoint(center);
+            sceneCamera.transform.position = new Vector3(
+                world.x,
+                world.y,
+                sceneCamera.transform.position.z);
+            sceneCamera.orthographicSize = Mathf.Clamp(sceneCamera.orthographicSize, 2f, 8f);
+        }
+
+        private void CreatePinnedInspector(
+            string title,
+            Func<IEnumerable<string>> lineFactory,
+            Action focusOnMap = null)
+        {
+            if (windowLayer == null || lineFactory == null)
+                return;
+
+            pinnedWindowSequence++;
+            var window = new VisualElement();
+            window.AddToClassList("floating-window");
+            window.style.left = 590f + (pinnedWindowSequence % 7) * 28f;
+            window.style.top = 100f + (pinnedWindowSequence % 7) * 24f;
+            window.style.width = 520f;
+            window.style.height = 600f;
+            window.pickingMode = PickingMode.Position;
+
+            var header = new VisualElement();
+            header.AddToClassList("floating-window-header");
+            var heading = new Label(title);
+            heading.AddToClassList("floating-window-title");
+            heading.style.flexGrow = 1f;
+            ApplyRuntimeFont(heading);
+            var close = new Button();
+            close.text = "×";
+            close.AddToClassList("window-close");
+            ApplyRuntimeFont(close);
+            header.Add(heading);
+            if (focusOnMap != null)
+            {
+                var focus = new Button(focusOnMap) { text = "Focus" };
+                focus.AddToClassList("workbench-button");
+                focus.AddToClassList("workbench-button--small");
+                ApplyRuntimeFont(focus);
+                header.Add(focus);
+            }
+            header.Add(close);
+
+            var scroll = new ScrollView(ScrollViewMode.Vertical);
+            scroll.AddToClassList("floating-window-scroll");
+            scroll.verticalScrollerVisibility = ScrollerVisibility.AlwaysVisible;
+            var content = new VisualElement();
+            scroll.Add(content);
+
+            var resizeHandle = new VisualElement();
+            resizeHandle.AddToClassList("window-resize-handle");
+            window.Add(header);
+            window.Add(scroll);
+            window.Add(resizeHandle);
+            windowLayer.Add(window);
+            RegisterUiPointerBoundary(window);
+
+            var inspector = new PinnedInspector(window, content, lineFactory);
+            pinnedInspectors.Add(inspector);
+            close.clicked += () =>
+            {
+                pinnedInspectors.Remove(inspector);
+                window.RemoveFromHierarchy();
+            };
+            ConfigureFloatingWindowInteraction(window, header, resizeHandle);
+            RefreshPinnedInspector(inspector);
+            window.BringToFront();
+        }
+
+        private void ConfigureFloatingWindowInteraction(
+            VisualElement window,
+            VisualElement header,
+            VisualElement resizeHandle)
+        {
+            var dragging = false;
+            var resizing = false;
+            var pointerStart = Vector2.zero;
+            var positionStart = Vector2.zero;
+            var sizeStart = Vector2.zero;
+            header.RegisterCallback<PointerDownEvent>(evt =>
+            {
+                if (evt.button != 0 || evt.target is Button)
+                    return;
+                dragging = true;
+                pointerStart = evt.position;
+                positionStart = new Vector2(window.resolvedStyle.left, window.resolvedStyle.top);
+                header.CapturePointer(evt.pointerId);
+                window.BringToFront();
+            });
+            header.RegisterCallback<PointerMoveEvent>(evt =>
+            {
+                if (dragging)
+                    SetFloatingWindowPosition(window, positionStart + (Vector2)evt.position - pointerStart);
+            });
+            header.RegisterCallback<PointerUpEvent>(evt =>
+            {
+                dragging = false;
+                header.ReleasePointer(evt.pointerId);
+            });
+            resizeHandle.RegisterCallback<PointerDownEvent>(evt =>
+            {
+                if (evt.button != 0)
+                    return;
+                resizing = true;
+                pointerStart = evt.position;
+                sizeStart = new Vector2(window.resolvedStyle.width, window.resolvedStyle.height);
+                resizeHandle.CapturePointer(evt.pointerId);
+                window.BringToFront();
+            });
+            resizeHandle.RegisterCallback<PointerMoveEvent>(evt =>
+            {
+                if (!resizing)
+                    return;
+                var next = sizeStart + (Vector2)evt.position - pointerStart;
+                window.style.width = Mathf.Clamp(next.x, 360f, 1100f);
+                window.style.height = Mathf.Clamp(next.y, 280f, 960f);
+            });
+            resizeHandle.RegisterCallback<PointerUpEvent>(evt =>
+            {
+                resizing = false;
+                resizeHandle.ReleasePointer(evt.pointerId);
+            });
+        }
+
+        private void RefreshPinnedInspectors()
+        {
+            foreach (var inspector in pinnedInspectors.ToList())
+                RefreshPinnedInspector(inspector);
+        }
+
+        private void RefreshPinnedInspector(PinnedInspector inspector)
+        {
+            inspector.Content.Clear();
+            foreach (var text in inspector.Lines() ?? Array.Empty<string>())
+            {
+                var label = new Label(text ?? string.Empty);
+                label.AddToClassList("flight-detail-line");
+                ApplyRuntimeFont(label);
+                inspector.Content.Add(label);
+            }
+        }
+
+        private IEnumerable<string> BuildTileInspectorLines(Vector3Int tileId)
+        {
+            if (!tilesById.TryGetValue(tileId, out var tile))
+                return new[] { "STALE", "Tile no longer exists." };
+            tileDataById.TryGetValue(tileId, out var data);
+            var land = data as LandTileData;
+            var lines = new List<string>
+            {
+                $"Coordinates  {FormatTile(tileId)}",
+                $"Surface / terrain  {tile.Surface} / {tile.Terrain}",
+                $"Urbanization / forest  {tile.Urbanization} / {tile.ForestCover}",
+                $"Controller  {(land == null ? "None" : land.Controller.ToString())}",
+                $"Infrastructure  {(land == null ? "N/A" : $"{land.Infrastructure.FunctionalLevel}/{land.Infrastructure.BuildLevel} (damage {land.Infrastructure.Damage})")}"
+            };
+            lines.AddRange(gameManager.divisionSystem.GetDivisionsOnTile(tileId)
+                .OrderBy(division => division.Name)
+                .Select(division =>
+                    $"UNIT  {division.Name}  •  Strength {GetDivisionStatPercent(division.Strength, division.MaxStrength)}%  •  Org {GetDivisionStatPercent(division.Organization, division.MaxOrganization)}%"));
+            lines.AddRange(gameManager.buildingSystem.GetBuildingsOnTile(tileId)
+                .OrderBy(building => building.Type)
+                .Select(building =>
+                    $"BUILDING  {building.Type}  •  Functional {building.FunctionalLevel}/{building.Level.BuildLevel}  •  Damage {building.Level.Damage}"));
+            return lines;
+        }
+
+        private IEnumerable<string> BuildDivisionInspectorLines(Guid divisionId)
+        {
+            if (!gameManager.divisionSystem.TryGetDivision(divisionId, out var division) || division == null)
+                return new[] { "STALE", "Division no longer exists." };
+            var lines = new List<string>
+            {
+                $"Division ID  {division.DivisionId:N}",
+                $"Tile  {FormatTile(division.TileId)}",
+                $"Alliance  {GetDivisionAlliance(division)}",
+                $"Strength  {division.Strength:0.#}/{division.MaxStrength}",
+                $"Organization  {division.Organization:0.#}/{division.MaxOrganization}",
+                $"Soft / hard attack  {division.SoftAttack:0.#} / {division.HardAttack:0.#}",
+                $"Defense / toughness  {division.Defense} / {division.Toughness}",
+                $"Combat width  {division.CombatWidth}",
+                $"Supply  {division.SupplyStore:0.##}/{division.MaxSupplyStore:0.##}",
+                $"Order  {division.CurrentOrder?.GetType().Name ?? "None"}",
+                $"Intent  {division.CurrentOrder?.AIIntent}",
+                $"Rationale  {division.CurrentOrder?.Rationale}"
+            };
+            if (division.CurrentOrder is MoveGroundOrder move)
+            {
+                var tileDistance = Mathf.Max(
+                    SimulationSettings.MinTileDistanceKM,
+                    gameManager.SimulationSettings.TileDistanceKM);
+                var hours = division.Speed <= 0f
+                    ? float.PositiveInfinity
+                    : Mathf.Max(0f, 1f - move.MovementProgress) * tileDistance / division.Speed;
+                lines.Add($"Moving to  {FormatTile(move.CurrentDestinationTileId)}");
+                lines.Add($"Final destination  {FormatTile(move.DestinationTileId)}");
+                lines.Add($"Movement progress  {move.MovementProgress:P1}");
+                lines.Add($"Estimated next-tile arrival  {(float.IsInfinity(hours) ? "Never" : gameManager.CurrentTime.AddHours(hours).ToString("yyyy-MM-dd HH:mm"))}");
+            }
+            return lines;
+        }
+
+        private IEnumerable<string> BuildFlightInspectorLines(Guid flightId)
+        {
+            if (!TryFindFlight(flightId, out var flight, out var package, out _))
+                return new[] { "STALE", "Flight no longer exists." };
+            var squadron = gameManager.squadronSystem.Squadrons
+                .First(candidate => candidate.SquadronId == flight.SquadronId);
+            var lines = new List<string>
+            {
+                $"Flight ID  {flight.FlightId:N}",
+                $"Flight  {GetFlightName(flight, squadron)}",
+                $"Alliance  {package.Alliance}",
+                $"Mission  {GetMissionLabel(flight.MissionType)}",
+                $"Package  {package.PackageId:N}",
+                $"Aircraft  {flight.AircraftIds.Count}",
+                $"Lifecycle / execution  {flight.LifecycleState} / {flight.ExecutionPhase}",
+                $"Position  {(flight.HasPosition ? $"X {flight.PositionFeet.x:0}, Z {flight.PositionFeet.z:0}, Alt {flight.PositionFeet.y:0} ft" : "Not airborne")}",
+                $"Heading / speed  {flight.HeadingDegrees:0}° / {flight.SpeedKnots:0} kt",
+                $"Route progress  {Mathf.Clamp(flight.CurrentWaypointIndex + 1, 0, flight.Route.Count)}/{flight.Route.Count}"
+            };
+            foreach (var record in gameManager.GetOrdnanceEmploymentRecords()
+                         .Where(record => record.SourceFlightId == flightId || record.TargetFlightId == flightId)
+                         .OrderByDescending(record => record.OccurredAt)
+                         .Take(25))
+            {
+                lines.Add($"{record.OccurredAt:HH:mm:ss}  {record.Stage}  {record.Detail}");
+                foreach (var shot in record.Shots)
+                    lines.Add($"  Shot {shot.Sequence}: {shot.Result}  target {ShortId(shot.TargetAircraftId)}  P {shot.Probability:P1}  roll {(shot.Roll < 0f ? "—" : shot.Roll.ToString("0.000"))}");
+            }
+            return lines;
         }
 
         private void UpdateSummaryUi()
@@ -701,8 +1540,312 @@ namespace Engine.Monobehaviours.Managers
             RebuildAirFlightsList(
                 flights.Where(flight => GetFlightAlliance(flight, packages) == airFlightAlliance).ToList(),
                 packages);
+            UpdateAirOverviewUi();
             if (selectedFlightId != Guid.Empty)
                 RefreshFlightDetails();
+        }
+
+        private void UpdateAirOverviewUi()
+        {
+            if (airOverviewGrid == null || gameManager?.squadronSystem == null)
+                return;
+
+            airOverviewGrid.Clear();
+            foreach (var alliance in new[] { Alliance.Bluefor, Alliance.Redfor })
+            {
+                var squadrons = gameManager.squadronSystem.Squadrons
+                    .Where(squadron => gameManager.GetCountryAlliance(squadron.CountryId) == alliance)
+                    .ToList();
+                var allAircraft = squadrons.SelectMany(squadron => squadron.Aircraft).ToList();
+                var coverage = CalculateAirControlCoverage(alliance);
+                var commander = gameManager.GetAllianceAirTaskingCommander(alliance);
+                var openRequests = commander?.MissionRequests.Count(request => !request.IsTerminal) ?? 0;
+                var unmetRequests = commander?.MissionRequests.Count(request =>
+                    !request.IsTerminal
+                    && request.State != AirMissionRequestState.Fulfilled
+                    && request.State != AirMissionRequestState.InProgress) ?? 0;
+                var panel = new VisualElement();
+                panel.AddToClassList("campaign-air-card");
+                panel.AddToClassList(alliance == Alliance.Bluefor
+                    ? "campaign-air-card--blue"
+                    : "campaign-air-card--red");
+                AddCompactLine(panel, $"{GetAllianceLabel(alliance).ToUpperInvariant()} AIR PICTURE", true);
+                AddCompactLine(
+                    panel,
+                    $"Aircraft {allAircraft.Count}  •  Ready {squadrons.Sum(item => item.ReadyAircraft)}  •  Assigned {squadrons.Sum(item => item.AssignedAircraft)}  •  Damaged {squadrons.Sum(item => item.DamagedAircraft)}  •  Lost {squadrons.Sum(item => item.LostAircraft)}");
+                AddCompactLine(
+                    panel,
+                    $"Own land: friendly {coverage.FriendlyCovered}/{coverage.TotalLand}  •  hostile {coverage.HostileCovered}/{coverage.TotalLand}  •  contested {coverage.Contested}");
+                AddCompactLine(panel, $"Requests {openRequests}  •  unmet/deferred {unmetRequests}");
+                airOverviewGrid.Add(panel);
+            }
+        }
+
+        private AirCoverageSummary CalculateAirControlCoverage(Alliance territoryOwner)
+        {
+            var landTiles = tileDataById.Values
+                .OfType<LandTileData>()
+                .Where(tile => tile.Controller == territoryOwner)
+                .ToList();
+            var friendlyAreas = GetActiveCounterAirAreas(territoryOwner);
+            var hostileAlliance = territoryOwner == Alliance.Bluefor
+                ? Alliance.Redfor
+                : Alliance.Bluefor;
+            var hostileAreas = GetActiveCounterAirAreas(hostileAlliance);
+            var friendly = 0;
+            var hostile = 0;
+            var contested = 0;
+            foreach (var tile in landTiles)
+            {
+                var friendlyCovered = friendlyAreas.Any(area => area.Contains(tile.TileId));
+                var hostileCovered = hostileAreas.Any(area => area.Contains(tile.TileId));
+                if (friendlyCovered)
+                    friendly++;
+                if (hostileCovered)
+                    hostile++;
+                if (friendlyCovered && hostileCovered)
+                    contested++;
+            }
+            return new AirCoverageSummary(landTiles.Count, friendly, hostile, contested);
+        }
+
+        private List<AirMissionArea> GetActiveCounterAirAreas(Alliance alliance)
+        {
+            var commander = gameManager.GetAllianceAirTaskingCommander(alliance);
+            if (commander == null)
+                return new List<AirMissionArea>();
+            return commander.Packages
+                .SelectMany(package => package.Flights)
+                .Where(flight => flight.IsAirborne
+                                 && (flight.MissionType == AirMissionRequestType.DefensiveCounterAirPatrol
+                                     || flight.MissionType == AirMissionRequestType.OffensiveCounterAirSweep)
+                                 && flight.ActiveEffectArea != null)
+                .Select(flight => flight.ActiveEffectArea)
+                .ToList();
+        }
+
+        private void UpdateGroundOperationsUi()
+        {
+            if (groundCombatsList == null || gameManager == null)
+                return;
+
+            var combats = gameManager.GetActiveGroundCombats().ToList();
+            if (groundOpsSummary != null)
+                groundOpsSummary.text = combats.Count == 0
+                    ? "No active ground combats."
+                    : $"{combats.Count} active combats. Bubble values show attacker current-power share, not win probability.";
+            groundCombatsList.Clear();
+            foreach (var combat in combats.OrderBy(item => item.DefendingTileId.x)
+                         .ThenBy(item => item.DefendingTileId.y))
+            {
+                var score = CalculateAttackerCombatScore(combat);
+                var button = new Button(() => OpenCombatInspector(combat))
+                {
+                    text =
+                        $"{GetAllianceLabel(combat.AttackingAlliance)} → {GetAllianceLabel(combat.DefendingAlliance)}  •  Tile {FormatTile(combat.DefendingTileId)}\n" +
+                        $"Power balance {score}% attacker  •  {combat.AttackerDivisionIds.Count} attacking / {combat.DefenderDivisionIds.Count} defending"
+                };
+                button.AddToClassList("campaign-air-card");
+                button.AddToClassList("campaign-air-card--clickable");
+                ApplyRuntimeFont(button);
+                groundCombatsList.Add(button);
+            }
+        }
+
+        private void OpenCombatInspector(GroundCombat combat)
+        {
+            if (combat == null)
+                return;
+            var tileId = combat.DefendingTileId;
+            CreatePinnedInspector(
+                $"Ground Combat {FormatTile(tileId)}",
+                () => BuildCombatInspectorLines(tileId));
+        }
+
+        private IEnumerable<string> BuildCombatInspectorLines(Vector3Int tileId)
+        {
+            var combat = gameManager.GetActiveGroundCombats()
+                .FirstOrDefault(candidate => candidate.DefendingTileId == tileId);
+            if (combat == null)
+                return new[] { "COMPLETED", "This ground combat is no longer active." };
+            var lines = new List<string>
+            {
+                $"Defending tile  {FormatTile(tileId)}",
+                $"Attacker / defender  {combat.AttackingAlliance} / {combat.DefendingAlliance}",
+                $"Current attacker power share  {CalculateAttackerCombatScore(combat)}%",
+                "ATTACKERS"
+            };
+            lines.AddRange(BuildCombatSideLines(combat.AttackerDivisionIds));
+            lines.Add("DEFENDERS");
+            lines.AddRange(BuildCombatSideLines(combat.DefenderDivisionIds));
+            return lines;
+        }
+
+        private IEnumerable<string> BuildCombatSideLines(IEnumerable<Guid> divisionIds)
+        {
+            foreach (var id in divisionIds)
+            {
+                if (!gameManager.divisionSystem.TryGetDivision(id, out var division) || division == null)
+                    continue;
+                yield return
+                    $"{division.Name}  •  STR {division.Strength:0.#}/{division.MaxStrength}  •  ORG {division.Organization:0.#}/{division.MaxOrganization}  •  SA/HA {division.SoftAttack:0.#}/{division.HardAttack:0.#}  •  DEF {division.Defense}  •  Width {division.CombatWidth}";
+            }
+        }
+
+        private IEnumerable<string> BuildGroundOverviewLines()
+        {
+            var combats = gameManager.GetActiveGroundCombats().ToList();
+            var lines = new List<string> { $"Active combats  {combats.Count}" };
+            lines.AddRange(combats.Select(combat =>
+                $"{combat.AttackingAlliance} → {combat.DefendingAlliance} at {FormatTile(combat.DefendingTileId)}  •  attacker power {CalculateAttackerCombatScore(combat)}%"));
+            return lines;
+        }
+
+        private IEnumerable<string> BuildAirOverviewLines()
+        {
+            var lines = new List<string>();
+            foreach (var alliance in new[] { Alliance.Bluefor, Alliance.Redfor })
+            {
+                var squadrons = gameManager.squadronSystem.Squadrons
+                    .Where(squadron => gameManager.GetCountryAlliance(squadron.CountryId) == alliance)
+                    .ToList();
+                var coverage = CalculateAirControlCoverage(alliance);
+                lines.Add($"{alliance}");
+                lines.Add(
+                    $"Aircraft {squadrons.Sum(item => item.Aircraft.Count)}  •  Ready {squadrons.Sum(item => item.ReadyAircraft)}  •  Assigned {squadrons.Sum(item => item.AssignedAircraft)}  •  Damaged {squadrons.Sum(item => item.DamagedAircraft)}  •  Lost {squadrons.Sum(item => item.LostAircraft)}");
+                lines.Add($"Air-control coverage on own land: friendly {coverage.FriendlyCovered}/{coverage.TotalLand}, hostile {coverage.HostileCovered}/{coverage.TotalLand}, contested {coverage.Contested}");
+            }
+            return lines;
+        }
+
+        private void UpdateTurnReportUi()
+        {
+            if (turnReportList == null)
+                return;
+            var hasTurn = gameManager.LastTurnCompletedAt > gameManager.LastTurnStartedAt;
+            if (turnReportSummary != null)
+                turnReportSummary.text = hasTurn
+                    ? $"{gameManager.LastTurnStartedAt:yyyy-MM-dd HH:mm} → {gameManager.LastTurnCompletedAt:yyyy-MM-dd HH:mm}"
+                    : "Advance one turn to generate a report.";
+            turnReportList.Clear();
+            foreach (var line in BuildLastTurnLines())
+                AddCompactLine(turnReportList, line);
+        }
+
+        private IEnumerable<string> BuildLastTurnLines()
+        {
+            if (gameManager.LastTurnCompletedAt <= gameManager.LastTurnStartedAt)
+                return new[] { "No completed turn yet." };
+            var from = gameManager.LastTurnStartedAt;
+            var to = gameManager.LastTurnCompletedAt;
+            var lines = new List<string>
+            {
+                $"END STATE  •  {gameManager.GetActiveGroundCombats().Count} ground combats  •  {gameManager.GetAirborneFlights().Count} airborne flights"
+            };
+            lines.AddRange(gameManager.LastTurnChanges
+                .OrderBy(change => change.System)
+                .ThenBy(change => change.Summary)
+                .Select(change => $"{change.System.ToUpperInvariant()}  {change.Summary}"));
+            foreach (var alliance in new[] { Alliance.Bluefor, Alliance.Redfor })
+            {
+                var commander = gameManager.GetAllianceAirTaskingCommander(alliance);
+                foreach (var diagnostic in commander.Diagnostics
+                             .Where(item => item.RecordedAt > from && item.RecordedAt <= to)
+                             .OrderBy(item => item.RecordedAt))
+                    lines.Add($"{diagnostic.RecordedAt:HH:mm:ss}  AIR PLANNING  {alliance}  {diagnostic.Code}  •  {diagnostic.Message}");
+                foreach (var flightEvent in commander.Packages
+                             .SelectMany(package => package.Flights)
+                             .SelectMany(flight => flight.ExecutionEvents.Select(item => (flight, item)))
+                             .Where(pair => pair.item.OccurredAt > from && pair.item.OccurredAt <= to)
+                             .OrderBy(pair => pair.item.OccurredAt))
+                    lines.Add($"{flightEvent.item.OccurredAt:HH:mm:ss}  AIR EXECUTION  {ShortId(flightEvent.flight.FlightId)}  •  {flightEvent.item.Detail}");
+            }
+            foreach (var record in gameManager.GetOrdnanceEmploymentRecords()
+                         .Where(item => item.OccurredAt > from && item.OccurredAt <= to)
+                         .OrderBy(item => item.OccurredAt))
+            {
+                lines.Add($"{record.OccurredAt:HH:mm:ss}  ORDNANCE  PASS {ShortId(record.EmploymentPassId)}  •  {record.Detail}");
+                if (record.Stage == OrdnanceEmploymentRecordStage.OrdnanceReleased)
+                    lines.Add($"  Range {record.ReleaseRangeKm:0.0} km  •  P(hit) {record.HitProbability:P1}");
+                foreach (var shot in record.Shots)
+                    lines.Add($"  Shot {shot.Sequence}: {shot.Result}  •  target {ShortId(shot.TargetAircraftId)}  •  P {shot.Probability:P1}  •  roll {(shot.Roll < 0f ? "—" : shot.Roll.ToString("0.000"))}");
+            }
+            foreach (var division in gameManager.divisionSystem.Divisions
+                         .Where(item => item.CurrentOrder is MoveGroundOrder)
+                         .OrderBy(item => item.Name))
+            {
+                var move = (MoveGroundOrder)division.CurrentOrder;
+                lines.Add($"GROUND MOVEMENT  {division.Name}  •  {FormatTile(division.TileId)} → {FormatTile(move.CurrentDestinationTileId)}  •  {move.MovementProgress:P1}");
+            }
+            return lines;
+        }
+
+        private void UpdateDiagnosticsUi()
+        {
+            if (diagnosticsList == null || gameManager == null)
+                return;
+            var entries = GetDiagnostics().ToList();
+            if (diagnosticsErrorsButton != null)
+                diagnosticsErrorsButton.text = $"Errors {entries.Count(item => item.Severity == "Errors")}";
+            if (diagnosticsWarningsButton != null)
+                diagnosticsWarningsButton.text = $"Warnings {entries.Count(item => item.Severity == "Warnings")}";
+
+            var severity = diagnosticsSeverity?.value ?? "All";
+            var system = diagnosticsSystem?.value ?? "All";
+            var search = diagnosticsSearch?.value?.Trim() ?? string.Empty;
+            var filtered = entries.Where(entry =>
+                (severity == "All" || entry.Severity == severity)
+                && (system == "All" || entry.System == system)
+                && (search.Length == 0
+                    || entry.Text.IndexOf(search, StringComparison.OrdinalIgnoreCase) >= 0));
+            diagnosticsList.Clear();
+            foreach (var entry in filtered.OrderByDescending(item => item.RecordedAt))
+                AddCompactLine(
+                    diagnosticsList,
+                    $"{entry.RecordedAt:MM-dd HH:mm:ss}  {entry.Severity.ToUpperInvariant()}  {entry.System}\n{entry.Text}");
+        }
+
+        private IEnumerable<string> BuildDiagnosticLines()
+        {
+            return GetDiagnostics()
+                .OrderByDescending(entry => entry.RecordedAt)
+                .Select(entry => $"{entry.RecordedAt:MM-dd HH:mm:ss}  {entry.Severity}  {entry.System}  •  {entry.Text}");
+        }
+
+        private IEnumerable<DiagnosticRow> GetDiagnostics()
+        {
+            foreach (var alliance in new[] { Alliance.Bluefor, Alliance.Redfor })
+            {
+                var commander = gameManager.GetAllianceAirTaskingCommander(alliance);
+                foreach (var diagnostic in commander.Diagnostics)
+                {
+                    var severity = diagnostic.Code.Contains("failed")
+                                   || diagnostic.Code.Contains("invalid")
+                                   || diagnostic.Code.Contains("aborted")
+                        ? "Errors"
+                        : diagnostic.Code.Contains("deferred")
+                          || diagnostic.Code.Contains("cancel")
+                          || diagnostic.Code.Contains("purged")
+                            ? "Warnings"
+                            : "Info";
+                    yield return new DiagnosticRow(
+                        diagnostic.RecordedAt,
+                        severity,
+                        "Air Planning",
+                        $"{alliance}  {diagnostic.Code}  •  {diagnostic.Message}");
+                }
+            }
+            foreach (var record in gameManager.GetOrdnanceEmploymentRecords()
+                         .Where(item => item.Stage == OrdnanceEmploymentRecordStage.PreparationAborted))
+                yield return new DiagnosticRow(record.OccurredAt, "Warnings", "Ordnance", record.Detail);
+        }
+
+        private void AddCompactLine(VisualElement parent, string text, bool heading = false)
+        {
+            var label = new Label(text);
+            label.AddToClassList(heading ? "campaign-air-card-title" : "flight-detail-line");
+            ApplyRuntimeFont(label);
+            parent.Add(label);
         }
 
         private void RebuildAirRequestsList(IReadOnlyList<AirMissionRequest> requests)
@@ -735,7 +1878,11 @@ namespace Engine.Monobehaviours.Managers
                 };
                 if (!string.IsNullOrWhiteSpace(request.Rationale))
                     fields.Add(new AirCardField("Intent", request.Rationale));
-                airRequestsList.Add(CreateAirCard(request.Alliance, title, fields));
+                airRequestsList.Add(CreateAirCard(
+                    request.Alliance,
+                    title,
+                    fields,
+                    () => OpenRequestInspector(request.MissionRequestId, request.Alliance)));
             }
         }
 
@@ -785,7 +1932,11 @@ namespace Engine.Monobehaviours.Managers
                 }
                 if (!string.IsNullOrWhiteSpace(package.Rationale))
                     fields.Add(new AirCardField("Intent", package.Rationale));
-                airPackagesList.Add(CreateAirCard(package.Alliance, title, fields));
+                airPackagesList.Add(CreateAirCard(
+                    package.Alliance,
+                    title,
+                    fields,
+                    () => OpenPackageInspector(package.PackageId, package.Alliance)));
             }
         }
 
@@ -904,9 +2055,103 @@ namespace Engine.Monobehaviours.Managers
             return card;
         }
 
+        private void OpenRequestInspector(Guid requestId, Alliance alliance)
+        {
+            var commander = gameManager.GetAllianceAirTaskingCommander(alliance);
+            var request = commander?.MissionRequests
+                .FirstOrDefault(candidate => candidate.MissionRequestId == requestId);
+            if (request == null)
+                return;
+            CreatePinnedInspector(
+                $"Request {ShortId(requestId)}",
+                () =>
+                {
+                    var current = gameManager.GetAllianceAirTaskingCommander(alliance)?.MissionRequests
+                        .FirstOrDefault(candidate => candidate.MissionRequestId == requestId);
+                    if (current == null)
+                        return new[] { "STALE", "Mission request is no longer active." };
+                    var lines = new List<string>
+                    {
+                        $"Request ID  {current.MissionRequestId:N}",
+                        $"Alliance  {current.Alliance}",
+                        $"Type  {GetMissionLabel(current.RequestType)}",
+                        $"State  {current.State}",
+                        $"Priority  {current.Priority:0.0}",
+                        $"Area  {FormatTile(current.MissionArea.CenterTileId)} radius {current.MissionArea.RadiusTiles}",
+                        $"Effect  {current.EffectStart:yyyy-MM-dd HH:mm} → {current.EffectEnd:yyyy-MM-dd HH:mm}",
+                        $"Demand  {current.DesiredAircraftStrength} aircraft / {current.DesiredSupportSlots} support slots",
+                        $"Rationale  {current.Rationale}"
+                    };
+                    lines.AddRange(commander.Diagnostics
+                        .Where(item => item.MissionRequestId == requestId)
+                        .OrderByDescending(item => item.RecordedAt)
+                        .Take(20)
+                        .Select(item => $"{item.RecordedAt:MM-dd HH:mm}  {item.Code}  •  {item.Message}"));
+                    return lines;
+                },
+                () => FocusTile(request.MissionArea.CenterTileId));
+        }
+
+        private void OpenPackageInspector(Guid packageId, Alliance alliance)
+        {
+            if (!TryFindPackage(packageId, alliance, out _))
+                return;
+            CreatePinnedInspector(
+                $"Package {ShortId(packageId)}",
+                () => BuildPackageInspectorLines(packageId, alliance),
+                () => FocusPackageOnMap(packageId, alliance));
+        }
+
+        private IEnumerable<string> BuildPackageInspectorLines(Guid packageId, Alliance alliance)
+        {
+            if (!TryFindPackage(packageId, alliance, out var package))
+                return new[] { "STALE", "Package is no longer active." };
+            var lines = new List<string>
+            {
+                $"Package ID  {package.PackageId:N}",
+                $"Alliance  {package.Alliance}",
+                $"Lifecycle  {package.LifecycleState}",
+                $"Request  {package.MissionRequestId:N}",
+                $"Created  {package.CreatedAt:yyyy-MM-dd HH:mm}",
+                $"Effect  {package.EffectStart:yyyy-MM-dd HH:mm} → {package.EffectEnd:yyyy-MM-dd HH:mm}",
+                $"Flights  {package.Flights.Count}",
+                $"Aircraft  {package.Flights.Sum(flight => flight.AircraftIds.Count)}",
+                $"Rationale  {package.Rationale}"
+            };
+            foreach (var flight in package.Flights)
+                lines.Add(
+                    $"FLIGHT  {ShortId(flight.FlightId)}  •  {GetMissionLabel(flight.MissionType)}  •  {flight.AircraftIds.Count}-ship  •  {flight.ExecutionPhase}");
+            return lines;
+        }
+
+        private bool TryFindPackage(Guid packageId, Alliance alliance, out AirPackage package)
+        {
+            package = gameManager.GetAllianceAirTaskingCommander(alliance)?.Packages
+                .FirstOrDefault(candidate => candidate.PackageId == packageId);
+            return package != null;
+        }
+
+        private void FocusPackageOnMap(Guid packageId, Alliance alliance)
+        {
+            if (!TryFindPackage(packageId, alliance, out var package))
+                return;
+            inspectedFlightId = Guid.Empty;
+            inspectedPackageId = packageId;
+            ClearAirInspection();
+            CreateAirInspection();
+            var points = package.Flights
+                .SelectMany(flight => flight.Route.Select(waypoint =>
+                    AirPositionToMapPosition(waypoint.PositionFeet)))
+                .ToList();
+            if (points.Count == 0)
+                return;
+            FrameMapPoints(points);
+        }
+
         private void OpenFlightDetails(Guid flightId)
         {
             selectedFlightId = flightId;
+            ApplySelectedFlightMarker();
             if (flightDetailBackdrop != null)
             {
                 flightDetailBackdrop.style.display = DisplayStyle.Flex;
@@ -915,9 +2160,44 @@ namespace Engine.Monobehaviours.Managers
             RefreshFlightDetails();
         }
 
+        private void ApplySelectedFlightMarker()
+        {
+            if (airOverlayRoot == null)
+                return;
+            foreach (Transform child in airOverlayRoot)
+            {
+                if (!child.name.StartsWith("Air Flight ", StringComparison.Ordinal))
+                    continue;
+                var line = child.GetComponent<LineRenderer>();
+                if (line == null)
+                    continue;
+                var selected = selectedFlightId != Guid.Empty
+                               && child.name.EndsWith(ShortId(selectedFlightId), StringComparison.Ordinal);
+                line.startWidth = selected ? 0.085f : 0.055f;
+                line.endWidth = selected ? 0.085f : 0.055f;
+                if (selected)
+                {
+                    line.startColor = new Color(1f, 0.88f, 0.22f);
+                    line.endColor = new Color(1f, 0.88f, 0.22f);
+                }
+                else
+                {
+                    var pick = flightPickTargets.FirstOrDefault(target =>
+                        child.name.EndsWith(ShortId(target.FlightId), StringComparison.Ordinal));
+                    if (pick.FlightId != Guid.Empty
+                        && TryFindFlight(pick.FlightId, out _, out var package, out _))
+                    {
+                        line.startColor = GetAirAllianceColor(package.Alliance);
+                        line.endColor = GetAirAllianceColor(package.Alliance);
+                    }
+                }
+            }
+        }
+
         private void CloseFlightDetails()
         {
             selectedFlightId = Guid.Empty;
+            ApplySelectedFlightMarker();
             if (flightDetailBackdrop != null)
                 flightDetailBackdrop.style.display = DisplayStyle.None;
             flightDetailContent?.Clear();
@@ -944,6 +2224,7 @@ namespace Engine.Monobehaviours.Managers
             }
 
             inspectedFlightId = flightId;
+            inspectedPackageId = Guid.Empty;
             ClearAirInspection();
             CreateAirInspection();
             FrameAirInspection(flight);
@@ -1028,6 +2309,7 @@ namespace Engine.Monobehaviours.Managers
             AddRouteDetailSection(flight);
             AddSupportDetailSection(flight);
             AddExecutionEventSection(flight);
+            AddOrdnanceEmploymentSection(flight);
             if (flightDetailScroll != null)
             {
                 flightDetailScroll.schedule.Execute(
@@ -1192,6 +2474,82 @@ namespace Engine.Monobehaviours.Managers
             flightDetailContent.Add(section);
         }
 
+        private void AddOrdnanceEmploymentSection(AirFlight flight)
+        {
+            var records = gameManager.GetOrdnanceEmploymentRecords()
+                .Where(record => record.SourceFlightId == flight.FlightId
+                                 || record.TargetFlightId == flight.FlightId)
+                .OrderByDescending(record => record.OccurredAt)
+                .Take(50)
+                .ToList();
+            var activePasses = gameManager.GetActiveOrdnanceEmploymentPasses()
+                .Where(pass => pass.SourceFlightId == flight.FlightId)
+                .OrderBy(pass => pass.ReleaseAt)
+                .ToList();
+            var pendingEffects = gameManager.GetPendingOrdnanceEffects()
+                .Where(effect => effect.SourceFlightId == flight.FlightId
+                                 || effect.TargetFlightId == flight.FlightId)
+                .OrderBy(effect => effect.ResolveAt)
+                .ToList();
+            if (records.Count == 0
+                && activePasses.Count == 0
+                && pendingEffects.Count == 0)
+                return;
+
+            var section = CreateFlightDetailSection(
+                $"ORDNANCE EMPLOYMENT ({records.Count})");
+            foreach (var pass in activePasses)
+            {
+                AddFlightDetailMessage(
+                    section,
+                    $"PREPARING  •  {pass.PlannedQuantity} stores  •  " +
+                    $"release {pass.ReleaseAt:MM-dd HH:mm:ss}");
+            }
+            foreach (var effect in pendingEffects)
+            {
+                var direction = effect.TargetFlightId == flight.FlightId
+                    ? "INCOMING"
+                    : "OUTBOUND";
+                AddFlightDetailMessage(
+                    section,
+                    $"{direction}  •  {effect.Quantity} stores  •  " +
+                    $"resolve {effect.ResolveAt:MM-dd HH:mm:ss}");
+            }
+            foreach (var record in records)
+            {
+                AddFlightDetailMessage(
+                    section,
+                    $"{record.OccurredAt:MM-dd HH:mm:ss}  •  " +
+                    $"{GetEmploymentStageLabel(record.Stage)}\n{record.Detail}");
+                if (record.Stage == OrdnanceEmploymentRecordStage.OrdnanceReleased)
+                {
+                    AddFlightDetailMessage(
+                        section,
+                        $"Pass {ShortId(record.EmploymentPassId)}  •  " +
+                        $"Range {record.ReleaseRangeKm:0.0} km  •  " +
+                        $"P(hit) {record.HitProbability:P1}");
+                }
+                foreach (var shot in record.Shots)
+                {
+                    AddFlightDetailMessage(
+                        section,
+                        $"Shot {shot.Sequence}  •  {shot.Result}  •  " +
+                        $"target aircraft {ShortId(shot.TargetAircraftId)}  •  " +
+                        $"P {shot.Probability:P1}  •  " +
+                        $"roll {(shot.Roll < 0f ? "—" : shot.Roll.ToString("0.000"))}");
+                }
+            }
+
+            section.style.minHeight = 43f
+                                      + Math.Max(
+                                          1,
+                                          records.Count
+                                          + activePasses.Count
+                                          + pendingEffects.Count
+                                          + records.Sum(record => record.Shots.Count)) * 45f;
+            flightDetailContent.Add(section);
+        }
+
         private VisualElement CreateFlightDetailSection(string title)
         {
             var section = new VisualElement();
@@ -1275,6 +2633,19 @@ namespace Engine.Monobehaviours.Managers
             };
         }
 
+        private static string GetEmploymentStageLabel(
+            OrdnanceEmploymentRecordStage stage)
+        {
+            return stage switch
+            {
+                OrdnanceEmploymentRecordStage.PreparationStarted => "Preparation",
+                OrdnanceEmploymentRecordStage.PreparationAborted => "Aborted",
+                OrdnanceEmploymentRecordStage.OrdnanceReleased => "Released",
+                OrdnanceEmploymentRecordStage.EffectResolved => "Resolved",
+                _ => stage.ToString()
+            };
+        }
+
         private static string GetFlightName(AirFlight flight, Squadron squadron)
         {
             return string.IsNullOrWhiteSpace(squadron.Name)
@@ -1330,6 +2701,7 @@ namespace Engine.Monobehaviours.Managers
                 selectedTileLabel.text = "Select a hex";
                 UpdateNeighborsUi();
                 UpdateUnitsUi();
+                UpdateBuildingsUi();
                 return;
             }
 
@@ -1354,6 +2726,7 @@ namespace Engine.Monobehaviours.Managers
 
             UpdateNeighborsUi();
             UpdateUnitsUi();
+            UpdateBuildingsUi();
         }
 
         private void UpdateNeighborsUi()
@@ -1381,6 +2754,56 @@ namespace Engine.Monobehaviours.Managers
 
             if (unitsFoldout.value)
                 UpdateUnitsList();
+        }
+
+        private void UpdateBuildingsUi()
+        {
+            if (buildingsFoldout == null)
+                return;
+
+            var count = 0;
+            if (selectedCell.HasValue && tilesByCell.TryGetValue(selectedCell.Value, out var selectedTile))
+                count = gameManager.buildingSystem.GetBuildingsOnTile(selectedTile.Coordinates).Count;
+            buildingsFoldout.text = count == 0 ? "Buildings" : $"Buildings ({count})";
+            if (buildingsFoldout.value)
+                UpdateBuildingsList();
+        }
+
+        private void UpdateBuildingsList()
+        {
+            if (buildingsList == null || buildingsFoldout == null || !buildingsFoldout.value)
+                return;
+
+            buildingsList.Clear();
+            if (!selectedCell.HasValue || !tilesByCell.TryGetValue(selectedCell.Value, out var selectedTile))
+            {
+                buildingsList.Add(CreateNeighborMessage("Select a tile to inspect buildings."));
+                return;
+            }
+
+            var buildings = gameManager.buildingSystem
+                .GetBuildingsOnTile(selectedTile.Coordinates)
+                .OrderBy(building => building.Type)
+                .ThenBy(building => building.BuildingId)
+                .ToList();
+            if (buildings.Count == 0)
+            {
+                buildingsList.Add(CreateNeighborMessage("No buildings on this tile."));
+                return;
+            }
+
+            foreach (var building in buildings)
+            {
+                var button = new Button(() => PinBuildingInspector(building))
+                {
+                    text =
+                        $"{building.Type}  •  Functional {building.FunctionalLevel}/{building.Level.BuildLevel}\n" +
+                        $"Damage {building.Level.Damage}  •  Toughness {building.TargetToughness}"
+                };
+                button.AddToClassList("campaign-hud-neighbor-item");
+                ApplyRuntimeFont(button);
+                buildingsList.Add(button);
+            }
         }
 
         private void UpdateNeighborsList()
@@ -1449,7 +2872,7 @@ namespace Engine.Monobehaviours.Managers
 
         private VisualElement CreateUnitCard(Division division)
         {
-            var card = new VisualElement();
+            var card = new Button(() => PinDivisionInspector(division)) { text = string.Empty };
             card.AddToClassList("campaign-hud-unit-card");
             card.style.borderLeftColor = GetControlColor(GetDivisionAlliance(division));
 
@@ -1518,27 +2941,36 @@ namespace Engine.Monobehaviours.Managers
                 return;
 
             foreach (var group in gameManager.divisionSystem.Divisions
-                         .GroupBy(division => division.TileId))
+                         .GroupBy(division => new
+                         {
+                             division.TileId,
+                             Alliance = GetDivisionAlliance(division)
+                         }))
             {
-                var cell = GetCell(group.Key);
+                var cell = GetCell(group.Key.TileId);
                 if (!hexCentersByCell.TryGetValue(cell, out var hexCenter))
                     continue;
 
                 var divisions = group.ToList();
-                var firstDivision = divisions[0];
-                var alliance = GetDivisionAlliance(firstDivision);
-                CreateUnitCounter(group.Key, hexCenter, divisions.Count, alliance);
+                var offset = group.Key.Alliance == Alliance.Redfor ? 0.12f : -0.12f;
+                hexCenter += new Vector3(offset, -0.1f, 0f);
+                CreateUnitCounter(group.Key.TileId, hexCenter, divisions, group.Key.Alliance);
             }
         }
 
-        private void CreateUnitCounter(Vector3Int tileId, Vector3 hexCenter, int divisionCount, Alliance alliance)
+        private void CreateUnitCounter(
+            Vector3Int tileId,
+            Vector3 hexCenter,
+            IReadOnlyList<Division> divisions,
+            Alliance alliance)
         {
             var counterObject = new GameObject($"Unit Counter {tileId.x},{tileId.y},{tileId.z}");
             counterObject.transform.SetParent(unitCounterRoot, false);
             counterObject.transform.position = grid.transform.TransformPoint(hexCenter) + new Vector3(0f, -0.1f, -0.2f);
 
             var renderer = counterObject.AddComponent<SpriteRenderer>();
-            renderer.sprite = GetUnitCounterSprite(alliance);
+            var symbol = GetDivisionNatoSymbol(divisions[0]);
+            renderer.sprite = GetUnitCounterSprite(alliance, symbol);
             renderer.sortingOrder = 20;
 
             var textObject = new GameObject("Counter Label");
@@ -1551,19 +2983,44 @@ namespace Engine.Monobehaviours.Managers
             textMesh.characterSize = UnitCounterLabelCharacterSize;
             textMesh.fontSize = 28;
             textMesh.color = Color.white;
-            textMesh.text = divisionCount.ToString();
+            textMesh.text = divisions.Count.ToString();
 
             var textRenderer = textObject.GetComponent<MeshRenderer>();
             textRenderer.sortingOrder = 21;
+
+            var detailObject = new GameObject("Counter Detail");
+            detailObject.transform.SetParent(counterObject.transform, false);
+            detailObject.transform.localPosition = new Vector3(0f, -0.22f, -0.05f);
+            var detail = detailObject.AddComponent<TextMesh>();
+            detail.anchor = TextAnchor.UpperCenter;
+            detail.alignment = TextAlignment.Center;
+            detail.characterSize = 0.014f;
+            detail.fontSize = 22;
+            detail.color = Color.white;
+            var averageStrength = divisions.Average(division =>
+                GetDivisionStatPercent(division.Strength, division.MaxStrength));
+            var averageOrganization = divisions.Average(division =>
+                GetDivisionStatPercent(division.Organization, division.MaxOrganization));
+            detail.text =
+                $"{symbol}  {divisions[0].Name}\n" +
+                $"STR {averageStrength:0}%  ORG {averageOrganization:0}%";
+            detailObject.GetComponent<MeshRenderer>().sortingOrder = 22;
         }
 
-        private Sprite GetUnitCounterSprite(Alliance alliance)
+        private NatoUnitSymbol GetDivisionNatoSymbol(Division division)
         {
-            var key = alliance.ToString();
+            return ModuleSingleton.Instance.ActiveModule.DivisionTemplates
+                .FirstOrDefault(template => template.DivisionTemplateId == division.DivisionTemplateId)
+                ?.NatoSymbol ?? NatoUnitSymbol.Unspecified;
+        }
+
+        private Sprite GetUnitCounterSprite(Alliance alliance, NatoUnitSymbol symbol)
+        {
+            var key = $"{alliance}:{symbol}";
             if (unitCounterSpritesByKey.TryGetValue(key, out var sprite))
                 return sprite;
 
-            var texture = CreateUnitCounterTexture(alliance);
+            var texture = CreateUnitCounterTexture(alliance, symbol);
             sprite = Sprite.Create(
                 texture,
                 new Rect(0, 0, UnitCounterPixelWidth, UnitCounterPixelHeight),
@@ -1573,7 +3030,7 @@ namespace Engine.Monobehaviours.Managers
             return sprite;
         }
 
-        private Texture2D CreateUnitCounterTexture(Alliance alliance)
+        private Texture2D CreateUnitCounterTexture(Alliance alliance, NatoUnitSymbol symbol)
         {
             var pixels = new Color[UnitCounterPixelWidth * UnitCounterPixelHeight];
             var fill = Blend(GetControlColor(alliance), new Color(0.12f, 0.13f, 0.15f), 0.34f);
@@ -1590,12 +3047,77 @@ namespace Engine.Monobehaviours.Managers
                 }
             }
 
+            DrawNatoSymbol(pixels, symbol, Color.white);
+
             var texture = new Texture2D(UnitCounterPixelWidth, UnitCounterPixelHeight);
             texture.filterMode = FilterMode.Point;
             texture.wrapMode = TextureWrapMode.Clamp;
             texture.SetPixels(pixels);
             texture.Apply();
             return texture;
+        }
+
+        private static void DrawNatoSymbol(Color[] pixels, NatoUnitSymbol symbol, Color color)
+        {
+            void Set(int x, int y)
+            {
+                if (x >= 2 && x < UnitCounterPixelWidth - 2
+                    && y >= 2 && y < UnitCounterPixelHeight - 4)
+                    pixels[y * UnitCounterPixelWidth + x] = color;
+            }
+
+            void Line(int x0, int y0, int x1, int y1)
+            {
+                var steps = Math.Max(Math.Abs(x1 - x0), Math.Abs(y1 - y0));
+                for (var index = 0; index <= steps; index++)
+                {
+                    var t = steps == 0 ? 0f : index / (float)steps;
+                    Set(Mathf.RoundToInt(Mathf.Lerp(x0, x1, t)), Mathf.RoundToInt(Mathf.Lerp(y0, y1, t)));
+                }
+            }
+
+            if (symbol == NatoUnitSymbol.Infantry
+                || symbol == NatoUnitSymbol.MechanizedInfantry
+                || symbol == NatoUnitSymbol.MotorizedInfantry
+                || symbol == NatoUnitSymbol.Airborne)
+            {
+                Line(7, 4, 22, 14);
+                Line(22, 4, 7, 14);
+            }
+            if (symbol == NatoUnitSymbol.Armor || symbol == NatoUnitSymbol.MechanizedInfantry)
+            {
+                for (var angle = 0; angle < 360; angle += 12)
+                {
+                    var radians = angle * Mathf.Deg2Rad;
+                    Set(
+                        Mathf.RoundToInt(15 + Mathf.Cos(radians) * 8),
+                        Mathf.RoundToInt(9 + Mathf.Sin(radians) * 5));
+                }
+            }
+            if (symbol == NatoUnitSymbol.Artillery)
+            {
+                Set(15, 9);
+                for (var radius = 1; radius <= 5; radius++)
+                {
+                    Set(15 + radius, 9);
+                    Set(15 - radius, 9);
+                    Set(15, 9 + radius);
+                    Set(15, 9 - radius);
+                }
+            }
+            if (symbol == NatoUnitSymbol.AirDefense)
+            {
+                for (var x = 7; x <= 22; x++)
+                {
+                    var t = (x - 7) / 15f;
+                    Set(x, Mathf.RoundToInt(5 + Mathf.Sin(t * Mathf.PI) * 9));
+                }
+            }
+            if (symbol == NatoUnitSymbol.Unspecified || symbol == NatoUnitSymbol.Headquarters)
+            {
+                Line(8, 9, 22, 9);
+                Line(15, 4, 15, 14);
+            }
         }
 
         private void CreateMovementArrows()
@@ -1629,10 +3151,109 @@ namespace Engine.Monobehaviours.Managers
             }
         }
 
+        private void RefreshOrdnanceOverlay()
+        {
+            ClearOrdnanceOverlay();
+            if (ordnanceOverlayRoot == null
+                || overlayOrdnanceToggle == null
+                || !overlayOrdnanceToggle.value
+                || gameManager == null)
+                return;
+
+            var from = gameManager.LastTurnStartedAt;
+            var to = gameManager.LastTurnCompletedAt;
+            var records = gameManager.GetOrdnanceEmploymentRecords()
+                .Where(record => record.Stage == OrdnanceEmploymentRecordStage.OrdnanceReleased
+                                 && (to <= from || record.OccurredAt > from && record.OccurredAt <= to))
+                .ToList();
+            foreach (var record in records)
+            {
+                var source = AirPositionToMapPosition(record.SourcePositionFeet);
+                var target = AirPositionToMapPosition(record.TargetPositionFeet);
+                if (Vector3.Distance(source, target) <= 0.01f)
+                    continue;
+                var color = record.SourceKind == OrdnanceEmploymentSourceKind.SamLauncher
+                    ? new Color(1f, 0.62f, 0.16f)
+                    : new Color(1f, 0.86f, 0.24f);
+                var lineObject = new GameObject($"Ordnance Pass {ShortId(record.EmploymentPassId)}");
+                lineObject.transform.SetParent(ordnanceOverlayRoot, false);
+                var line = lineObject.AddComponent<LineRenderer>();
+                line.useWorldSpace = false;
+                line.positionCount = 2;
+                line.SetPositions(new[]
+                {
+                    source + new Vector3(0f, 0f, -0.50f),
+                    target + new Vector3(0f, 0f, -0.50f)
+                });
+                line.startWidth = 0.045f;
+                line.endWidth = 0.018f;
+                line.material = GetMovementArrowMaterial();
+                line.startColor = color;
+                line.endColor = new Color(color.r, color.g, color.b, 0.35f);
+                line.sortingOrder = 45;
+                CreateOrdnanceEndpoint(source, color, "Shooter");
+                CreateOrdnanceEndpoint(target, new Color(1f, 0.30f, 0.22f), "Target");
+            }
+        }
+
+        private void CreateOrdnanceEndpoint(Vector3 position, Color color, string name)
+        {
+            var endpoint = new GameObject($"Ordnance {name}");
+            endpoint.transform.SetParent(ordnanceOverlayRoot, false);
+            endpoint.transform.localPosition = position;
+            var line = endpoint.AddComponent<LineRenderer>();
+            line.useWorldSpace = false;
+            line.loop = true;
+            line.positionCount = 12;
+            var points = new Vector3[12];
+            for (var index = 0; index < points.Length; index++)
+            {
+                var angle = index / (float)points.Length * Mathf.PI * 2f;
+                points[index] = new Vector3(Mathf.Cos(angle) * 0.14f, Mathf.Sin(angle) * 0.14f, -0.51f);
+            }
+            line.SetPositions(points);
+            line.startWidth = 0.035f;
+            line.endWidth = 0.035f;
+            line.material = GetMovementArrowMaterial();
+            line.startColor = color;
+            line.endColor = color;
+            line.sortingOrder = 46;
+        }
+
         private void CreateAirInspection()
         {
+            if (airInspectionRoot == null)
+                return;
+
+            if (inspectedPackageId != Guid.Empty)
+            {
+                var packageInspection = new[] { Alliance.Bluefor, Alliance.Redfor }
+                    .Select(alliance => gameManager.GetAllianceAirTaskingCommander(alliance))
+                    .Where(commander => commander != null)
+                    .SelectMany(commander => commander.Packages)
+                    .FirstOrDefault(candidate => candidate.PackageId == inspectedPackageId);
+                if (packageInspection == null)
+                    return;
+                foreach (var packageFlight in packageInspection.Flights)
+                {
+                    var points = new List<Vector3>();
+                    if (packageFlight.HasPosition)
+                        points.Add(AirPositionToMapPosition(packageFlight.PositionFeet));
+                    points.AddRange(packageFlight.Route
+                        .Skip(Mathf.Clamp(packageFlight.CurrentWaypointIndex, 0, packageFlight.Route.Count))
+                        .Select(waypoint => AirPositionToMapPosition(waypoint.PositionFeet)));
+                    if (points.Count >= 2)
+                        CreateInspectionPolyline(
+                            $"Package Flight {ShortId(packageFlight.FlightId)}",
+                            points,
+                            Color.Lerp(GetAirAllianceColor(packageInspection.Alliance), Color.white, 0.18f),
+                            0.065f,
+                            36);
+                }
+                return;
+            }
+
             if (inspectedFlightId == Guid.Empty
-                || airInspectionRoot == null
                 || !TryFindFlight(inspectedFlightId, out var flight, out var package, out var commander))
                 return;
 
@@ -1798,6 +3419,14 @@ namespace Engine.Monobehaviours.Managers
             if (points.Count == 0)
                 return;
 
+            FrameMapPoints(points);
+        }
+
+        private void FrameMapPoints(IReadOnlyList<Vector3> points)
+        {
+            if (points == null || points.Count == 0 || sceneCamera == null)
+                return;
+
             var minX = points.Min(point => point.x);
             var maxX = points.Max(point => point.x);
             var minY = points.Min(point => point.y);
@@ -1853,18 +3482,30 @@ namespace Engine.Monobehaviours.Managers
         {
             var markerObject = new GameObject($"Air Flight {ShortId(flight.FlightId)}");
             markerObject.transform.SetParent(airOverlayRoot, false);
-            markerObject.transform.localPosition = AirPositionToMapPosition(flight.PositionFeet);
+            var logicalPosition = AirPositionToMapPosition(flight.PositionFeet);
+            var overlapIndex = flightPickTargets.Count(target =>
+                Vector3.Distance(target.MapPosition, logicalPosition) < 0.08f);
+            var offsetAngle = overlapIndex * 137.5f * Mathf.Deg2Rad;
+            var offset = overlapIndex == 0
+                ? Vector3.zero
+                : new Vector3(Mathf.Cos(offsetAngle), Mathf.Sin(offsetAngle), 0f) * 0.10f;
+            markerObject.transform.localPosition = logicalPosition + offset;
+            flightPickTargets.Add(new FlightPickTarget(
+                flight.FlightId,
+                markerObject.transform.localPosition));
 
             var markerLine = markerObject.AddComponent<LineRenderer>();
             markerLine.useWorldSpace = false;
             markerLine.loop = true;
-            markerLine.positionCount = 4;
+            markerLine.positionCount = 3;
+            var heading = flight.HeadingDegrees * Mathf.Deg2Rad;
+            var forward = new Vector3(Mathf.Sin(heading), Mathf.Cos(heading), 0f);
+            var right = new Vector3(forward.y, -forward.x, 0f);
             markerLine.SetPositions(new[]
             {
-                new Vector3(0f, AirMarkerRadius, -0.34f),
-                new Vector3(AirMarkerRadius, 0f, -0.34f),
-                new Vector3(0f, -AirMarkerRadius, -0.34f),
-                new Vector3(-AirMarkerRadius, 0f, -0.34f)
+                forward * (AirMarkerRadius * 1.35f) + new Vector3(0f, 0f, -0.34f),
+                -forward * AirMarkerRadius + right * AirMarkerRadius + new Vector3(0f, 0f, -0.34f),
+                -forward * AirMarkerRadius - right * AirMarkerRadius + new Vector3(0f, 0f, -0.34f)
             });
             markerLine.startWidth = 0.055f;
             markerLine.endWidth = 0.055f;
@@ -2142,7 +3783,12 @@ namespace Engine.Monobehaviours.Managers
                 var attackerCenter = GetAverageAttackerCenter(combat);
                 var bubbleCenter = Vector3.Lerp(attackerCenter, defenderCenter, 0.5f) + new Vector3(0f, 0.18f, 0f);
                 var score = CalculateAttackerCombatScore(combat);
-                CreateCombatBubble(combat.DefendingTileId, bubbleCenter, score);
+                CreateCombatBubble(
+                    combat.DefendingTileId,
+                    bubbleCenter,
+                    score,
+                    combat.AttackingAlliance,
+                    combat.DefendingAlliance);
             }
         }
 
@@ -2205,14 +3851,20 @@ namespace Engine.Monobehaviours.Managers
             return total;
         }
 
-        private void CreateCombatBubble(Vector3Int defendingTileId, Vector3 hexCenter, int score)
+        private void CreateCombatBubble(
+            Vector3Int defendingTileId,
+            Vector3 hexCenter,
+            int score,
+            Alliance attackingAlliance,
+            Alliance defendingAlliance)
         {
+            combatPickTargets.Add(new CombatPickTarget(defendingTileId, hexCenter));
             var bubbleObject = new GameObject($"Combat Bubble {defendingTileId.x},{defendingTileId.y},{defendingTileId.z}");
             bubbleObject.transform.SetParent(combatBubbleRoot, false);
             bubbleObject.transform.position = grid.transform.TransformPoint(hexCenter) + new Vector3(0f, 0f, -0.35f);
 
             var renderer = bubbleObject.AddComponent<SpriteRenderer>();
-            renderer.sprite = GetCombatBubbleSprite(score);
+            renderer.sprite = GetCombatBubbleSprite(score, attackingAlliance, defendingAlliance);
             renderer.sortingOrder = 30;
 
             var textObject = new GameObject("Combat Bubble Label");
@@ -2232,28 +3884,36 @@ namespace Engine.Monobehaviours.Managers
             textRenderer.sortingOrder = 31;
         }
 
-        private Sprite GetCombatBubbleSprite(int score)
+        private Sprite GetCombatBubbleSprite(
+            int score,
+            Alliance attackingAlliance,
+            Alliance defendingAlliance)
         {
             score = Mathf.Clamp(score, 0, 100);
-            if (combatBubbleSpritesByScore.TryGetValue(score, out var sprite))
+            var key = $"{score}:{attackingAlliance}:{defendingAlliance}";
+            if (combatBubbleSpritesByScore.TryGetValue(key, out var sprite))
                 return sprite;
 
-            var texture = CreateCombatBubbleTexture(score);
+            var texture = CreateCombatBubbleTexture(score, attackingAlliance, defendingAlliance);
             sprite = Sprite.Create(
                 texture,
                 new Rect(0, 0, CombatBubblePixelSize, CombatBubblePixelSize),
                 new Vector2(0.5f, 0.5f),
                 CombatBubblePixelSize / CombatBubbleWorldWidth);
-            combatBubbleSpritesByScore[score] = sprite;
+            combatBubbleSpritesByScore[key] = sprite;
             return sprite;
         }
 
-        private static Texture2D CreateCombatBubbleTexture(int score)
+        private Texture2D CreateCombatBubbleTexture(
+            int score,
+            Alliance attackingAlliance,
+            Alliance defendingAlliance)
         {
             var pixels = new Color[CombatBubblePixelSize * CombatBubblePixelSize];
             var center = (CombatBubblePixelSize - 1) * 0.5f;
             var radius = center - 1f;
-            var fill = GetCombatScoreColor(score);
+            var attackerColor = GetControlColor(attackingAlliance);
+            var defenderColor = GetControlColor(defendingAlliance);
             var dark = new Color(0.04f, 0.04f, 0.05f);
             var highlight = new Color(1f, 1f, 1f, 0.35f);
 
@@ -2275,6 +3935,8 @@ namespace Engine.Monobehaviours.Managers
                         continue;
                     }
 
+                    var attackerShareBoundary = CombatBubblePixelSize * Mathf.Clamp01(score / 100f);
+                    var fill = x < attackerShareBoundary ? attackerColor : defenderColor;
                     var shade = y > center ? -0.08f : 0.05f;
                     pixels[index] = Blend(AdjustColor(fill, shade, 0f), dark, 0.12f);
                     if (distance < radius * 0.45f && y < center)
@@ -2328,8 +3990,77 @@ namespace Engine.Monobehaviours.Managers
             if (!cell.HasValue)
                 return;
 
-            selectedCell = cell.Value;
-            UpdateSelectedTileUi();
+            var screenPosition = mouse.position.ReadValue();
+            if (Vector2.Distance(screenPosition, lastPickScreenPosition) > 8f)
+            {
+                currentPickIndex = 0;
+                currentPickTargets.Clear();
+            }
+            lastPickScreenPosition = screenPosition;
+            var picks = BuildMapPickTargets(worldPosition, cell.Value);
+            if (!AreSamePickTargets(currentPickTargets, picks))
+            {
+                currentPickTargets.Clear();
+                currentPickTargets.AddRange(picks);
+                currentPickIndex = 0;
+            }
+            if (currentPickTargets.Count == 0)
+                return;
+
+            var pick = currentPickTargets[currentPickIndex % currentPickTargets.Count];
+            currentPickIndex = (currentPickIndex + 1) % currentPickTargets.Count;
+            switch (pick.Kind)
+            {
+                case MapPickKind.Flight:
+                    OpenFlightDetails(pick.FlightId);
+                    break;
+                case MapPickKind.Combat:
+                    var combat = gameManager.GetActiveGroundCombats()
+                        .FirstOrDefault(candidate => candidate.DefendingTileId == pick.TileId);
+                    if (combat != null)
+                        OpenCombatInspector(combat);
+                    break;
+                default:
+                    selectedCell = cell.Value;
+                    ShowWorkbenchPage(WorkbenchPage.Tile);
+                    UpdateSelectedTileUi();
+                    break;
+            }
+        }
+
+        private List<MapPickTarget> BuildMapPickTargets(Vector3 worldPosition, Vector3Int cell)
+        {
+            var result = flightPickTargets
+                .Where(target => Vector3.Distance(
+                    worldPosition,
+                    grid.transform.TransformPoint(target.MapPosition)) <= 0.24f)
+                .OrderBy(target => target.FlightId)
+                .Select(target => MapPickTarget.ForFlight(target.FlightId))
+                .ToList();
+            result.AddRange(combatPickTargets
+                .Where(target => Vector3.Distance(
+                    worldPosition,
+                    grid.transform.TransformPoint(target.MapPosition)) <= 0.28f)
+                .OrderBy(target => target.TileId.x)
+                .ThenBy(target => target.TileId.y)
+                .Select(target => MapPickTarget.ForCombat(target.TileId)));
+            if (tilesByCell.ContainsKey(cell))
+                result.Add(MapPickTarget.ForTile(tilesByCell[cell].Coordinates));
+            return result;
+        }
+
+        private static bool AreSamePickTargets(
+            IReadOnlyList<MapPickTarget> left,
+            IReadOnlyList<MapPickTarget> right)
+        {
+            if (left.Count != right.Count)
+                return false;
+            for (var index = 0; index < left.Count; index++)
+            {
+                if (!left[index].Equals(right[index]))
+                    return false;
+            }
+            return true;
         }
 
         private void TogglePause()
@@ -3045,6 +4776,129 @@ namespace Engine.Monobehaviours.Managers
 
             for (var i = airInspectionRoot.childCount - 1; i >= 0; i--)
                 Destroy(airInspectionRoot.GetChild(i).gameObject);
+        }
+
+        private void ClearOrdnanceOverlay()
+        {
+            if (ordnanceOverlayRoot == null)
+                return;
+
+            for (var i = ordnanceOverlayRoot.childCount - 1; i >= 0; i--)
+                Destroy(ordnanceOverlayRoot.GetChild(i).gameObject);
+        }
+
+        private sealed class PinnedInspector
+        {
+            public readonly VisualElement Window;
+            public readonly VisualElement Content;
+            public readonly Func<IEnumerable<string>> Lines;
+
+            public PinnedInspector(
+                VisualElement window,
+                VisualElement content,
+                Func<IEnumerable<string>> lines)
+            {
+                Window = window;
+                Content = content;
+                Lines = lines;
+            }
+        }
+
+        private readonly struct FlightPickTarget
+        {
+            public readonly Guid FlightId;
+            public readonly Vector3 MapPosition;
+
+            public FlightPickTarget(Guid flightId, Vector3 mapPosition)
+            {
+                FlightId = flightId;
+                MapPosition = mapPosition;
+            }
+        }
+
+        private readonly struct CombatPickTarget
+        {
+            public readonly Vector3Int TileId;
+            public readonly Vector3 MapPosition;
+
+            public CombatPickTarget(Vector3Int tileId, Vector3 mapPosition)
+            {
+                TileId = tileId;
+                MapPosition = mapPosition;
+            }
+        }
+
+        private enum MapPickKind
+        {
+            Flight,
+            Combat,
+            Tile
+        }
+
+        private readonly struct MapPickTarget : IEquatable<MapPickTarget>
+        {
+            public readonly MapPickKind Kind;
+            public readonly Guid FlightId;
+            public readonly Vector3Int TileId;
+
+            private MapPickTarget(MapPickKind kind, Guid flightId, Vector3Int tileId)
+            {
+                Kind = kind;
+                FlightId = flightId;
+                TileId = tileId;
+            }
+
+            public static MapPickTarget ForFlight(Guid flightId) =>
+                new MapPickTarget(MapPickKind.Flight, flightId, default);
+
+            public static MapPickTarget ForCombat(Vector3Int tileId) =>
+                new MapPickTarget(MapPickKind.Combat, Guid.Empty, tileId);
+
+            public static MapPickTarget ForTile(Vector3Int tileId) =>
+                new MapPickTarget(MapPickKind.Tile, Guid.Empty, tileId);
+
+            public bool Equals(MapPickTarget other) =>
+                Kind == other.Kind && FlightId == other.FlightId && TileId == other.TileId;
+        }
+
+        private readonly struct AirCoverageSummary
+        {
+            public readonly int TotalLand;
+            public readonly int FriendlyCovered;
+            public readonly int HostileCovered;
+            public readonly int Contested;
+
+            public AirCoverageSummary(
+                int totalLand,
+                int friendlyCovered,
+                int hostileCovered,
+                int contested)
+            {
+                TotalLand = totalLand;
+                FriendlyCovered = friendlyCovered;
+                HostileCovered = hostileCovered;
+                Contested = contested;
+            }
+        }
+
+        private readonly struct DiagnosticRow
+        {
+            public readonly DateTime RecordedAt;
+            public readonly string Severity;
+            public readonly string System;
+            public readonly string Text;
+
+            public DiagnosticRow(
+                DateTime recordedAt,
+                string severity,
+                string system,
+                string text)
+            {
+                RecordedAt = recordedAt;
+                Severity = severity;
+                System = system;
+                Text = text;
+            }
         }
 
         private readonly struct MovementArrowKey

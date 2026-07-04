@@ -16,6 +16,8 @@ namespace Models.Gameplay.Campaign
         private const float AdditionalRadarDiminishingFactor = 0.5f;
 
         [SerializeReference] public List<IADSTrack> Tracks = new List<IADSTrack>();
+        [SerializeReference] public List<IADSEngagementAssignment> EngagementAssignments =
+            new List<IADSEngagementAssignment>();
 
         private Dictionary<Guid, IADSTrack> tracksByFlightId;
 
@@ -33,6 +35,8 @@ namespace Models.Gameplay.Campaign
         }
 
         public IReadOnlyList<IADSTrack> CurrentTracks => Tracks;
+        public IReadOnlyList<IADSEngagementAssignment> CurrentEngagementAssignments =>
+            EngagementAssignments;
 
         public IADSTrack GetTrackForFlight(Guid flightId)
         {
@@ -142,6 +146,19 @@ namespace Models.Gameplay.Campaign
                 .Where(track => track != null && track.FlightId != Guid.Empty)
                 .GroupBy(track => track.FlightId)
                 .ToDictionary(group => group.Key, group => group.First());
+        }
+
+        public void ReplaceEngagementAssignments(
+            IEnumerable<IADSEngagementAssignment> assignments)
+        {
+            EngagementAssignments = assignments?
+                .Where(assignment => assignment != null
+                                     && assignment.SiteId != Guid.Empty
+                                     && assignment.TrackId != Guid.Empty
+                                     && assignment.TargetFlightId != Guid.Empty)
+                .OrderBy(assignment => assignment.SiteId)
+                .ThenBy(assignment => assignment.TargetFlightId)
+                .ToList();
         }
 
         private IEnumerable<RadarContribution> CalculateRadarContributions(

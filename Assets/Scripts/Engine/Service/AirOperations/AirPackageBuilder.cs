@@ -40,7 +40,7 @@ namespace Engine.Service
             this.gameManager = gameManager;
             this.projectedEffects = projectedEffects;
             this.priorityService = priorityService;
-            this.routeGeometryPlanner = routeGeometryPlanner;
+            this.routeGeometryPlanner = routeGeometryPlanner ?? new SeparatedIngressEgressRouteGeometryPlanner();
             aircraftTypes = module.AircraftTypeDefinitions
                 .ToDictionary(definition => definition.AircraftTypeDefinitionId);
             loadoutPlanner = new AirLoadoutPlanner(
@@ -239,6 +239,7 @@ namespace Engine.Service
                             aircraft.AircraftId,
                             selected.Loadout));
                 }
+
                 package.Flights.Add(flight);
             }
 
@@ -787,8 +788,8 @@ namespace Engine.Service
             IReadOnlyList<Vector3> ingressWaypoints,
             IReadOnlyList<Vector3> egressWaypoints)
         {
-            IngressWaypoints = ingressWaypoints;
-            EgressWaypoints = egressWaypoints;
+            IngressWaypoints = ingressWaypoints ?? Array.Empty<Vector3>();
+            EgressWaypoints = egressWaypoints ?? Array.Empty<Vector3>();
         }
     }
 
@@ -844,5 +845,4 @@ namespace Engine.Service
             return (parity & 1) == 0 ? 1f : -1f;
         }
     }
-
 }

@@ -46,6 +46,7 @@ namespace Models.Gameplay.Campaign
     {
         public int ReadyRounds;
         public int ReserveRounds;
+        public DateTime NextReloadAt;
 
         public LauncherAirDefenseComponent()
         {
@@ -63,6 +64,43 @@ namespace Models.Gameplay.Campaign
             base.Damage();
             ReadyRounds = 0;
             ReserveRounds = 0;
+        }
+
+        public bool TrySpendRound(
+            LauncherAirDefenseComponentDefinition definition,
+            DateTime occurredAt)
+        {
+            ReloadIfReady(definition, occurredAt);
+            if (IsDamaged || ReadyRounds <= 0)
+                return false;
+
+            ReadyRounds--;
+            if (ReadyRounds < definition.ReadyRoundCapacity
+                && ReserveRounds > 0
+                && NextReloadAt == default)
+            {
+                NextReloadAt = occurredAt.AddMinutes(definition.ReloadMinutes);
+            }
+            return true;
+        }
+
+        public void ReloadIfReady(
+            LauncherAirDefenseComponentDefinition definition,
+            DateTime occurredAt)
+        {
+            if (IsDamaged
+                || ReserveRounds <= 0
+                || ReadyRounds >= definition.ReadyRoundCapacity
+                || NextReloadAt == default
+                || occurredAt < NextReloadAt)
+                return;
+
+            ReadyRounds++;
+            ReserveRounds--;
+            NextReloadAt = ReadyRounds < definition.ReadyRoundCapacity
+                           && ReserveRounds > 0
+                ? occurredAt.AddMinutes(definition.ReloadMinutes)
+                : default;
         }
     }
 

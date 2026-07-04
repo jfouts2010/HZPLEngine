@@ -98,6 +98,8 @@ Core engine rules stay the same across Modules. A less-capable SAM in one Module
 
 **Division template** — the authored full-strength structure of a division: a module-country-scoped collection of battalion definition references and counts. In v1, division templates are Module catalog items; future campaign templates may allow custom division templates for campaign-specific force structures.
 
+Each division template also authors its NATO unit symbol classification for operational-map display. The UI renders this explicit module metadata and does not infer infantry, armor, mechanized, or other symbology from names or combat statistics.
+
 **Division** — the movable ground formation represented on the campaign map during play. A division follows a division template and carries its full-strength combat capability during runtime play.
 
 At full strength, a division's additive combat stats are derived from the sum of its battalion definitions multiplied by their counts. Division speed is the minimum speed among its battalion definitions, and division softness is a strength-weighted average of battalion softness values.
@@ -196,17 +198,39 @@ _Avoid_: adding air wings before a rule or authoring workflow needs an organizat
 
 One aircraft type may provide multiple air mission capabilities. Capability does not permanently assign an aircraft type to a mission role; the air planner evaluates suitability for the current request and situation.
 
+**Aircraft employment efficiency** — an aircraft type's authored modifier to the time cost of employing compatible ordnance or ordnance profiles. It represents aircraft, sensor, cockpit, and crew-workload advantages in using certain stores without turning those advantages into fixed mission-role labels.
+
 In v1, AWACS and tanker aircraft are dedicated support aircraft: an AWACS-capable aircraft fulfills airborne-C2 requests, a tanker-capable aircraft fulfills aerial-refueling requests, and combat aircraft do not substitute for either capability.
 
 _Avoid_: fixed DCA, OCA, or DEAD aircraft-role labels when suitability can be derived from capabilities and loadout.
 
 ### Ordnance
 
-**Ordnance type** — reusable authored identity data for one weapon or store in a Module catalog, such as AIM-120, GBU-38, or AGM-88. Ordnance types are mappable entities when the target simulator needs explicit loadout or store IDs. Module authors define each store's **ordnance weight** and how effective it is against each **ordnance target category**.
+**Ordnance type** — reusable authored identity data for one munition or store in a Module catalog, such as AIM-120, GBU-38, AGM-88, or a SAM interceptor. Its employment category and platform compatibility distinguish aircraft-carried ordnance from surface-to-air ordnance while allowing both to share envelope, guidance, hit-probability, travel, and effect language. Ordnance types are mappable entities when the target simulator needs explicit loadout or munition IDs.
 
 **Ordnance weight** — the capacity cost of one store on an aircraft loadout. Mixed loadouts are valid when the sum of carried ordnance weights is within the aircraft type's **ordnance capacity**.
 
 **Ordnance effect power** — the coarse campaign effect strength of one store. Effect power is the v1 stat used to decide whether ordnance can meaningfully affect a target's toughness. It may correlate with warhead size or explosive power, but it is an authored campaign abstraction rather than exact physics.
+
+**Ordnance hit probability** — the authored base chance, expressed from 0 to 1, that one released store impacts its selected target. Employment conditions may modify that probability before release; release snapshots the final probability into the pending effect, after which later movement or state changes do not recalculate it. In v1, an air-to-air or surface-to-air hit destroys its selected aircraft, while an air-to-ground hit is interpreted through ordnance effect power and target toughness. V1 ordnance types use a base hit probability of 1.
+
+**Ordnance employment envelope** — the authored base firing or release limits of an ordnance type, such as range, altitude, and target-geometry constraints. Live employment may modify that base envelope from tactical conditions such as shooter speed, shooter altitude, track quality, guidance support, or target aspect.
+
+**Ordnance employment suitability** — how appropriate an available ordnance type is for the live target and engagement geometry after its employment envelope is evaluated. A flight selects one suitable ordnance type for an employment pass rather than treating every carried air-to-air missile as interchangeable; when both are suitable at close range, an infrared missile is preferred so active-radar missiles are retained for beyond-visual-range engagements.
+
+**Ordnance guidance mode** — a subordinate authored classification within an ordnance employment category that states what guidance or support a store uses. GPS-guided and laser-guided stores therefore remain precision air-to-ground ordnance while retaining distinct employment requirements. V1 validates required guidance support at release and incorporates it into the snapshotted hit probability; support is not tracked after release.
+
+**Ordnance preparation time** — the campaign time normally consumed before a flight releases or fires an ordnance type during one employment pass. Employing additional stores of the same ordnance type in the same pass does not normally add more preparation time; changing ordnance type, target set, guidance mode, or attack geometry usually requires a separate pass. A pass still in preparation may be altered or aborted if the aircraft loadout source is lost or the target set becomes invalid.
+
+**Ordnance effect speed** — the authored abstract rate at which a released ordnance closes the release distance to its target for delayed effect resolution. It determines timing without making the ordnance a moving campaign entity.
+
+**Ordnance effect travel time** — the campaign time between ordnance release and effect resolution, calculated once from release distance divided by the ordnance type's effect speed. Later target or shooter movement does not alter the scheduled resolution time. Once ordnance is released, the employment can no longer be cancelled by later aircraft loss or retargeting; the released ordnance becomes a pending effect that resolves against the locked target set after its effect travel time. In v1, every released radar-guided missile resolves independently of later shooter loss or ongoing guidance support; support-dependent radar guidance may become a distinct future rule.
+
+**Pending ordnance effect** — a released ordnance employment awaiting its effect-resolution time. It retains the locked ordnance type, released quantity, target set, and release context independently of its firing source, so later source loss or mission changes do not cancel it. For air-to-air and surface-to-air employment, each missile targets and continues toward the hostile flight rather than a specific member aircraft. The missile remains effective while that flight exists and has at least one surviving aircraft; it does not disappear merely because an aircraft that was present at launch is destroyed. At impact, each missile independently tests its ordnance hit probability against a distinct surviving member aircraft; in v1, each hit destroys its selected aircraft and each miss has no effect. Excess missiles become ineffective once the targeted flight has no surviving aircraft.
+
+**Employment pass** — one continuous ordnance-use action by a flight, such as a missile launch cycle, bomb release pass, rocket pass, or guided-weapon attack. An employment pass may span simulation ticks; unfinished preparation time carries into later ticks and reduces the time available for later employment passes. Once started, the pass keeps its selected ordnance profile, target set, and aircraft loadout source until it releases ordnance or aborts because the target set is no longer valid. During preparation, a lost or invalid aircraft loadout source may be replaced by another live aircraft in the same flight carrying the same selected ordnance; if the originally selected quantity is no longer available, the pass continues with the remaining available quantity so long as at least one store can still be released. Aircraft ordnance is spent when the pass releases ordnance after preparation, not when it starts. After release, effect travel time does not block the flight from starting another employment pass. In v1, employment envelope validation happens when the pass starts; later route movement does not invalidate the pass merely because the flight has moved outside the starting envelope.
+
+**Ordnance employment record** — a typed campaign record for one explainable stage of employment: preparation started, ordnance released, or effect resolved. All three stages are retained for timelines and debugging; ordinary player-facing presentation emphasizes releases and resolved effects rather than every preparation start.
 
 **Ordnance capacity** — the maximum total ordnance weight an aircraft type may carry. Aircraft type definitions own ordnance capacity and a compatible ordnance allow-list. A store may be loaded only if it is on that aircraft type's allow-list and the loadout stays within ordnance capacity.
 
@@ -281,7 +305,7 @@ The preferred v1 air-to-air loadout split is two radar-guided air-to-air shots a
 
 The game should only create sorties whose required loadout can fit the assigned aircraft. Detailed policy for resolving capacity conflicts between primary ordnance and self-defense ordnance is deferred until sortie generation is designed.
 
-**Sortie target desired hits** — the expected number of successful weapon effects needed against a sortie target. V1 sortie planning may provide desired hits directly per target, usually one for simple point targets such as a tank, radar, or building and more for broad or durable targets such as an airfield runway. Loadout planning treats one desired hit as one planned weapon launch, then applies the primary ordnance reserve to cover misses without modeling hit probability.
+**Sortie target desired hits** — the expected number of successful weapon effects needed against a sortie target. V1 sortie planning may provide desired hits directly per target, usually one for simple point targets such as a tank, radar, or building and more for broad or durable targets such as an airfield runway. Loadout planning treats one desired hit as one planned weapon launch, then applies the primary ordnance reserve to cover misses without modeling hit probability. Until dedicated air-to-ground employment profiles are designed, generic execution may provisionally map one remaining desired hit to one released store; that mapping is not the future air-to-ground doctrine.
 
 **Target toughness** — a coarse rating of how hard a target is to meaningfully damage or destroy within its target category. Toughness lets the planner distinguish a tent from a hardened bunker without expanding **ordnance target category** into many narrow target types. Ordnance effect power must satisfy the target's toughness before weight efficiency is considered.
 
@@ -553,6 +577,8 @@ Every simulation tick, lightweight planning updates projected effects, detects u
 
 Air **execution** (sortie movement, IADS refresh, engagement assignment, SAM launch resolution, and air-to-ground effects) also runs every simulation tick. Tick-level adjustments may scrub or retask pre-takeoff committed sorties in response to new threats or invalid plans. Active sorties are not cancelled, retasked, or rerouted by the air-planning layer.
 
+**Combat event ordering** — the chronological resolution of ordnance preparation completions, releases, and pending effects at their exact campaign timestamps within a simulation tick. Events sharing a timestamp are validated as one batch before their outcomes are applied in deterministic order, so one simultaneous outcome cannot retroactively prevent another valid release or impact.
+
 _Avoid_: full theater-wide air replanning every simulation tick.
 
 ### Committed sortie
@@ -569,6 +595,14 @@ _Avoid_: using an operational replan to change an airborne sortie's assigned mis
 
 **Execution-level tasking** — a bounded decision made by an active flight's own mission behavior within its already-authorized mission intent, such as a DCA flight intercepting inside its patrol area or an on-call CAS flight receiving a target. It may replace only the unflown mission segment and materializes the amendment into the authoritative route; it is not an air-planning retask.
 
+**Air-to-air engagement posture** — the active mission's rule for when a flight may spend air-to-air ordnance against hostile aircraft. Strike and other non-air-combat flights continue self-defense passes while a **hot threat** remains, then resume their primary mission when no hot threat remains or no suitable air-to-air ordnance is available. Defensive counter-air flights engage hostile aircraft inside their defended airspace. Offensive counter-air flights actively hunt hostile aircraft during ingress and while operating in their assigned mission area, then revert to self-defense during egress.
+
+**Hot threat** — a hostile flight inside the evaluating flight's live air-to-air employment envelope and flying toward it within ±30 degrees. A hostile flight with a pending ordnance effect targeting the evaluating flight remains a threat regardless of its later range or aspect.
+
+**Air threat priority** — the relative danger of hot threats, ranked from their range and aspect: a closer and more directly nose-on hostile is more dangerous, while a farther or less directly approaching hostile is less dangerous. Cold hostile flights are not threats; a hostile with ordnance already pending against the evaluating flight takes priority over geometry-only threats.
+
+**OCA target priority** — the order in which an offensive counter-air flight selects eligible hostile flights during its hunting posture. Hot threats take priority; otherwise the nearest eligible hostile is selected, with the larger hostile flight breaking equal-range ties.
+
 **Recovery diversion** — an execution-level change to an airborne flight's return and landing destination when its assigned recovery airport is no longer friendly. The flight applies the recovery-airport fallback hierarchy without changing its locked mission or target; because range is ignored initially, any valid alternate is reachable.
 
 ### Sortie
@@ -582,6 +616,10 @@ A **flight** is a persistent air-planning formation containing one or more campa
 Every flight draws its aircraft from exactly one squadron and therefore has one aircraft type and one operating base. A package may coordinate flights from multiple squadrons and bases.
 
 During aggregate campaign execution, the flight owns the authoritative airspace position, velocity, and route progress shared by its member aircraft. Member aircraft retain their individual identity, condition, loadout, and sortie outcome without independently maneuvering inside the formation.
+
+**Flight-level ordnance employment** is the aggregate combat abstraction where a flight chooses and resolves shots as one formation because all member aircraft share aircraft type, mission context, and campaign position. Individual campaign aircraft still own the carried ordnance counts; flight-level employment selects which aircraft loadout spends a store without modeling separate lead/wingman geometry.
+
+In v1, a flight may have only one active employment pass at a time. Air-to-air employment passes target one hostile flight and plan at most one missile per surviving target aircraft, bounded by the compatible missiles available across the firing flight. Future rules may allow simultaneous employment passes when per-aircraft independence or multi-channel attacks become worth the added complexity.
 
 Each flight belongs to exactly one owning package. A supporting flight may additionally be referenced by other packages that use its service, but those references do not give the flight multiple owning packages.
 
@@ -963,13 +1001,13 @@ A SAM site template carries a SAM site host constraint rather than belonging to 
 
 ### SAM launcher component
 
-A SAM launcher component is a SAM component definition that contributes shooter capability and includes its interceptor behavior directly: engagement envelope, ready rounds, reload behavior, salvo or launch rate behavior, and guidance dependency.
+A SAM launcher component is a SAM component definition that contributes shooter capability for compatible surface-to-air ordnance types. The ordnance type owns base interceptor behavior such as its employment envelope, guidance mode, hit probability, effect speed, and effect power; the launcher owns ready rounds, reload behavior, salvo or launch rate behavior, channels, and launcher-specific modifiers. V1 configures one surface-to-air ordnance type and one ammo pool per launcher while preserving the compatibility boundary for future mixed-interceptor loads.
 
-Launcher ammo is tracked at the launcher component level as abstract ready and remaining counts rather than individual missile objects. Reload delay, reload rate, and simultaneous shot or channel limits may be modeled as component capability when needed.
+Launcher ammo is tracked at the launcher component level as abstract ready and remaining ordnance counts rather than individual missile objects. Reload delay, reload rate, and simultaneous shot or channel limits may be modeled as component capability when needed.
 
-SAM-launched missiles are not ordinary aircraft ordnance, and in the first model they do not need a separate interceptor catalog definition. Split interceptor definitions out later only if runtime logistics, shared missile stocks, or cross-launcher reuse make that extra catalog layer necessary.
+SAM-launched missiles are surface-to-air ordnance types, not aircraft-compatible stores. Their shared ordnance identity allows SAM launches and aircraft employment to create the same kind of pending ordnance effect without sharing loadout or launcher-ammo ownership.
 
-_Avoid_: modeling SAM missiles as aircraft ordnance when they are consumed by SAM launch execution rather than aircraft loadout planning.
+_Avoid_: making surface-to-air ordnance compatible with aircraft loadouts merely because both use the shared ordnance catalog.
 
 ### Campaign SAM site template allowance
 
@@ -1097,6 +1135,8 @@ Weapon-quality for shot is one input to SAM launch authorization, not the whole 
 SAM launch execution is the resolution of assigned SAM engagements after sortie movement has updated target positions. It validates whether assigned sites can still fire and resolves launch outcomes without choosing engagements itself.
 
 SAM launch execution happens once per simulation tick after all live sorties have moved for that tick, so all launch decisions use the same updated air picture.
+
+SAM launches do not use the aircraft employment-pass preparation phase. IADS assignment and launch authorization provide the SAM preparation boundary; an authorized launcher spends its surface-to-air ordnance during SAM launch execution and creates a pending ordnance effect. Launcher reload, launch-rate, and channel limits govern later launches.
 
 Within a tick, sortie movement updates aircraft positions first, the alliance IADS ages existing tracks and applies radar contributions second, IADS engagement assignment refresh runs third, and SAM launch execution resolves assigned shots fourth.
 

@@ -32,6 +32,7 @@ namespace Models.Module
         public AirSupportCapability SupportCapability { get; }
         public int SupportSlotCapacity { get; }
         public bool CanReceiveAerialRefueling { get; }
+        public float OrdnanceEmploymentEfficiency { get; }
 
         public AircraftTypeDefinition(
             Guid aircraftTypeDefinitionId,
@@ -53,10 +54,12 @@ namespace Models.Module
             string thirdPartyId = "",
             AirSupportCapability supportCapability = AirSupportCapability.None,
             int supportSlotCapacity = 0,
-            bool canReceiveAerialRefueling = false)
+            bool canReceiveAerialRefueling = false,
+            float ordnanceEmploymentEfficiency = 1f)
         {
             if (aircraftTypeDefinitionId == Guid.Empty)
-                throw new ArgumentException("Aircraft type definition id is required.", nameof(aircraftTypeDefinitionId));
+                throw new ArgumentException("Aircraft type definition id is required.",
+                    nameof(aircraftTypeDefinitionId));
 
             AircraftTypeDefinitionId = aircraftTypeDefinitionId;
             Name = string.IsNullOrWhiteSpace(name) ? aircraftTypeDefinitionId.ToString() : name.Trim();
@@ -74,12 +77,13 @@ namespace Models.Module
             EcmQuality = ecmQuality;
             Survivability = survivability;
             OrdnanceCapacity = Math.Max(0f, ordnanceCapacity);
-            CompatibleOrdnanceTypeDefinitionIds = compatibleOrdnanceTypeDefinitionIds;
+            CompatibleOrdnanceTypeDefinitionIds = compatibleOrdnanceTypeDefinitionIds ?? new List<Guid>();
             SupportCapability = supportCapability;
             SupportSlotCapacity = supportCapability == AirSupportCapability.None
                 ? 0
                 : Math.Max(0, supportSlotCapacity);
             CanReceiveAerialRefueling = canReceiveAerialRefueling;
+            OrdnanceEmploymentEfficiency = Math.Max(0.01f, ordnanceEmploymentEfficiency);
         }
     }
 }

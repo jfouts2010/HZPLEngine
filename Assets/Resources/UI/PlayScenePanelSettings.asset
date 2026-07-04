@@ -12,7 +12,7 @@ MonoBehaviour:
   m_Script: {fileID: 19101, guid: 0000000000000000e000000000000000, type: 0}
   m_Name: PlayScenePanelSettings
   m_EditorClassIdentifier:
-  themeUss: {fileID: 0}
+  themeUss: {fileID: -4733365628477956816, guid: 91d0e6a1f3c448c8a0f7b65b92a3c214, type: 3}
   m_TargetTexture: {fileID: 0}
   m_RenderMode: 0
   m_WorldSpaceLayer: 0
@@ -22,7 +22,7 @@ MonoBehaviour:
   m_Scale: 1
   m_ReferenceDpi: 96
   m_FallbackDpi: 96
-  m_ReferenceResolution: {x: 1200, y: 800}
+  m_ReferenceResolution: {x: 1920, y: 1080}
   m_ScreenMatchMode: 0
   m_Match: 0
   m_SortingOrder: 0

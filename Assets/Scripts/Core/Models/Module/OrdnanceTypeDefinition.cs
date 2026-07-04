@@ -10,7 +10,19 @@ namespace Models.Module
         AirToAirInfrared = 2,
         AntiRadiation = 3,
         AirToGroundPrecision = 4,
-        AirToGroundUnguided = 5
+        AirToGroundUnguided = 5,
+        SurfaceToAir = 6
+    }
+
+    public enum OrdnanceGuidanceMode
+    {
+        None = 0,
+        Infrared = 1,
+        Radar = 2,
+        Gps = 3,
+        Laser = 4,
+        Imaging = 5,
+        AntiRadiation = 6
     }
 
     public sealed class OrdnanceTypeDefinition
@@ -21,6 +33,14 @@ namespace Models.Module
         public float Weight { get; }
         public int EffectPower { get; }
         public OrdnanceEmploymentCategory EmploymentCategory { get; }
+        public OrdnanceGuidanceMode GuidanceMode { get; }
+        public float MinimumRangeKm { get; }
+        public float MaximumRangeKm { get; }
+        public float MinimumTargetAltitudeFeet { get; }
+        public float MaximumTargetAltitudeFeet { get; }
+        public float PreparationSeconds { get; }
+        public float EffectSpeedKnots { get; }
+        public float HitProbability { get; }
         public Dictionary<OrdnanceTargetCategory, float> EffectivenessByTargetCategory { get; }
 
         public OrdnanceTypeDefinition(
@@ -30,7 +50,15 @@ namespace Models.Module
             int effectPower,
             Dictionary<OrdnanceTargetCategory, float> effectivenessByTargetCategory = null,
             OrdnanceEmploymentCategory employmentCategory = OrdnanceEmploymentCategory.None,
-            string thirdPartyId = "")
+            string thirdPartyId = "",
+            OrdnanceGuidanceMode guidanceMode = OrdnanceGuidanceMode.None,
+            float minimumRangeKm = 0f,
+            float maximumRangeKm = 0f,
+            float minimumTargetAltitudeFeet = 0f,
+            float maximumTargetAltitudeFeet = float.MaxValue,
+            float preparationSeconds = 0f,
+            float effectSpeedKnots = 1f,
+            float hitProbability = 1f)
         {
             if (ordnanceTypeDefinitionId == Guid.Empty)
                 throw new ArgumentException("Ordnance type definition id is required.", nameof(ordnanceTypeDefinitionId));
@@ -41,6 +69,16 @@ namespace Models.Module
             Weight = Math.Max(0f, weight);
             EffectPower = Math.Max(0, effectPower);
             EmploymentCategory = employmentCategory;
+            GuidanceMode = guidanceMode;
+            MinimumRangeKm = Math.Max(0f, minimumRangeKm);
+            MaximumRangeKm = Math.Max(MinimumRangeKm, maximumRangeKm);
+            MinimumTargetAltitudeFeet = Math.Max(0f, minimumTargetAltitudeFeet);
+            MaximumTargetAltitudeFeet = Math.Max(
+                MinimumTargetAltitudeFeet,
+                maximumTargetAltitudeFeet);
+            PreparationSeconds = Math.Max(0f, preparationSeconds);
+            EffectSpeedKnots = Math.Max(1f, effectSpeedKnots);
+            HitProbability = Math.Max(0f, Math.Min(1f, hitProbability));
             EffectivenessByTargetCategory = ClampEffectiveness(effectivenessByTargetCategory);
         }
 

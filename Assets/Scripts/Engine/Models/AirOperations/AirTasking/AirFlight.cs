@@ -110,6 +110,7 @@ namespace Models.Gameplay.Campaign
         private bool hasPosition;
         private Vector3 positionFeet;
         private float headingDegrees;
+        private float speedKnots;
         private bool isWaitingAtRendezvous;
         private bool missionAchieved;
         private List<FlightExecutionEvent> executionEvents =
@@ -132,6 +133,7 @@ namespace Models.Gameplay.Campaign
         public bool HasPosition => hasPosition;
         public Vector3 PositionFeet => positionFeet;
         public float HeadingDegrees => headingDegrees;
+        public float SpeedKnots => speedKnots;
         public bool IsWaitingAtRendezvous => isWaitingAtRendezvous;
         public bool MissionAchieved => missionAchieved;
         public DateTime PlannedTakeoffTime =>
@@ -273,7 +275,10 @@ namespace Models.Gameplay.Campaign
             return true;
         }
 
-        public void UpdateKinematics(Vector3 position, float heading)
+        public void UpdateKinematics(
+            Vector3 position,
+            float heading,
+            float currentSpeedKnots = -1f)
         {
             if (!IsAirborne)
                 throw new InvalidOperationException(
@@ -281,6 +286,8 @@ namespace Models.Gameplay.Campaign
 
             positionFeet = position;
             headingDegrees = heading;
+            if (currentSpeedKnots >= 0f)
+                speedKnots = currentSpeedKnots;
             hasPosition = true;
         }
 

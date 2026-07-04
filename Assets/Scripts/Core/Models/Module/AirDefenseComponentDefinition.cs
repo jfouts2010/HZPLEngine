@@ -63,6 +63,7 @@ namespace Models.Module
         public int ReadyRoundCapacity { get; }
         public int ReserveRoundCapacity { get; }
         public float ReloadMinutes { get; }
+        public Guid SurfaceToAirOrdnanceTypeDefinitionId { get; }
 
         public LauncherAirDefenseComponentDefinition(
             Guid samComponentDefinitionId,
@@ -76,7 +77,8 @@ namespace Models.Module
             int readyRoundCapacity,
             int reserveRoundCapacity,
             float reloadMinutes,
-            string thirdPartyId = "")
+            string thirdPartyId = "",
+            Guid surfaceToAirOrdnanceTypeDefinitionId = default)
             : base(samComponentDefinitionId, name, targetCategory, targetToughness, thirdPartyId)
         {
             MinEngagementRangeKm = Math.Max(0f, minEngagementRangeKm);
@@ -86,6 +88,7 @@ namespace Models.Module
             ReadyRoundCapacity = Math.Max(0, readyRoundCapacity);
             ReserveRoundCapacity = Math.Max(0, reserveRoundCapacity);
             ReloadMinutes = Math.Max(0f, reloadMinutes);
+            SurfaceToAirOrdnanceTypeDefinitionId = surfaceToAirOrdnanceTypeDefinitionId;
         }
     }
 

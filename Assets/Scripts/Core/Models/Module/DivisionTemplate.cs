@@ -3,18 +3,34 @@ using System.Collections.Generic;
 
 namespace Models.Module
 {
+    public enum NatoUnitSymbol
+    {
+        Unspecified = 0,
+        Infantry = 1,
+        MechanizedInfantry = 2,
+        Armor = 3,
+        MotorizedInfantry = 4,
+        Airborne = 5,
+        Artillery = 6,
+        AirDefense = 7,
+        Engineer = 8,
+        Headquarters = 9
+    }
+
     public sealed class DivisionTemplate
     {
         public Guid DivisionTemplateId { get; }
         public Guid CountryId { get; }
         public string Name { get; }
         public List<DivisionTemplateBattalion> Battalions { get; }
+        public NatoUnitSymbol NatoSymbol { get; }
 
         public DivisionTemplate(
             Guid divisionTemplateId,
             Guid countryId,
             string name,
-            List<DivisionTemplateBattalion> battalions = null)
+            List<DivisionTemplateBattalion> battalions = null,
+            NatoUnitSymbol natoSymbol = NatoUnitSymbol.Unspecified)
         {
             if (divisionTemplateId == Guid.Empty)
                 throw new ArgumentException("Division template id is required.", nameof(divisionTemplateId));
@@ -25,7 +41,8 @@ namespace Models.Module
             DivisionTemplateId = divisionTemplateId;
             CountryId = countryId;
             Name = string.IsNullOrWhiteSpace(name) ? divisionTemplateId.ToString() : name.Trim();
-            Battalions = battalions;
+            Battalions = battalions ?? new List<DivisionTemplateBattalion>();
+            NatoSymbol = natoSymbol;
         }
 
         public DivisionCombatStats CalculateFullStrengthStats(
