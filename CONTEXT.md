@@ -1161,3 +1161,7 @@ Remote cueing is network-shared track awareness that helps a site acquire curren
 ### Remote engagement
 
 Remote engagement is network-authorized fire-control use of a shared track by a shooter that did not directly detect the target. Remote engagement requires supporting doctrine, network capability, and sufficient track/network quality.
+
+### Ordnance launch diagnostics
+
+Release records include per-store launch diagnostics so the debug UI can show which aircraft or SAM launcher fired which ordnance at which target aircraft during the last completed turn. V1 pending effects snapshot the selected target aircraft at release for deterministic resolution; if that aircraft is no longer a valid survivor when the effect resolves, the store becomes ineffective.

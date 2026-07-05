@@ -69,7 +69,8 @@
                     <ui:VisualElement class="segmented-control">
                         <ui:Button name="air-requests-button" text="Requests" class="segment" />
                         <ui:Button name="air-packages-button" text="Packages" class="segment" />
-                        <ui:Button name="air-flights-button" text="Flights" class="segment segment--selected" />
+                        <ui:Button name="air-flights-button" text="Flights" class="segment" />
+                        <ui:Button name="air-passes-button" text="Ordnance" class="segment" />
                     </ui:VisualElement>
                     <ui:Label name="air-inspection-status" text="" class="inspection-status" />
                     <ui:Label name="air-list-title" text="CURRENT FLIGHTS" class="table-title" />
@@ -77,9 +78,10 @@
                         <ui:Button name="air-blue-flights-button" text="Blue" class="segment segment--blue segment--selected" />
                         <ui:Button name="air-red-flights-button" text="Red" class="segment segment--red" />
                     </ui:VisualElement>
-                    <ui:VisualElement name="air-requests-list" class="dense-list workbench-page--hidden" />
-                    <ui:VisualElement name="air-packages-list" class="dense-list workbench-page--hidden" />
+                    <ui:VisualElement name="air-requests-list" class="dense-list campaign-air-list--hidden" />
+                    <ui:VisualElement name="air-packages-list" class="dense-list campaign-air-list--hidden" />
                     <ui:VisualElement name="air-flights-list" class="dense-list" />
+                    <ui:VisualElement name="air-passes-list" class="dense-list campaign-air-list--hidden" />
                 </ui:ScrollView>
 
                 <ui:ScrollView name="turn-report-content" class="workbench-scroll workbench-page--hidden">

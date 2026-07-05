@@ -350,11 +350,14 @@ namespace Engine.Models
                 return;
             }
 
-            var released = SpendFlightRounds(
+            var launches = SpendFlightRounds(
                 source,
+                target,
                 pass.OrdnanceTypeDefinitionId,
                 pass.PreferredSourceAircraftId,
-                pass.PlannedQuantity);
+                pass.PlannedQuantity,
+                releaseAt);
+            var released = launches.Count;
             if (released <= 0)
             {
                 AddRecord(
@@ -391,7 +394,8 @@ namespace Engine.Models
                 ResolveAt = releaseAt.AddSeconds(travelSeconds),
                 ReleaseRangeKm = distanceFeet / AirspaceGeometry.FeetPerKilometer,
                 SourcePositionFeet = source.Flight.PositionFeet,
-                TargetPositionFeet = target.Flight.PositionFeet
+                TargetPositionFeet = target.Flight.PositionFeet,
+                Launches = launches
             };
             PendingEffects.Add(pending);
             AddRecord(
@@ -403,14 +407,19 @@ namespace Engine.Models
                 $"against {target.DisplayName}.");
         }
 
-        private static int SpendFlightRounds(
+        private static List<OrdnanceLaunchDiagnostic> SpendFlightRounds(
             FlightContext source,
+            FlightContext target,
             Guid ordnanceTypeDefinitionId,
             Guid preferredAircraftId,
-            int requested)
+            int requested,
+            DateTime releaseAt)
         {
             var remaining = Math.Max(0, requested);
-            var released = 0;
+            var launches = new List<OrdnanceLaunchDiagnostic>();
+            var targetAircraft = target.LiveAircraft
+                .OrderBy(aircraft => aircraft.AircraftId)
+                .ToList();
             foreach (var aircraft in source.LiveAircraft
                          .OrderBy(aircraft =>
                              aircraft.AircraftId == preferredAircraftId ? 0 : 1)
@@ -424,14 +433,33 @@ namespace Engine.Models
 
                 var spent = Math.Min(item.Count, remaining);
                 item.Count -= spent;
-                released += spent;
+                for (var index = 0; index < spent; index++)
+                {
+                    var sequence = launches.Count + 1;
+                    var targetIndex = targetAircraft.Count == 0
+                        ? -1
+                        : StableIndex(aircraft.AircraftId, sequence, targetAircraft.Count);
+                    var targetAircraftId = targetIndex < 0
+                        ? Guid.Empty
+                        : targetAircraft[targetIndex].AircraftId;
+                    launches.Add(new OrdnanceLaunchDiagnostic
+                    {
+                        Sequence = sequence,
+                        SourceAircraftId = aircraft.AircraftId,
+                        TargetAircraftId = targetAircraftId,
+                        OrdnanceTypeDefinitionId = ordnanceTypeDefinitionId,
+                        ReleasedAt = releaseAt
+                    });
+                    if (targetIndex >= 0)
+                        targetAircraft.RemoveAt(targetIndex);
+                }
                 remaining -= spent;
                 if (remaining == 0)
                     break;
             }
             foreach (var aircraft in source.LiveAircraft)
                 aircraft.Loadout.RemoveAll(item => item.Count <= 0);
-            return released;
+            return launches;
         }
 
         private static float CalculateAircraftHitProbability(
@@ -487,6 +515,12 @@ namespace Engine.Models
                             shotDiagnostics.Add(new OrdnanceShotDiagnostic
                             {
                                 Sequence = missileIndex + 1,
+                                SourceAircraftId = GetLaunchSourceAircraftId(
+                                    effect,
+                                    missileIndex),
+                                TargetAircraftId = GetLaunchTargetAircraftId(
+                                    effect,
+                                    missileIndex),
                                 Probability = effect.HitProbability,
                                 Roll = -1f,
                                 Result = OrdnanceShotResult.Ineffective
@@ -494,11 +528,37 @@ namespace Engine.Models
                             continue;
                         }
 
-                        var targetIndex = StableIndex(
-                            effect.PendingEffectId,
-                            missileIndex,
-                            availableTargets.Count);
-                        var selectedAircraft = availableTargets[targetIndex];
+                        var launch = GetLaunch(effect, missileIndex);
+                        var targetIndex = -1;
+                        CampaignAircraft selectedAircraft;
+                        if (launch != null && launch.TargetAircraftId != Guid.Empty)
+                        {
+                            selectedAircraft = availableTargets.FirstOrDefault(
+                                aircraft => aircraft.AircraftId == launch.TargetAircraftId);
+                            if (selectedAircraft == null)
+                            {
+                                ineffective++;
+                                shotDiagnostics.Add(new OrdnanceShotDiagnostic
+                                {
+                                    Sequence = missileIndex + 1,
+                                    SourceAircraftId = launch.SourceAircraftId,
+                                    TargetAircraftId = launch.TargetAircraftId,
+                                    Probability = effect.HitProbability,
+                                    Roll = -1f,
+                                    Result = OrdnanceShotResult.Ineffective
+                                });
+                                continue;
+                            }
+                            targetIndex = availableTargets.IndexOf(selectedAircraft);
+                        }
+                        else
+                        {
+                            targetIndex = StableIndex(
+                                effect.PendingEffectId,
+                                missileIndex,
+                                availableTargets.Count);
+                            selectedAircraft = availableTargets[targetIndex];
+                        }
                         availableTargets.RemoveAt(targetIndex);
                         var roll = (float)StableRoll(effect.PendingEffectId, missileIndex);
                         var result = roll < effect.HitProbability
@@ -507,6 +567,7 @@ namespace Engine.Models
                         shotDiagnostics.Add(new OrdnanceShotDiagnostic
                         {
                             Sequence = missileIndex + 1,
+                            SourceAircraftId = launch?.SourceAircraftId ?? Guid.Empty,
                             TargetAircraftId = selectedAircraft.AircraftId,
                             Probability = effect.HitProbability,
                             Roll = roll,
@@ -554,6 +615,29 @@ namespace Engine.Models
 
                 target.Flight.Fail(resolveAt, "All aircraft were lost to ordnance effects.");
             }
+        }
+
+        private static OrdnanceLaunchDiagnostic GetLaunch(
+            PendingOrdnanceEffect effect,
+            int missileIndex)
+        {
+            return effect.Launches == null || missileIndex < 0 || missileIndex >= effect.Launches.Count
+                ? null
+                : effect.Launches[missileIndex];
+        }
+
+        private static Guid GetLaunchSourceAircraftId(
+            PendingOrdnanceEffect effect,
+            int missileIndex)
+        {
+            return GetLaunch(effect, missileIndex)?.SourceAircraftId ?? Guid.Empty;
+        }
+
+        private static Guid GetLaunchTargetAircraftId(
+            PendingOrdnanceEffect effect,
+            int missileIndex)
+        {
+            return GetLaunch(effect, missileIndex)?.TargetAircraftId ?? Guid.Empty;
         }
 
         private void RefreshSamEngagementAssignments(
@@ -654,6 +738,10 @@ namespace Engine.Models
                         var travelSeconds = AirspaceGeometry.HorizontalTravelSeconds(
                             distanceFeet,
                             ordnance.EffectSpeedKnots);
+                        var targetAircraftId = SelectTargetAircraftId(
+                            target,
+                            launcher.ComponentId,
+                            1);
                         var pending = new PendingOrdnanceEffect
                         {
                             EmploymentPassId = Guid.NewGuid(),
@@ -670,7 +758,18 @@ namespace Engine.Models
                             ResolveAt = currentTime.AddSeconds(travelSeconds),
                             ReleaseRangeKm = distanceFeet / AirspaceGeometry.FeetPerKilometer,
                             SourcePositionFeet = sitePosition,
-                            TargetPositionFeet = target.Flight.PositionFeet
+                            TargetPositionFeet = target.Flight.PositionFeet,
+                            Launches = new List<OrdnanceLaunchDiagnostic>
+                            {
+                                new OrdnanceLaunchDiagnostic
+                                {
+                                    Sequence = 1,
+                                    TargetAircraftId = targetAircraftId,
+                                    OrdnanceTypeDefinitionId =
+                                        ordnance.OrdnanceTypeDefinitionId,
+                                    ReleasedAt = currentTime
+                                }
+                            }
                         };
                         PendingEffects.Add(pending);
                         AddRecord(
@@ -683,6 +782,19 @@ namespace Engine.Models
                     }
                 }
             }
+        }
+
+        private static Guid SelectTargetAircraftId(
+            FlightContext target,
+            Guid seed,
+            int sequence)
+        {
+            var candidates = target.LiveAircraft
+                .OrderBy(aircraft => aircraft.AircraftId)
+                .ToList();
+            if (candidates.Count == 0)
+                return Guid.Empty;
+            return candidates[StableIndex(seed, sequence, candidates.Count)].AircraftId;
         }
 
         private bool CanAnyLauncherEngage(
@@ -865,6 +977,7 @@ namespace Engine.Models
                 ReleaseRangeKm = effect.ReleaseRangeKm,
                 SourcePositionFeet = effect.SourcePositionFeet,
                 TargetPositionFeet = effect.TargetPositionFeet,
+                Launches = effect.Launches ?? new List<OrdnanceLaunchDiagnostic>(),
                 Shots = shots ?? new List<OrdnanceShotDiagnostic>(),
                 Detail = detail
             });

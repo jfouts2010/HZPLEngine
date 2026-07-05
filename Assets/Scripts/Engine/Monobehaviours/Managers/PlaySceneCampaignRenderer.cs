@@ -121,6 +121,7 @@ namespace Engine.Monobehaviours.Managers
         private Button airRequestsButton;
         private Button airPackagesButton;
         private Button airFlightsButton;
+        private Button airPassesButton;
         private Label airListTitle;
         private VisualElement airAllianceFilter;
         private Button airBlueFlightsButton;
@@ -129,6 +130,7 @@ namespace Engine.Monobehaviours.Managers
         private VisualElement airRequestsList;
         private VisualElement airPackagesList;
         private VisualElement airFlightsList;
+        private VisualElement airPassesList;
         private VisualElement flightDetailBackdrop;
         private Label flightDetailTitle;
         private Label flightDetailSubtitle;
@@ -176,6 +178,9 @@ namespace Engine.Monobehaviours.Managers
         private Guid selectedFlightId;
         private Guid inspectedFlightId;
         private Guid inspectedPackageId;
+        private Guid selectedOrdnancePassId;
+        private Guid highlightedOrdnanceSourceFlightId;
+        private Guid highlightedOrdnanceTargetFlightId;
         private bool showingAirOps;
         private AirOperationsView airOperationsView = AirOperationsView.Flights;
         private Alliance airFlightAlliance = Alliance.Bluefor;
@@ -200,7 +205,8 @@ namespace Engine.Monobehaviours.Managers
         {
             Requests,
             Packages,
-            Flights
+            Flights,
+            OrdnancePasses
         }
 
         private enum WorkbenchPage
@@ -515,6 +521,7 @@ namespace Engine.Monobehaviours.Managers
             airRequestsButton = root.Q<Button>("air-requests-button");
             airPackagesButton = root.Q<Button>("air-packages-button");
             airFlightsButton = root.Q<Button>("air-flights-button");
+            airPassesButton = root.Q<Button>("air-passes-button");
             airListTitle = root.Q<Label>("air-list-title");
             airAllianceFilter = root.Q<VisualElement>("air-alliance-filter");
             airBlueFlightsButton = root.Q<Button>("air-blue-flights-button");
@@ -523,6 +530,7 @@ namespace Engine.Monobehaviours.Managers
             airRequestsList = root.Q<VisualElement>("air-requests-list");
             airPackagesList = root.Q<VisualElement>("air-packages-list");
             airFlightsList = root.Q<VisualElement>("air-flights-list");
+            airPassesList = root.Q<VisualElement>("air-passes-list");
             flightDetailBackdrop = root.Q<VisualElement>("flight-detail-backdrop");
             flightDetailTitle = root.Q<Label>("flight-detail-title");
             flightDetailSubtitle = root.Q<Label>("flight-detail-subtitle");
@@ -581,6 +589,7 @@ namespace Engine.Monobehaviours.Managers
             ApplyRuntimeFont(airRequestsButton);
             ApplyRuntimeFont(airPackagesButton);
             ApplyRuntimeFont(airFlightsButton);
+            ApplyRuntimeFont(airPassesButton);
             ApplyRuntimeFont(airListTitle);
             ApplyRuntimeFont(airBlueFlightsButton);
             ApplyRuntimeFont(airRedFlightsButton);
@@ -693,6 +702,8 @@ namespace Engine.Monobehaviours.Managers
                 airPackagesButton.clicked += () => ShowAirOperationsView(AirOperationsView.Packages);
             if (airFlightsButton != null)
                 airFlightsButton.clicked += () => ShowAirOperationsView(AirOperationsView.Flights);
+            if (airPassesButton != null)
+                airPassesButton.clicked += () => ShowAirOperationsView(AirOperationsView.OrdnancePasses);
             if (airBlueFlightsButton != null)
                 airBlueFlightsButton.clicked += () => ShowAirFlightAlliance(Alliance.Bluefor);
             if (airRedFlightsButton != null)
@@ -1149,6 +1160,107 @@ namespace Engine.Monobehaviours.Managers
                 () => BuildFlightInspectorLines(flightId));
         }
 
+        private void OpenOrdnancePassInspector(Guid employmentPassId)
+        {
+            if (!TryFindOrdnanceReleaseRecord(employmentPassId, out var record))
+                return;
+
+            selectedOrdnancePassId = employmentPassId;
+            highlightedOrdnanceSourceFlightId = record.SourceFlightId;
+            highlightedOrdnanceTargetFlightId = record.TargetFlightId;
+            SetOverlayToggleValue(overlayOrdnanceToggle, true);
+            RefreshOrdnanceOverlay();
+            ApplySelectedFlightMarker();
+
+            var window = CreateFloatingReportWindow(
+                $"Ordnance Pass {ShortId(employmentPassId)}",
+                () =>
+                {
+                    if (selectedOrdnancePassId == employmentPassId)
+                    {
+                        selectedOrdnancePassId = Guid.Empty;
+                        highlightedOrdnanceSourceFlightId = Guid.Empty;
+                        highlightedOrdnanceTargetFlightId = Guid.Empty;
+                        RefreshOrdnanceOverlay();
+                        ApplySelectedFlightMarker();
+                    }
+                });
+            if (window.content == null)
+                return;
+
+            var actions = new VisualElement();
+            actions.AddToClassList("filter-row");
+            AddReportButton(actions, "Fit Pass", () => FrameOrdnancePass(record));
+            AddReportButton(actions, "Source", () => SelectOrdnanceSource(record));
+            AddReportButton(actions, "Target", () => SelectOrdnanceTarget(record));
+            window.content.Add(actions);
+
+            foreach (var line in BuildOrdnancePassInspectorLines(record))
+                AddCompactLine(window.content, line);
+        }
+
+        private (VisualElement window, VisualElement content) CreateFloatingReportWindow(
+            string title,
+            Action onClose = null)
+        {
+            if (windowLayer == null)
+                return (null, null);
+
+            pinnedWindowSequence++;
+            var window = new VisualElement();
+            window.AddToClassList("floating-window");
+            window.style.left = 640f + (pinnedWindowSequence % 6) * 30f;
+            window.style.top = 118f + (pinnedWindowSequence % 6) * 26f;
+            window.style.width = 610f;
+            window.style.height = 690f;
+            window.pickingMode = PickingMode.Position;
+
+            var header = new VisualElement();
+            header.AddToClassList("floating-window-header");
+            var heading = new Label(title);
+            heading.AddToClassList("floating-window-title");
+            heading.style.flexGrow = 1f;
+            ApplyRuntimeFont(heading);
+            var close = new Button(() =>
+            {
+                onClose?.Invoke();
+                window.RemoveFromHierarchy();
+            })
+            {
+                text = "×"
+            };
+            close.AddToClassList("window-close");
+            ApplyRuntimeFont(close);
+            header.Add(heading);
+            header.Add(close);
+
+            var scroll = new ScrollView(ScrollViewMode.Vertical);
+            scroll.AddToClassList("floating-window-scroll");
+            scroll.verticalScrollerVisibility = ScrollerVisibility.AlwaysVisible;
+            var content = new VisualElement();
+            scroll.Add(content);
+            var resizeHandle = new VisualElement();
+            resizeHandle.AddToClassList("window-resize-handle");
+
+            window.Add(header);
+            window.Add(scroll);
+            window.Add(resizeHandle);
+            windowLayer.Add(window);
+            RegisterUiPointerBoundary(window);
+            ConfigureFloatingWindowInteraction(window, header, resizeHandle);
+            window.BringToFront();
+            return (window, content);
+        }
+
+        private void AddReportButton(VisualElement parent, string text, Action action)
+        {
+            var button = new Button(action) { text = text };
+            button.AddToClassList("workbench-button");
+            button.AddToClassList("workbench-button--small");
+            ApplyRuntimeFont(button);
+            parent.Add(button);
+        }
+
         private void FocusSelectedFlight()
         {
             if (selectedFlightId != Guid.Empty)
@@ -1390,6 +1502,18 @@ namespace Engine.Monobehaviours.Managers
                          .Take(25))
             {
                 lines.Add($"{record.OccurredAt:HH:mm:ss}  {record.Stage}  {record.Detail}");
+                if (record.Stage == OrdnanceEmploymentRecordStage.OrdnanceReleased)
+                {
+                    foreach (var launch in record.Launches.OrderBy(item => item.Sequence))
+                    {
+                        var shot = FindResolvedShot(record, launch.Sequence);
+                        lines.Add(
+                            $"  Launch {launch.Sequence}: aircraft {ShortId(launch.SourceAircraftId)} " +
+                            $"→ aircraft {ShortId(launch.TargetAircraftId)}  " +
+                            $"{GetOrdnanceName(launch.OrdnanceTypeDefinitionId)}" +
+                            (shot == null ? string.Empty : $"  result {shot.Result}"));
+                    }
+                }
                 foreach (var shot in record.Shots)
                     lines.Add($"  Shot {shot.Sequence}: {shot.Result}  target {ShortId(shot.TargetAircraftId)}  P {shot.Probability:P1}  roll {(shot.Roll < 0f ? "—" : shot.Roll.ToString("0.000"))}");
             }
@@ -1426,28 +1550,18 @@ namespace Engine.Monobehaviours.Managers
         private void ShowAirOperationsView(AirOperationsView view)
         {
             airOperationsView = view;
-            airRequestsList?.EnableInClassList(
-                "campaign-air-list--hidden",
-                view != AirOperationsView.Requests);
-            airPackagesList?.EnableInClassList(
-                "campaign-air-list--hidden",
-                view != AirOperationsView.Packages);
-            airFlightsList?.EnableInClassList(
-                "campaign-air-list--hidden",
-                view != AirOperationsView.Flights);
+            SetAirListVisible(airRequestsList, view == AirOperationsView.Requests);
+            SetAirListVisible(airPackagesList, view == AirOperationsView.Packages);
+            SetAirListVisible(airFlightsList, view == AirOperationsView.Flights);
+            SetAirListVisible(airPassesList, view == AirOperationsView.OrdnancePasses);
             airAllianceFilter?.EnableInClassList(
                 "campaign-air-alliance-filter--hidden",
                 view != AirOperationsView.Flights);
 
-            airRequestsButton?.EnableInClassList(
-                "campaign-air-view-tab--selected",
-                view == AirOperationsView.Requests);
-            airPackagesButton?.EnableInClassList(
-                "campaign-air-view-tab--selected",
-                view == AirOperationsView.Packages);
-            airFlightsButton?.EnableInClassList(
-                "campaign-air-view-tab--selected",
-                view == AirOperationsView.Flights);
+            SetAirTabSelected(airRequestsButton, view == AirOperationsView.Requests);
+            SetAirTabSelected(airPackagesButton, view == AirOperationsView.Packages);
+            SetAirTabSelected(airFlightsButton, view == AirOperationsView.Flights);
+            SetAirTabSelected(airPassesButton, view == AirOperationsView.OrdnancePasses);
 
             if (airListTitle != null)
             {
@@ -1455,12 +1569,34 @@ namespace Engine.Monobehaviours.Managers
                 {
                     AirOperationsView.Requests => "CURRENT MISSION REQUESTS",
                     AirOperationsView.Packages => "CURRENT AIR PACKAGES",
+                    AirOperationsView.OrdnancePasses => "LAST TURN ORDNANCE PASSES - SELECT A ROW FOR DETAILS",
                     _ => "CURRENT FLIGHTS — SELECT A ROW FOR DETAILS"
                 };
             }
 
             if (airOpsContent != null)
                 airOpsContent.scrollOffset = Vector2.zero;
+
+            UpdateAirOperationsUi();
+        }
+
+        private static void SetAirListVisible(VisualElement list, bool visible)
+        {
+            if (list == null)
+                return;
+
+            list.EnableInClassList("workbench-page--hidden", !visible);
+            list.EnableInClassList("campaign-air-list--hidden", !visible);
+            list.style.display = visible ? DisplayStyle.Flex : DisplayStyle.None;
+        }
+
+        private static void SetAirTabSelected(Button button, bool selected)
+        {
+            if (button == null)
+                return;
+
+            button.EnableInClassList("segment--selected", selected);
+            button.EnableInClassList("campaign-air-view-tab--selected", selected);
         }
 
         private void ShowAirFlightAlliance(Alliance alliance)
@@ -1508,6 +1644,9 @@ namespace Engine.Monobehaviours.Managers
                 .Where(flight => !flight.HasPhysicallyEnded)
                 .OrderBy(flight => flight.PlannedTakeoffTime)
                 .ToList();
+            var ordnancePasses = GetLastTurnOrdnanceReleaseRecords()
+                .OrderByDescending(record => record.OccurredAt)
+                .ToList();
             var airborneCount = flights.Count(flight => flight.IsAirborne);
 
             airOpsSummary.text =
@@ -1528,6 +1667,8 @@ namespace Engine.Monobehaviours.Managers
                 airPackagesButton.text = $"Packages  {packages.Count}";
             if (airFlightsButton != null)
                 airFlightsButton.text = $"Flights  {flights.Count}";
+            if (airPassesButton != null)
+                airPassesButton.text = $"Ordnance  {ordnancePasses.Count}";
             if (airBlueFlightsButton != null)
                 airBlueFlightsButton.text =
                     $"Blue flights  {flights.Count(flight => GetFlightAlliance(flight, packages) == Alliance.Bluefor)}";
@@ -1540,6 +1681,7 @@ namespace Engine.Monobehaviours.Managers
             RebuildAirFlightsList(
                 flights.Where(flight => GetFlightAlliance(flight, packages) == airFlightAlliance).ToList(),
                 packages);
+            RebuildAirPassesList(ordnancePasses);
             UpdateAirOverviewUi();
             if (selectedFlightId != Guid.Empty)
                 RefreshFlightDetails();
@@ -1759,6 +1901,22 @@ namespace Engine.Monobehaviours.Managers
                              .Where(pair => pair.item.OccurredAt > from && pair.item.OccurredAt <= to)
                              .OrderBy(pair => pair.item.OccurredAt))
                     lines.Add($"{flightEvent.item.OccurredAt:HH:mm:ss}  AIR EXECUTION  {ShortId(flightEvent.flight.FlightId)}  •  {flightEvent.item.Detail}");
+            }
+            var launchRecords = gameManager.GetOrdnanceEmploymentRecords()
+                .Where(item => item.Stage == OrdnanceEmploymentRecordStage.OrdnanceReleased
+                               && item.OccurredAt > from
+                               && item.OccurredAt <= to)
+                .OrderBy(item => item.OccurredAt)
+                .ToList();
+            lines.Add($"ORDNANCE LAUNCHES  {launchRecords.Sum(item => Math.Max(1, item.Launches.Count))} launches across {launchRecords.Count} passes");
+            foreach (var record in launchRecords)
+            {
+                lines.Add(BuildOrdnancePassLine(record));
+                foreach (var launch in GetRecordLaunches(record))
+                {
+                    var shot = FindResolvedShot(record, launch.Sequence);
+                    lines.Add(BuildOrdnanceLaunchLine(record, launch, shot));
+                }
             }
             foreach (var record in gameManager.GetOrdnanceEmploymentRecords()
                          .Where(item => item.OccurredAt > from && item.OccurredAt <= to)
@@ -1989,6 +2147,45 @@ namespace Engine.Monobehaviours.Managers
             }
         }
 
+        private void RebuildAirPassesList(IReadOnlyList<OrdnanceEmploymentRecord> records)
+        {
+            if (airPassesList == null)
+                return;
+
+            airPassesList.Clear();
+            if (records.Count == 0)
+            {
+                airPassesList.Add(CreateAirEmptyLabel("No ordnance releases in the last completed turn."));
+                return;
+            }
+
+            foreach (var record in records)
+            {
+                var shots = GetResolvedShots(record).ToList();
+                var hits = shots.Count(shot => shot.Result == OrdnanceShotResult.Hit);
+                var misses = shots.Count(shot => shot.Result == OrdnanceShotResult.Miss);
+                var ineffective = shots.Count(shot => shot.Result == OrdnanceShotResult.Ineffective);
+                var launches = GetRecordLaunches(record).ToList();
+                var title =
+                    $"{record.OccurredAt:HH:mm:ss} PASS {ShortId(record.EmploymentPassId)}  •  " +
+                    $"{GetSourceLabel(record)} → {GetFlightLabel(record.TargetFlightId)}";
+                var fields = new List<AirCardField>
+                {
+                    new AirCardField("Ordnance", $"{record.Quantity}× {GetOrdnanceName(record.OrdnanceTypeDefinitionId)}"),
+                    new AirCardField("Launches", $"{launches.Count} launches / {shots.Count} resolved shots"),
+                    new AirCardField("Outcome", $"Hit {hits} / Miss {misses} / Ineffective {ineffective}"),
+                    new AirCardField("Snapshot", $"Range {record.ReleaseRangeKm:0.0} km / P(hit) {record.HitProbability:P1}"),
+                    new AirCardField("Source", GetSourceLabel(record)),
+                    new AirCardField("Target", GetFlightLabel(record.TargetFlightId))
+                };
+                airPassesList.Add(CreateAirCard(
+                    GetRecordAlliance(record),
+                    title,
+                    fields,
+                    () => OpenOrdnancePassInspector(record.EmploymentPassId)));
+            }
+        }
+
         private VisualElement CreateAirCard(
             Alliance alliance,
             string title,
@@ -2173,12 +2370,26 @@ namespace Engine.Monobehaviours.Managers
                     continue;
                 var selected = selectedFlightId != Guid.Empty
                                && child.name.EndsWith(ShortId(selectedFlightId), StringComparison.Ordinal);
-                line.startWidth = selected ? 0.085f : 0.055f;
-                line.endWidth = selected ? 0.085f : 0.055f;
+                var sourceHighlighted = highlightedOrdnanceSourceFlightId != Guid.Empty
+                                        && child.name.EndsWith(ShortId(highlightedOrdnanceSourceFlightId), StringComparison.Ordinal);
+                var targetHighlighted = highlightedOrdnanceTargetFlightId != Guid.Empty
+                                        && child.name.EndsWith(ShortId(highlightedOrdnanceTargetFlightId), StringComparison.Ordinal);
+                line.startWidth = selected || sourceHighlighted || targetHighlighted ? 0.085f : 0.055f;
+                line.endWidth = selected || sourceHighlighted || targetHighlighted ? 0.085f : 0.055f;
                 if (selected)
                 {
                     line.startColor = new Color(1f, 0.88f, 0.22f);
                     line.endColor = new Color(1f, 0.88f, 0.22f);
+                }
+                else if (sourceHighlighted)
+                {
+                    line.startColor = new Color(0.25f, 1f, 0.72f);
+                    line.endColor = new Color(0.25f, 1f, 0.72f);
+                }
+                else if (targetHighlighted)
+                {
+                    line.startColor = new Color(1f, 0.33f, 0.25f);
+                    line.endColor = new Color(1f, 0.33f, 0.25f);
                 }
                 else
                 {
@@ -2523,11 +2734,19 @@ namespace Engine.Monobehaviours.Managers
                     $"{GetEmploymentStageLabel(record.Stage)}\n{record.Detail}");
                 if (record.Stage == OrdnanceEmploymentRecordStage.OrdnanceReleased)
                 {
-                    AddFlightDetailMessage(
+                    AddFlightDetailButton(
                         section,
                         $"Pass {ShortId(record.EmploymentPassId)}  •  " +
                         $"Range {record.ReleaseRangeKm:0.0} km  •  " +
-                        $"P(hit) {record.HitProbability:P1}");
+                        $"P(hit) {record.HitProbability:P1}\nClick to inspect pass and highlight ordnance visuals.",
+                        () => OpenOrdnancePassInspector(record.EmploymentPassId));
+                    foreach (var launch in GetRecordLaunches(record))
+                    {
+                        var shot = FindResolvedShot(record, launch.Sequence);
+                        AddFlightDetailMessage(
+                            section,
+                            BuildOrdnanceLaunchLine(record, launch, shot));
+                    }
                 }
                 foreach (var shot in record.Shots)
                 {
@@ -2546,6 +2765,7 @@ namespace Engine.Monobehaviours.Managers
                                           records.Count
                                           + activePasses.Count
                                           + pendingEffects.Count
+                                          + records.Sum(record => record.Launches?.Count ?? 0)
                                           + records.Sum(record => record.Shots.Count)) * 45f;
             flightDetailContent.Add(section);
         }
@@ -2567,6 +2787,18 @@ namespace Engine.Monobehaviours.Managers
             label.AddToClassList("flight-detail-line");
             ApplyRuntimeFont(label);
             section.Add(label);
+        }
+
+        private void AddFlightDetailButton(
+            VisualElement section,
+            string message,
+            Action action)
+        {
+            var button = new Button(action) { text = message };
+            button.AddToClassList("flight-detail-line");
+            button.AddToClassList("campaign-air-card--clickable");
+            ApplyRuntimeFont(button);
+            section.Add(button);
         }
 
         private Label CreateAirEmptyLabel(string text)
@@ -2644,6 +2876,267 @@ namespace Engine.Monobehaviours.Managers
                 OrdnanceEmploymentRecordStage.EffectResolved => "Resolved",
                 _ => stage.ToString()
             };
+        }
+
+        private string BuildOrdnancePassLine(OrdnanceEmploymentRecord record)
+        {
+            return $"{record.OccurredAt:HH:mm:ss}  PASS {ShortId(record.EmploymentPassId)}  " +
+                   $"{GetSourceLabel(record)} → {GetFlightLabel(record.TargetFlightId)}  " +
+                   $"{record.Quantity}× {GetOrdnanceName(record.OrdnanceTypeDefinitionId)}  " +
+                   $"range {record.ReleaseRangeKm:0.0} km  P(hit) {record.HitProbability:P1}";
+        }
+
+        private IEnumerable<string> BuildOrdnancePassInspectorLines(
+            OrdnanceEmploymentRecord record)
+        {
+            var resolvedShots = GetResolvedShots(record).ToList();
+            var lines = new List<string>
+            {
+                "PASS SUMMARY",
+                $"Pass ID  {record.EmploymentPassId:N}",
+                $"Released  {record.OccurredAt:yyyy-MM-dd HH:mm:ss}",
+                $"Source  {GetSourceLabel(record)}",
+                $"Target  {GetFlightLabel(record.TargetFlightId)}",
+                $"Ordnance  {record.Quantity}× {GetOrdnanceName(record.OrdnanceTypeDefinitionId)}",
+                $"Release range  {record.ReleaseRangeKm:0.0} km",
+                $"Snapshotted P(hit)  {record.HitProbability:P1}",
+                $"Release source position  X {record.SourcePositionFeet.x:0} / Z {record.SourcePositionFeet.z:0} / ALT {record.SourcePositionFeet.y:0} ft",
+                $"Release target position  X {record.TargetPositionFeet.x:0} / Z {record.TargetPositionFeet.z:0} / ALT {record.TargetPositionFeet.y:0} ft",
+                string.Empty,
+                "WHY THIS PROBABILITY",
+                "The hit chance is snapshotted at release from the ordnance base probability, release range, guidance mode, shooter capability, target ECM, and SAM track quality where applicable.",
+                "The current debug record stores the final probability and release context; it does not yet persist each intermediate modifier as a separate field.",
+                string.Empty,
+                "LAUNCHES AND RESOLUTION"
+            };
+
+            foreach (var launch in GetRecordLaunches(record))
+            {
+                var shot = resolvedShots.FirstOrDefault(item => item.Sequence == launch.Sequence);
+                lines.Add(BuildOrdnanceLaunchLine(record, launch, shot));
+                lines.Add("    " + BuildShotReasonLine(shot, record));
+            }
+
+            if (resolvedShots.Count == 0)
+                lines.Add("No resolved effects yet; this pass has released ordnance but impact has not occurred.");
+
+            return lines;
+        }
+
+        private string BuildShotReasonLine(
+            OrdnanceShotDiagnostic shot,
+            OrdnanceEmploymentRecord record)
+        {
+            if (shot == null)
+                return "Pending: no effect-resolution record exists for this launch yet.";
+            if (shot.Result == OrdnanceShotResult.Ineffective)
+            {
+                return shot.TargetAircraftId == Guid.Empty
+                    ? "Ineffective: no target aircraft was available for this store."
+                    : $"Ineffective: selected target aircraft {ShortId(shot.TargetAircraftId)} was not a valid survivor when the effect resolved.";
+            }
+
+            var threshold = shot.Probability > 0f ? shot.Probability : record.HitProbability;
+            var roll = shot.Roll < 0f ? 0f : shot.Roll;
+            return shot.Result == OrdnanceShotResult.Hit
+                ? $"Hit because roll {roll:0.000} was below snapshotted P(hit) {threshold:P1}."
+                : $"Miss because roll {roll:0.000} was at or above snapshotted P(hit) {threshold:P1}.";
+        }
+
+        private string BuildOrdnanceLaunchLine(
+            OrdnanceEmploymentRecord record,
+            OrdnanceLaunchDiagnostic launch,
+            OrdnanceShotDiagnostic shot)
+        {
+            return $"  Launch {launch.Sequence}: {GetLaunchSourceLabel(record, launch)} " +
+                   $"→ aircraft {ShortId(launch.TargetAircraftId)}  " +
+                   $"{GetOrdnanceName(launch.OrdnanceTypeDefinitionId)}" +
+                   (shot == null
+                       ? string.Empty
+                       : $"  result {shot.Result}  roll {(shot.Roll < 0f ? "—" : shot.Roll.ToString("0.000"))}");
+        }
+
+        private IEnumerable<OrdnanceLaunchDiagnostic> GetRecordLaunches(
+            OrdnanceEmploymentRecord record)
+        {
+            if (record.Launches != null && record.Launches.Count > 0)
+                return record.Launches.OrderBy(item => item.Sequence);
+
+            return Enumerable.Range(1, Math.Max(1, record.Quantity))
+                .Select(index => new OrdnanceLaunchDiagnostic
+                {
+                    Sequence = index,
+                    SourceAircraftId = record.SourceAircraftId,
+                    OrdnanceTypeDefinitionId = record.OrdnanceTypeDefinitionId,
+                    ReleasedAt = record.OccurredAt
+                });
+        }
+
+        private OrdnanceShotDiagnostic FindResolvedShot(
+            OrdnanceEmploymentRecord releaseRecord,
+            int sequence)
+        {
+            return gameManager.GetOrdnanceEmploymentRecords()
+                .Where(record => record.Stage == OrdnanceEmploymentRecordStage.EffectResolved
+                                 && record.PendingEffectId == releaseRecord.PendingEffectId)
+                .SelectMany(record => record.Shots)
+                .FirstOrDefault(shot => shot.Sequence == sequence);
+        }
+
+        private IEnumerable<OrdnanceEmploymentRecord> GetLastTurnOrdnanceReleaseRecords()
+        {
+            if (gameManager == null)
+                return Enumerable.Empty<OrdnanceEmploymentRecord>();
+
+            var from = gameManager.LastTurnStartedAt;
+            var to = gameManager.LastTurnCompletedAt;
+            if (to <= from)
+                return Enumerable.Empty<OrdnanceEmploymentRecord>();
+            return gameManager.GetOrdnanceEmploymentRecords()
+                .Where(record => record.Stage == OrdnanceEmploymentRecordStage.OrdnanceReleased
+                                 && record.OccurredAt > from
+                                 && record.OccurredAt <= to);
+        }
+
+        private IEnumerable<OrdnanceShotDiagnostic> GetResolvedShots(
+            OrdnanceEmploymentRecord releaseRecord)
+        {
+            return gameManager.GetOrdnanceEmploymentRecords()
+                .Where(record => record.Stage == OrdnanceEmploymentRecordStage.EffectResolved
+                                 && record.PendingEffectId == releaseRecord.PendingEffectId)
+                .SelectMany(record => record.Shots)
+                .OrderBy(shot => shot.Sequence);
+        }
+
+        private bool TryFindOrdnanceReleaseRecord(
+            Guid employmentPassId,
+            out OrdnanceEmploymentRecord record)
+        {
+            record = gameManager.GetOrdnanceEmploymentRecords()
+                .Where(candidate => candidate.Stage == OrdnanceEmploymentRecordStage.OrdnanceReleased)
+                .OrderByDescending(candidate => candidate.OccurredAt)
+                .FirstOrDefault(candidate => candidate.EmploymentPassId == employmentPassId);
+            return record != null;
+        }
+
+        private Alliance GetRecordAlliance(OrdnanceEmploymentRecord record)
+        {
+            if (record.SourceKind == OrdnanceEmploymentSourceKind.AircraftFlight
+                && TryFindFlight(record.SourceFlightId, out _, out var package, out _))
+                return package.Alliance;
+
+            if (record.SourceKind == OrdnanceEmploymentSourceKind.SamLauncher
+                && gameManager.airDefenseSiteSystem.TryGetSite(record.SourceSiteId, out var site))
+                return gameManager.airDefenseSiteSystem.GetEffectiveAlliance(site);
+
+            return Alliance.Neutral;
+        }
+
+        private void FrameOrdnancePass(OrdnanceEmploymentRecord record)
+        {
+            var endpoints = GetOrdnanceVisualEndpoints(record);
+            FrameMapPoints(new[]
+            {
+                endpoints.source,
+                endpoints.target
+            });
+        }
+
+        private (Vector3 source, Vector3 target) GetOrdnanceVisualEndpoints(
+            OrdnanceEmploymentRecord record)
+        {
+            return (GetOrdnanceSourceVisualPosition(record), GetOrdnanceTargetVisualPosition(record));
+        }
+
+        private Vector3 GetOrdnanceSourceVisualPosition(OrdnanceEmploymentRecord record)
+        {
+            if (record.SourceKind == OrdnanceEmploymentSourceKind.AircraftFlight
+                && TryFindFlight(record.SourceFlightId, out var sourceFlight, out _, out _)
+                && sourceFlight.HasPosition)
+                return AirPositionToMapPosition(sourceFlight.PositionFeet);
+
+            if (record.SourceKind == OrdnanceEmploymentSourceKind.SamLauncher
+                && gameManager.airDefenseSiteSystem.TryGetSite(record.SourceSiteId, out var site)
+                && gameManager.airDefenseSiteSystem.TryGetTileId(site, out var tileId)
+                && hexCentersByCell.TryGetValue(GetCell(tileId), out var siteCenter))
+                return siteCenter;
+
+            return AirPositionToMapPosition(record.SourcePositionFeet);
+        }
+
+        private Vector3 GetOrdnanceTargetVisualPosition(OrdnanceEmploymentRecord record)
+        {
+            if (TryFindFlight(record.TargetFlightId, out var targetFlight, out _, out _)
+                && targetFlight.HasPosition)
+                return AirPositionToMapPosition(targetFlight.PositionFeet);
+
+            return AirPositionToMapPosition(record.TargetPositionFeet);
+        }
+
+        private void SelectOrdnanceSource(OrdnanceEmploymentRecord record)
+        {
+            highlightedOrdnanceSourceFlightId = record.SourceFlightId;
+            highlightedOrdnanceTargetFlightId = Guid.Empty;
+            if (record.SourceKind == OrdnanceEmploymentSourceKind.AircraftFlight
+                && record.SourceFlightId != Guid.Empty)
+            {
+                OpenFlightDetails(record.SourceFlightId);
+                InspectFlightRoute(record.SourceFlightId);
+            }
+            else if (gameManager.airDefenseSiteSystem.TryGetSite(record.SourceSiteId, out var site)
+                     && gameManager.airDefenseSiteSystem.TryGetTileId(site, out var tileId))
+            {
+                FocusTile(tileId);
+            }
+            ApplySelectedFlightMarker();
+        }
+
+        private void SelectOrdnanceTarget(OrdnanceEmploymentRecord record)
+        {
+            highlightedOrdnanceSourceFlightId = Guid.Empty;
+            highlightedOrdnanceTargetFlightId = record.TargetFlightId;
+            if (record.TargetFlightId != Guid.Empty)
+            {
+                OpenFlightDetails(record.TargetFlightId);
+                InspectFlightRoute(record.TargetFlightId);
+            }
+            ApplySelectedFlightMarker();
+        }
+
+        private string GetSourceLabel(OrdnanceEmploymentRecord record)
+        {
+            return record.SourceKind == OrdnanceEmploymentSourceKind.SamLauncher
+                ? $"SAM {ShortId(record.SourceSiteId)}"
+                : GetFlightLabel(record.SourceFlightId);
+        }
+
+        private string GetLaunchSourceLabel(
+            OrdnanceEmploymentRecord record,
+            OrdnanceLaunchDiagnostic launch)
+        {
+            return record.SourceKind == OrdnanceEmploymentSourceKind.SamLauncher
+                ? $"SAM launcher {ShortId(record.SourceComponentId)}"
+                : $"aircraft {ShortId(launch.SourceAircraftId)}";
+        }
+
+        private string GetFlightLabel(Guid flightId)
+        {
+            if (flightId == Guid.Empty)
+                return "—";
+            return TryFindFlight(flightId, out var flight, out _, out _)
+                ? $"FLT {ShortId(flight.FlightId)}"
+                : $"FLT {ShortId(flightId)}";
+        }
+
+        private static string GetOrdnanceName(Guid ordnanceTypeDefinitionId)
+        {
+            if (ordnanceTypeDefinitionId == Guid.Empty)
+                return "unknown ordnance";
+
+            var module = ModuleSingleton.Instance?.ActiveModule;
+            var definition = module?.OrdnanceTypeDefinitions
+                .FirstOrDefault(item => item.OrdnanceTypeDefinitionId == ordnanceTypeDefinitionId);
+            return definition?.Name ?? ShortId(ordnanceTypeDefinitionId);
         }
 
         private static string GetFlightName(AirFlight flight, Squadron squadron)
@@ -3168,32 +3661,88 @@ namespace Engine.Monobehaviours.Managers
                 .ToList();
             foreach (var record in records)
             {
-                var source = AirPositionToMapPosition(record.SourcePositionFeet);
-                var target = AirPositionToMapPosition(record.TargetPositionFeet);
+                var endpoints = GetOrdnanceVisualEndpoints(record);
+                var source = endpoints.source;
+                var target = endpoints.target;
                 if (Vector3.Distance(source, target) <= 0.01f)
                     continue;
                 var color = record.SourceKind == OrdnanceEmploymentSourceKind.SamLauncher
                     ? new Color(1f, 0.62f, 0.16f)
                     : new Color(1f, 0.86f, 0.24f);
-                var lineObject = new GameObject($"Ordnance Pass {ShortId(record.EmploymentPassId)}");
-                lineObject.transform.SetParent(ordnanceOverlayRoot, false);
-                var line = lineObject.AddComponent<LineRenderer>();
-                line.useWorldSpace = false;
-                line.positionCount = 2;
-                line.SetPositions(new[]
-                {
-                    source + new Vector3(0f, 0f, -0.50f),
-                    target + new Vector3(0f, 0f, -0.50f)
-                });
-                line.startWidth = 0.045f;
-                line.endWidth = 0.018f;
-                line.material = GetMovementArrowMaterial();
-                line.startColor = color;
-                line.endColor = new Color(color.r, color.g, color.b, 0.35f);
-                line.sortingOrder = 45;
-                CreateOrdnanceEndpoint(source, color, "Shooter");
-                CreateOrdnanceEndpoint(target, new Color(1f, 0.30f, 0.22f), "Target");
+                var launches = GetRecordLaunches(record).ToList();
+                for (var index = 0; index < launches.Count; index++)
+                    CreateOrdnanceLaunchOverlay(
+                        record,
+                        launches[index],
+                        index,
+                        launches.Count,
+                        source,
+                        target,
+                        color);
             }
+        }
+
+        private void CreateOrdnanceLaunchOverlay(
+            OrdnanceEmploymentRecord record,
+            OrdnanceLaunchDiagnostic launch,
+            int index,
+            int count,
+            Vector3 source,
+            Vector3 target,
+            Color color)
+        {
+            var selected = selectedOrdnancePassId != Guid.Empty
+                           && record.EmploymentPassId == selectedOrdnancePassId;
+            var direction = target - source;
+            var normal = direction.sqrMagnitude <= 0.0001f
+                ? Vector3.right
+                : Vector3.Cross(direction.normalized, Vector3.forward).normalized;
+            var spread = count <= 1 ? 0f : (index - (count - 1) * 0.5f) * 0.055f;
+            var offset = normal * spread;
+            var lineObject = new GameObject(
+                $"Ordnance Launch {ShortId(record.EmploymentPassId)}-{launch.Sequence}");
+            lineObject.transform.SetParent(ordnanceOverlayRoot, false);
+            var line = lineObject.AddComponent<LineRenderer>();
+            line.useWorldSpace = false;
+            line.positionCount = 2;
+            line.SetPositions(new[]
+            {
+                source + offset + new Vector3(0f, 0f, -0.50f),
+                target + offset + new Vector3(0f, 0f, -0.50f)
+            });
+            line.startWidth = selected ? 0.070f : 0.036f;
+            line.endWidth = selected ? 0.030f : 0.014f;
+            line.material = GetMovementArrowMaterial();
+            var selectedColor = selected ? new Color(0.28f, 1f, 0.70f) : color;
+            line.startColor = selectedColor;
+            line.endColor = selected
+                ? new Color(1f, 0.28f, 0.22f, 0.9f)
+                : new Color(color.r, color.g, color.b, 0.35f);
+            line.sortingOrder = selected ? 52 : 45;
+            CreateOrdnanceEndpoint(source + offset, selectedColor, $"Shooter {launch.Sequence}");
+            CreateOrdnanceEndpoint(
+                target + offset,
+                selected ? new Color(1f, 0.18f, 0.16f) : new Color(1f, 0.30f, 0.22f),
+                $"Target {launch.Sequence}");
+            CreateOrdnanceMapLabel(
+                Vector3.Lerp(source, target, 0.52f) + offset,
+                $"L{launch.Sequence} {ShortId(launch.SourceAircraftId)}→{ShortId(launch.TargetAircraftId)}",
+                selected);
+        }
+
+        private void CreateOrdnanceMapLabel(Vector3 position, string text, bool selected)
+        {
+            var labelObject = new GameObject("Ordnance Launch Label");
+            labelObject.transform.SetParent(ordnanceOverlayRoot, false);
+            labelObject.transform.localPosition = position + new Vector3(0.05f, 0.05f, -0.52f);
+            var textMesh = labelObject.AddComponent<TextMesh>();
+            textMesh.anchor = TextAnchor.LowerLeft;
+            textMesh.alignment = TextAlignment.Left;
+            textMesh.characterSize = selected ? 0.016f : 0.012f;
+            textMesh.fontSize = selected ? 24 : 20;
+            textMesh.color = selected ? new Color(1f, 1f, 0.70f) : new Color(1f, 0.92f, 0.42f);
+            textMesh.text = text;
+            labelObject.GetComponent<MeshRenderer>().sortingOrder = selected ? 54 : 47;
         }
 
         private void CreateOrdnanceEndpoint(Vector3 position, Color color, string name)

@@ -30,10 +30,21 @@ namespace Models.Gameplay.Campaign
     public sealed class OrdnanceShotDiagnostic
     {
         public int Sequence;
+        public Guid SourceAircraftId;
         public Guid TargetAircraftId;
         public float Probability;
         public float Roll;
         public OrdnanceShotResult Result;
+    }
+
+    [Serializable]
+    public sealed class OrdnanceLaunchDiagnostic
+    {
+        public int Sequence;
+        public Guid SourceAircraftId;
+        public Guid TargetAircraftId;
+        public Guid OrdnanceTypeDefinitionId;
+        public DateTime ReleasedAt;
     }
 
     [Serializable]
@@ -68,6 +79,7 @@ namespace Models.Gameplay.Campaign
         public float ReleaseRangeKm;
         public UnityEngine.Vector3 SourcePositionFeet;
         public UnityEngine.Vector3 TargetPositionFeet;
+        public List<OrdnanceLaunchDiagnostic> Launches = new List<OrdnanceLaunchDiagnostic>();
     }
 
     [Serializable]
@@ -90,6 +102,7 @@ namespace Models.Gameplay.Campaign
         public float ReleaseRangeKm;
         public UnityEngine.Vector3 SourcePositionFeet;
         public UnityEngine.Vector3 TargetPositionFeet;
+        public List<OrdnanceLaunchDiagnostic> Launches = new List<OrdnanceLaunchDiagnostic>();
         public List<OrdnanceShotDiagnostic> Shots = new List<OrdnanceShotDiagnostic>();
         public string Detail = string.Empty;
     }
