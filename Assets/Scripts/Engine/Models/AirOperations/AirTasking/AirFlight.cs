@@ -442,6 +442,47 @@ namespace Models.Gameplay.Campaign
             routeView = null;
         }
 
+        public FlightCancellationResult AbortAndReplaceRecoveryRoute(
+            DateTime occurredAt,
+            string reason,
+            IEnumerable<AirWaypoint> recoveryWaypoints)
+        {
+            if (lifecycleState == AirTaskingLifecycleState.Completed
+                || lifecycleState == AirTaskingLifecycleState.Failed
+                || lifecycleState == AirTaskingLifecycleState.Cancelled
+                || lifecycleState == AirTaskingLifecycleState.Aborted && !IsAirborne)
+                return FlightCancellationResult.None;
+            if (!IsAirborne)
+                return Cancel(occurredAt, reason);
+
+            var replacement = recoveryWaypoints?.ToList();
+            if (replacement == null
+                || replacement.Count == 0
+                || replacement[replacement.Count - 1].Action != AirWaypointAction.Land)
+            {
+                throw new ArgumentException(
+                    "A recovery route must end with a landing waypoint.",
+                    nameof(recoveryWaypoints));
+            }
+
+            var currentWaypoint = CurrentWaypoint;
+            var amendedRoute = route
+                .Take(Mathf.Clamp(currentWaypointIndex, 0, route.Count))
+                .ToList();
+            EnsureAbortRouteHasMissionSemantics(amendedRoute, occurredAt);
+            var recoveryStartIndex = amendedRoute.Count;
+            amendedRoute.AddRange(replacement);
+
+            route = amendedRoute;
+            routeView = null;
+            currentWaypointIndex = recoveryStartIndex;
+            lifecycleState = AirTaskingLifecycleState.Aborted;
+            executionPhase = FlightExecutionPhase.Returning;
+            isWaitingAtRendezvous = false;
+            RecordEvent(currentWaypoint, occurredAt, reason, AirWaypointAction.ReturnToBase);
+            return FlightCancellationResult.Aborted;
+        }
+
         public void Land(DateTime occurredAt)
         {
             var waypoint = CurrentWaypoint;
@@ -482,10 +523,56 @@ namespace Models.Gameplay.Campaign
             AirWaypointAction fallbackAction = AirWaypointAction.Transit)
         {
             executionEvents.Add(new FlightExecutionEvent(
-                waypoint.WaypointId,
-                waypoint.Action,
+                waypoint?.WaypointId ?? Guid.Empty,
+                waypoint?.Action ?? fallbackAction,
                 occurredAt,
                 detail));
+        }
+
+        private void EnsureAbortRouteHasMissionSemantics(
+            ICollection<AirWaypoint> amendedRoute,
+            DateTime occurredAt)
+        {
+            var originalEffect = EffectWaypoints.FirstOrDefault();
+            if (originalEffect == null)
+                return;
+
+            if (!amendedRoute.Any(IsEffectWaypoint))
+            {
+                amendedRoute.Add(new AirWaypoint(
+                    positionFeet,
+                    AirWaypointAction.MissionAction,
+                    occurredAt,
+                    originalEffect.EffectArea));
+                return;
+            }
+
+            var stationEntries = amendedRoute
+                .Where(waypoint => waypoint.Action == AirWaypointAction.StationEntry)
+                .ToList();
+            foreach (var station in stationEntries)
+            {
+                var hasEndpoint = amendedRoute.Any(waypoint =>
+                    waypoint.Action == AirWaypointAction.StationEndpoint
+                    && waypoint.HasRepeat
+                    && waypoint.RepeatFromWaypointId == station.WaypointId);
+                if (hasEndpoint)
+                    continue;
+
+                amendedRoute.Add(new AirWaypoint(
+                    positionFeet,
+                    AirWaypointAction.StationEndpoint,
+                    occurredAt,
+                    hasRepeat: true,
+                    repeatFromWaypointId: station.WaypointId,
+                    repeatUntil: occurredAt));
+            }
+        }
+
+        private static bool IsEffectWaypoint(AirWaypoint waypoint)
+        {
+            return waypoint.Action == AirWaypointAction.StationEntry
+                   || waypoint.Action == AirWaypointAction.MissionAction;
         }
 
         private AirWaypoint GetRequiredWaypoint(

@@ -595,6 +595,8 @@ _Avoid_: using an operational replan to change an airborne sortie's assigned mis
 
 **Execution-level tasking** — a bounded decision made by an active flight's own mission behavior within its already-authorized mission intent, such as a DCA flight intercepting inside its patrol area or an on-call CAS flight receiving a target. It may replace only the unflown mission segment and materializes the amendment into the authoritative route; it is not an air-planning retask.
 
+**Counter-air tactical guidance** — execution-level steering for an active DCA or OCA flight that temporarily guides toward a hostile flight when that hostile is inside the mission-authorized air-combat area but still outside the formation's useful air-to-air weapon range. The guidance aims for a standoff point near preferred launch range rather than co-locating with the target; once close enough to shoot, or once the effect window ends, the flight resumes its materialized route. It does not authorize pursuit during recovery, after mission-useful ordnance exhaustion, or outside the mission's tactical area.
+
 **Air-to-air engagement posture** — the active mission's rule for when a flight may spend air-to-air ordnance against hostile aircraft. Strike and other non-air-combat flights continue self-defense passes while a **hot threat** remains, then resume their primary mission when no hot threat remains or no suitable air-to-air ordnance is available. Defensive counter-air flights engage hostile aircraft inside their defended airspace. Offensive counter-air flights actively hunt hostile aircraft during ingress and while operating in their assigned mission area, then revert to self-defense during egress.
 
 **Hot threat** — a hostile flight inside the evaluating flight's live air-to-air employment envelope and flying toward it within ±30 degrees. A hostile flight with a pending ordnance effect targeting the evaluating flight remains a threat regardless of its later range or aspect.
@@ -602,6 +604,8 @@ _Avoid_: using an operational replan to change an airborne sortie's assigned mis
 **Air threat priority** — the relative danger of hot threats, ranked from their range and aspect: a closer and more directly nose-on hostile is more dangerous, while a farther or less directly approaching hostile is less dangerous. Cold hostile flights are not threats; a hostile with ordnance already pending against the evaluating flight takes priority over geometry-only threats.
 
 **OCA target priority** — the order in which an offensive counter-air flight selects eligible hostile flights during its hunting posture. Hot threats take priority; otherwise the nearest eligible hostile is selected, with the larger hostile flight breaking equal-range ties.
+
+**OCA penetration layer** — the planning-layer ordering for offensive counter-air mission areas. When known hostile air-combat locations lie between friendly fighter operating bases and a deeper hostile air area, the deeper area is screened; OCA request generation should prefer the least-screened known layer first. Within that layer, the requested OCA sweep should use a probe center on the friendly-side edge of the known hostile air-combat area rather than driving to the defended center, so fighters can contest, wear down, and exploit defenders without treating the deepest known point as the waypoint. OCA execution should then fly a repeated push-pull probe track from the friendly side toward the defended side and back until the effect window ends or the formation runs out of mission-useful air-to-air ordnance. The known hostile locations come from the air-planning snapshot, so future track-derived intelligence can limit this ordering without giving planners perfect knowledge.
 
 **Recovery diversion** — an execution-level change to an airborne flight's return and landing destination when its assigned recovery airport is no longer friendly. The flight applies the recovery-airport fallback hierarchy without changing its locked mission or target; because range is ignored initially, any valid alternate is reachable.
 
@@ -649,7 +653,7 @@ In the initial air-execution model, airport damage and functional level do not a
 
 **Approach waypoint** — the final generated navigation waypoint before recovery, placed on the inbound line using the flight's cruise speed, descent rate, and current altitude so descent begins late enough to avoid ground-level transit and reaches the airport near zero altitude. Reaching the following airport landing waypoint ends the flight without runway, pattern, or ATC simulation.
 
-**Racetrack station route** — the shared station-keeping route pattern for initial DCA, AWACS, and tanker flights: enter the station, fly between two track-end waypoints, follow the terminal endpoint's repeat instruction until its release time, then continue to the return legs. An automatically derived v1 racetrack is centered on the mission-area center, aligned east-west at mission altitude, and sized from the campaign tile scale; authored route waypoints override that placeholder geometry.
+**Racetrack station route** — the shared station-keeping route pattern for time-based air missions: enter the station, fly between two track-end waypoints, follow the terminal endpoint's repeat instruction until its release time, then continue to the return legs. An automatically derived v1 DCA, AWACS, or tanker racetrack is centered on the mission-area center, aligned east-west at mission altitude, and sized from the campaign tile scale. OCA uses the same station-loop mechanic but aligns its longer probe track along the ingress axis so fighters repeatedly press toward and withdraw from hostile airspace; authored route waypoints override these placeholder geometries.
 
 **Nominal cruise altitude** — the aircraft type's normal transit altitude in feet above mean sea level.
 
@@ -673,7 +677,7 @@ _Avoid_: implementing navigation, takeoff, RTB, or landing separately for each m
 
 An initial DCA, AWACS, or tanker flight achieves its mission by reaching station and remaining there through its assigned effect end. It becomes completed after returning and landing; a flight that never reaches station fails, while one explicitly directed home before achieving the mission is aborted.
 
-An initial OCA flight achieves its placeholder mission by traversing its sweep mission waypoint, returning, and landing. It records no combat or air-superiority effect until air-combat resolution is added.
+An OCA flight achieves its mission by entering its probe station, remaining available to hunt hostile aircraft through the assigned effect window, and then recovering. If it exhausts mission-useful air-to-air ordnance before satisfying that effect, it returns to base early as an aborted combat mission.
 
 Flight size is adaptive. The package builder chooses the smallest aircraft allocation expected to produce the requested effect at acceptable risk, with alliance doctrine able to add a force or redundancy margin. Support-flight size reflects required service capacity, while combat-flight size reflects expected opposition and desired advantage.
 
@@ -722,7 +726,7 @@ Rendezvous is a package coordination choice rather than a universal rule for eve
 
 When suitable aircraft are otherwise comparable, package building prefers flights from squadrons at the same airport to reduce coordination and transit cost. This is a preference rather than a requirement; one package may still combine flights from different operating bases.
 
-Initial generated routes keep ingress and egress distinct with simple laterally offset transit waypoints. DCA, AWACS, and tanker flights then execute their racetrack, while OCA flights traverse their sweep mission waypoint; multi-flight DCA and OCA packages insert their required rendezvous before the shared ingress leg. The initial geometry prevents routine outbound-route reuse but does not claim to minimize operational risk; threat avoidance, fuel-state routing, tanker placement, support timing, assembly patterns, and airspace constraints remain future route-planning improvements.
+Initial generated routes keep ingress and egress distinct with simple laterally offset transit waypoints. DCA, AWACS, tanker, and OCA flights then execute their station loops; OCA uses a longer ingress-axis probe loop instead of a static point action. Multi-flight DCA and OCA packages insert their required rendezvous before the shared ingress leg. The initial geometry prevents routine outbound-route reuse but does not claim to minimize operational risk; threat avoidance, fuel-state routing, tanker placement, support timing, assembly patterns, and airspace constraints remain future route-planning improvements.
 
 _Avoid_: creating independent strike, escort, and support flights without recording the operational effort that coordinates them.
 

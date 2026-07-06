@@ -66,7 +66,12 @@ namespace Engine.Monobehaviours.Managers
         private const int MovementArrowHeadPixelSize = 18;
         private const float RailwayLineWidth = 0.05f;
         private const float AirRouteLineWidth = 0.025f;
+        private const float AirIntentLineWidth = 0.052f;
+        private const float AirIntentAreaLineWidth = 0.038f;
+        private const float AirEngagementLineWidth = 0.060f;
         private const float AirMarkerRadius = 0.12f;
+        private const float CounterAirPreferredRangeFraction = 0.85f;
+        private const float OcaTacticalGuidancePaddingTiles = 2f;
         private static readonly Color RailwayLineColor = new Color(0.38f, 0.32f, 0.24f);
         private static readonly Color SupplyHubMarkerColor = new Color(0.88f, 0.58f, 0.10f);
         private static readonly Color SupplyHubMarkerBorderColor = new Color(0.98f, 0.92f, 0.78f);
@@ -2348,13 +2353,22 @@ namespace Engine.Monobehaviours.Managers
         private void OpenFlightDetails(Guid flightId)
         {
             selectedFlightId = flightId;
-            ApplySelectedFlightMarker();
+            RefreshAirOverlaysForSelection();
             if (flightDetailBackdrop != null)
             {
                 flightDetailBackdrop.style.display = DisplayStyle.Flex;
                 flightDetailBackdrop.BringToFront();
             }
             RefreshFlightDetails();
+        }
+
+        private void RefreshAirOverlaysForSelection()
+        {
+            ClearAirOverlays();
+            flightPickTargets.Clear();
+            CreateAirOverlays();
+            SetAirRouteVisibility(overlayRoutesToggle == null || overlayRoutesToggle.value);
+            ApplySelectedFlightMarker();
         }
 
         private void ApplySelectedFlightMarker()
@@ -2408,7 +2422,7 @@ namespace Engine.Monobehaviours.Managers
         private void CloseFlightDetails()
         {
             selectedFlightId = Guid.Empty;
-            ApplySelectedFlightMarker();
+            RefreshAirOverlaysForSelection();
             if (flightDetailBackdrop != null)
                 flightDetailBackdrop.style.display = DisplayStyle.None;
             flightDetailContent?.Clear();
@@ -3637,11 +3651,705 @@ namespace Engine.Monobehaviours.Managers
                         if (!flight.IsAirborne || !flight.HasPosition)
                             continue;
 
+                        if (flight.FlightId == selectedFlightId)
+                            CreateAirIntentVisuals(flight, alliance);
                         CreateAirRoute(flight, alliance);
                         CreateAirMarker(flight, alliance);
                     }
                 }
             }
+
+            CreateSelectedFlightTargetOverlay();
+        }
+
+        private void CreateAirIntentVisuals(AirFlight flight, Alliance alliance)
+        {
+            if (!TryGetFlightMissionArea(flight, out var area))
+                return;
+
+            var color = GetAirMissionIntentColor(flight.MissionType, alliance);
+            color.a = 0.78f;
+            var center = GetMissionAreaMapCenter(area);
+            var radius = GetMissionAreaMapRadius(area);
+            var label = GetAirIntentLabel(flight.MissionType);
+
+            CreateAirIntentCircle(
+                $"Air Intent Area {ShortId(flight.FlightId)}",
+                airOverlayRoot,
+                center,
+                radius,
+                WithAlpha(color, 0.42f),
+                AirIntentAreaLineWidth,
+                -0.30f,
+                22);
+            CreateAirIntentLabel(
+                airOverlayRoot,
+                center + new Vector3(-radius * 0.58f, radius * 0.48f, 0f),
+                label,
+                WithAlpha(color, 0.92f),
+                24);
+
+            switch (flight.MissionType)
+            {
+                case AirMissionRequestType.OffensiveCounterAirSweep:
+                    CreateAirSweepPattern(flight, center, radius, color);
+                    break;
+
+                case AirMissionRequestType.DefensiveCounterAirPatrol:
+                    CreateAirPatrolPattern(flight, center, radius, color);
+                    break;
+
+                case AirMissionRequestType.ProvideAirborneC2:
+                    CreateAirSupportOrbitPattern(flight, center, radius, color, "C2");
+                    break;
+
+                case AirMissionRequestType.ProvideAerialRefueling:
+                    CreateAirSupportOrbitPattern(flight, center, radius, color, "TANKER");
+                    break;
+            }
+        }
+
+        private void CreateAirSweepPattern(
+            AirFlight flight,
+            Vector3 center,
+            float radius,
+            Color color)
+        {
+            CreateAirIntentCircle(
+                $"Air Sweep Focus Area {ShortId(flight.FlightId)}",
+                airOverlayRoot,
+                center,
+                Mathf.Max(0.20f, radius * 0.72f),
+                WithAlpha(color, 0.55f),
+                AirIntentLineWidth,
+                -0.34f,
+                25);
+        }
+
+        private void CreateAirPatrolPattern(
+            AirFlight flight,
+            Vector3 center,
+            float radius,
+            Color color)
+        {
+            CreateAirIntentCircle(
+                $"Air Patrol Inner Orbit {ShortId(flight.FlightId)}",
+                airOverlayRoot,
+                center,
+                Mathf.Max(0.16f, radius * 0.58f),
+                WithAlpha(color, 0.62f),
+                AirIntentLineWidth,
+                -0.34f,
+                25);
+            CreateStationLaneVisuals(flight, WithAlpha(color, 0.76f), "PATROL LEG", 25);
+        }
+
+        private void CreateAirSupportOrbitPattern(
+            AirFlight flight,
+            Vector3 center,
+            float radius,
+            Color color,
+            string label)
+        {
+            if (!TryCreateStationRacetrack(flight, color, label))
+            {
+                CreateAirIntentCircle(
+                    $"Air {label} Orbit {ShortId(flight.FlightId)}",
+                    airOverlayRoot,
+                    center,
+                    Mathf.Max(0.16f, radius * 0.48f),
+                    WithAlpha(color, 0.66f),
+                    AirIntentLineWidth,
+                    -0.34f,
+                    25);
+            }
+
+            if (label == "C2")
+            {
+                CreateAirIntentCircle(
+                    $"Air C2 Outer Ring {ShortId(flight.FlightId)}",
+                    airOverlayRoot,
+                    center,
+                    Mathf.Max(0.24f, radius * 0.78f),
+                    WithAlpha(color, 0.35f),
+                    AirIntentAreaLineWidth,
+                    -0.35f,
+                    24);
+            }
+        }
+
+        private void CreateStationLaneVisuals(
+            AirFlight flight,
+            Color color,
+            string label,
+            int sortingOrder)
+        {
+            foreach (var pair in GetStationPairs(flight))
+            {
+                var start = AirPositionToMapPosition(pair.entry.PositionFeet);
+                var end = AirPositionToMapPosition(pair.endpoint.PositionFeet);
+                if (Vector3.Distance(start, end) <= 0.02f)
+                    continue;
+
+                CreateAirIntentPolyline(
+                    $"Air Station Lane {ShortId(flight.FlightId)}",
+                    airOverlayRoot,
+                    new[] { start, end },
+                    color,
+                    AirIntentLineWidth,
+                    -0.36f,
+                    sortingOrder);
+                CreateAirIntentLabel(
+                    airOverlayRoot,
+                    Vector3.Lerp(start, end, 0.5f) + new Vector3(0.06f, 0.04f, 0f),
+                    label,
+                    WithAlpha(color, 0.95f),
+                    sortingOrder + 1);
+            }
+        }
+
+        private bool TryCreateStationRacetrack(
+            AirFlight flight,
+            Color color,
+            string label)
+        {
+            var pair = GetStationPairs(flight).FirstOrDefault();
+            if (pair.entry == null || pair.endpoint == null)
+                return false;
+
+            var start = AirPositionToMapPosition(pair.entry.PositionFeet);
+            var end = AirPositionToMapPosition(pair.endpoint.PositionFeet);
+            var delta = end - start;
+            if (delta.sqrMagnitude <= 0.0025f)
+                return false;
+
+            var direction = delta.normalized;
+            var normal = new Vector3(-direction.y, direction.x, 0f);
+            var width = Mathf.Clamp(delta.magnitude * 0.22f, 0.16f, 0.34f);
+            var points = new List<Vector3>
+            {
+                start + normal * width,
+                end + normal * width,
+                end - normal * width,
+                start - normal * width,
+                start + normal * width
+            };
+            CreateAirIntentPolyline(
+                $"Air {label} Racetrack {ShortId(flight.FlightId)}",
+                airOverlayRoot,
+                points,
+                WithAlpha(color, 0.78f),
+                AirIntentLineWidth,
+                -0.35f,
+                25);
+            CreateAirIntentLabel(
+                airOverlayRoot,
+                Vector3.Lerp(start, end, 0.5f) + normal * (width + 0.06f),
+                label,
+                WithAlpha(color, 0.95f),
+                26);
+            return true;
+        }
+
+        private IEnumerable<(AirWaypoint entry, AirWaypoint endpoint)> GetStationPairs(AirFlight flight)
+        {
+            var route = flight.Route;
+            foreach (var entry in route.Where(waypoint => waypoint.Action == AirWaypointAction.StationEntry))
+            {
+                var endpoint = route.FirstOrDefault(waypoint =>
+                    waypoint.Action == AirWaypointAction.StationEndpoint
+                    && waypoint.HasRepeat
+                    && waypoint.RepeatFromWaypointId == entry.WaypointId);
+                if (endpoint != null)
+                    yield return (entry, endpoint);
+            }
+        }
+
+        private void CreateSelectedFlightTargetOverlay()
+        {
+            if (gameManager == null
+                || selectedFlightId == Guid.Empty
+                || !TryFindFlight(selectedFlightId, out var source, out var sourcePackage, out _)
+                || !source.HasPosition)
+                return;
+
+            if (!TryFindCounterAirGuidance(sourcePackage, source, out var target, out var guidancePositionFeet)
+                || !target.HasPosition)
+                return;
+
+            CreateSelectedTargetOverlay(
+                source,
+                target,
+                guidancePositionFeet,
+                source.MissionType == AirMissionRequestType.OffensiveCounterAirSweep
+                    ? "TACTICAL VECTOR"
+                    : "ENGAGING",
+                source.MissionType == AirMissionRequestType.OffensiveCounterAirSweep
+                    ? new Color(1f, 0.47f, 0.18f)
+                    : new Color(1f, 0.80f, 0.22f));
+        }
+
+        private bool TryFindCounterAirGuidance(
+            AirPackage sourcePackage,
+            AirFlight sourceFlight,
+            out AirFlight targetFlight,
+            out Vector3 guidancePositionFeet)
+        {
+            targetFlight = null;
+            guidancePositionFeet = default;
+            if (sourcePackage == null
+                || !CanShowCounterAirTarget(sourceFlight, gameManager.CurrentTime))
+                return false;
+
+            var maximumRangeKm = GetMaximumAirToAirRangeKm(sourceFlight);
+            if (maximumRangeKm <= 0f)
+                return false;
+
+            var preferredRangeKm = Math.Max(1f, maximumRangeKm * CounterAirPreferredRangeFraction);
+            var ownHorizontal = new Vector2(
+                sourceFlight.PositionFeet.x,
+                sourceFlight.PositionFeet.z);
+            targetFlight = GetAllAirPackages()
+                .Where(package => AreHostile(sourcePackage.Alliance, package.Alliance))
+                .SelectMany(package => package.Flights)
+                .Where(candidate => candidate.IsAirborne
+                                    && candidate.HasPosition
+                                    && candidate.ExecutionPhase != FlightExecutionPhase.Returning
+                                    && candidate.ExecutionPhase != FlightExecutionPhase.Landing
+                                    && HasLiveAircraft(candidate)
+                                    && IsInsideCounterAirTargetArea(sourceFlight, candidate))
+                .Select(candidate => new
+                {
+                    Flight = candidate,
+                    DistanceKm = Vector2.Distance(
+                                     ownHorizontal,
+                                     new Vector2(
+                                         candidate.PositionFeet.x,
+                                         candidate.PositionFeet.z))
+                                 / AirspaceGeometry.FeetPerKilometer
+                })
+                .Where(candidate => candidate.DistanceKm > preferredRangeKm)
+                .OrderBy(candidate => candidate.DistanceKm)
+                .ThenBy(candidate => candidate.Flight.FlightId)
+                .Select(candidate => candidate.Flight)
+                .FirstOrDefault();
+
+            if (targetFlight == null)
+                return false;
+
+            var targetFeet = targetFlight.PositionFeet;
+            var horizontal = new Vector3(
+                targetFeet.x - sourceFlight.PositionFeet.x,
+                0f,
+                targetFeet.z - sourceFlight.PositionFeet.z);
+            if (horizontal.sqrMagnitude <= 1f)
+                return false;
+
+            var standoffFeet = preferredRangeKm * AirspaceGeometry.FeetPerKilometer;
+            guidancePositionFeet = targetFeet - horizontal.normalized * standoffFeet;
+            guidancePositionFeet.y = sourceFlight.CurrentWaypoint?.PositionFeet.y
+                                     ?? sourceFlight.PositionFeet.y;
+            return true;
+        }
+
+        private bool CanShowCounterAirTarget(AirFlight flight, DateTime currentTime)
+        {
+            if (flight.LifecycleState != AirTaskingLifecycleState.Active
+                || !IsCounterAirMission(flight.MissionType)
+                || flight.ExecutionPhase == FlightExecutionPhase.Returning
+                || flight.ExecutionPhase == FlightExecutionPhase.Landing
+                || flight.ExecutionPhase == FlightExecutionPhase.Ended)
+                return false;
+
+            try
+            {
+                if (currentTime >= flight.EffectEnd)
+                    return false;
+            }
+            catch (InvalidOperationException)
+            {
+                return false;
+            }
+
+            return flight.MissionType == AirMissionRequestType.OffensiveCounterAirSweep
+                       && (flight.ExecutionPhase == FlightExecutionPhase.Outbound
+                           || flight.ExecutionPhase == FlightExecutionPhase.Executing)
+                   || flight.MissionType == AirMissionRequestType.DefensiveCounterAirPatrol
+                       && flight.ExecutionPhase == FlightExecutionPhase.Executing;
+        }
+
+        private bool IsInsideCounterAirTargetArea(
+            AirFlight sourceFlight,
+            AirFlight targetFlight)
+        {
+            AirMissionArea missionArea;
+            try
+            {
+                missionArea = sourceFlight.MissionArea;
+            }
+            catch (InvalidOperationException)
+            {
+                return false;
+            }
+
+            var paddingTiles = sourceFlight.MissionType == AirMissionRequestType.OffensiveCounterAirSweep
+                ? OcaTacticalGuidancePaddingTiles
+                : 0f;
+            var center = AirspaceGeometry.TileCenterFeet(
+                missionArea.CenterTileId,
+                gameManager.SimulationSettings.TileDistanceKM);
+            var horizontalDistance = Vector2.Distance(
+                new Vector2(center.x, center.z),
+                new Vector2(targetFlight.PositionFeet.x, targetFlight.PositionFeet.z));
+            var radiusFeet = (missionArea.RadiusTiles + paddingTiles + 0.55f)
+                             * gameManager.SimulationSettings.TileDistanceKM
+                             * AirspaceGeometry.FeetPerKilometer;
+            return horizontalDistance <= radiusFeet;
+        }
+
+        private float GetMaximumAirToAirRangeKm(AirFlight flight)
+        {
+            if (!gameManager.squadronSystem.TryGetSquadron(flight.SquadronId, out var squadron))
+                return 0f;
+
+            var ordnanceTypes = ModuleSingleton.Instance?.ActiveModule?.OrdnanceTypeDefinitions
+                ?.ToDictionary(definition => definition.OrdnanceTypeDefinitionId);
+            if (ordnanceTypes == null)
+                return 0f;
+
+            return squadron.Aircraft
+                .Where(aircraft => aircraft.AssignedFlightId == flight.FlightId
+                                   && aircraft.Status != CampaignAircraftStatus.Lost)
+                .SelectMany(aircraft => aircraft.Loadout)
+                .Where(item => item.Count > 0
+                               && ordnanceTypes.TryGetValue(
+                                   item.OrdnanceTypeDefinitionId,
+                                   out var definition)
+                               && IsAirToAir(definition))
+                .Select(item => EffectiveMaximumRangeKm(
+                    ordnanceTypes[item.OrdnanceTypeDefinitionId],
+                    flight))
+                .DefaultIfEmpty(0f)
+                .Max();
+        }
+
+        private static float EffectiveMaximumRangeKm(
+            OrdnanceTypeDefinition ordnance,
+            AirFlight sourceFlight)
+        {
+            if (ordnance.EmploymentCategory != OrdnanceEmploymentCategory.AirToAirRadar)
+                return ordnance.MaximumRangeKm;
+
+            var altitudeMultiplier = 1f + Mathf.Clamp(
+                (sourceFlight.PositionFeet.y - 10000f) / 100000f,
+                0f,
+                0.3f);
+            var speedMultiplier = 1f + Mathf.Clamp(
+                (sourceFlight.SpeedKnots - 400f) / 2000f,
+                -0.05f,
+                0.2f);
+            return ordnance.MaximumRangeKm * altitudeMultiplier * speedMultiplier;
+        }
+
+        private static bool IsAirToAir(OrdnanceTypeDefinition definition)
+        {
+            return definition.EmploymentCategory == OrdnanceEmploymentCategory.AirToAirRadar
+                   || definition.EmploymentCategory == OrdnanceEmploymentCategory.AirToAirInfrared;
+        }
+
+        private static bool IsCounterAirMission(AirMissionRequestType missionType)
+        {
+            return missionType == AirMissionRequestType.DefensiveCounterAirPatrol
+                   || missionType == AirMissionRequestType.OffensiveCounterAirSweep;
+        }
+
+        private static bool AreHostile(Alliance first, Alliance second)
+        {
+            return (first == Alliance.Bluefor && second == Alliance.Redfor)
+                   || (first == Alliance.Redfor && second == Alliance.Bluefor);
+        }
+
+        private bool HasLiveAircraft(AirFlight flight)
+        {
+            return gameManager.squadronSystem.TryGetSquadron(flight.SquadronId, out var squadron)
+                   && squadron.Aircraft.Any(aircraft =>
+                       aircraft.AssignedFlightId == flight.FlightId
+                       && aircraft.Status != CampaignAircraftStatus.Lost);
+        }
+
+        private IEnumerable<AirPackage> GetAllAirPackages()
+        {
+            foreach (var alliance in new[] { Alliance.Bluefor, Alliance.Redfor })
+            {
+                var commander = gameManager.GetAllianceAirTaskingCommander(alliance);
+                if (commander == null)
+                    continue;
+
+                foreach (var package in commander.Packages)
+                    yield return package;
+            }
+        }
+
+        private void CreateSelectedTargetOverlay(
+            AirFlight source,
+            AirFlight target,
+            Vector3 guidancePositionFeet,
+            string label,
+            Color color)
+        {
+            var sourcePosition = AirPositionToMapPosition(source.PositionFeet);
+            var guidancePosition = AirPositionToMapPosition(guidancePositionFeet);
+            var targetPosition = AirPositionToMapPosition(target.PositionFeet);
+            if (Vector3.Distance(sourcePosition, guidancePosition) <= 0.01f)
+                return;
+
+            var lineObject = new GameObject(
+                $"Air Tactical Vector {ShortId(source.FlightId)} to {ShortId(target.FlightId)}");
+            lineObject.transform.SetParent(airOverlayRoot, false);
+            var line = lineObject.AddComponent<LineRenderer>();
+            line.useWorldSpace = false;
+            line.positionCount = 2;
+            line.SetPositions(new[]
+            {
+                sourcePosition + new Vector3(0f, 0f, -0.40f),
+                guidancePosition + new Vector3(0f, 0f, -0.40f)
+            });
+            line.startWidth = AirEngagementLineWidth;
+            line.endWidth = AirEngagementLineWidth * 0.45f;
+            line.numCapVertices = 3;
+            line.material = GetMovementArrowMaterial();
+            line.startColor = WithAlpha(color, 0.95f);
+            line.endColor = WithAlpha(color, 0.70f);
+            line.sortingOrder = 43;
+
+            var direction = (guidancePosition - sourcePosition).normalized;
+            CreateAirIntentChevron(
+                airOverlayRoot,
+                guidancePosition - direction * 0.16f,
+                direction,
+                0.13f,
+                WithAlpha(color, 1f),
+                45);
+            CreateAirIntentCircle(
+                $"Air Guidance Point {ShortId(source.FlightId)}",
+                airOverlayRoot,
+                guidancePosition,
+                0.24f,
+                WithAlpha(color, 0.95f),
+                0.045f,
+                -0.41f,
+                46);
+            CreateAirIntentPolyline(
+                $"Air Guidance Standoff {ShortId(source.FlightId)} to {ShortId(target.FlightId)}",
+                airOverlayRoot,
+                new[] { guidancePosition, targetPosition },
+                new Color(1f, 0.24f, 0.16f, 0.34f),
+                AirRouteLineWidth,
+                -0.39f,
+                42);
+            CreateAirIntentCircle(
+                $"Air Tactical Target {ShortId(target.FlightId)}",
+                airOverlayRoot,
+                targetPosition,
+                0.28f,
+                new Color(1f, 0.22f, 0.16f, 0.92f),
+                0.045f,
+                -0.41f,
+                46);
+            CreateAirIntentLabel(
+                airOverlayRoot,
+                guidancePosition + new Vector3(0.08f, 0.08f, 0f),
+                label,
+                WithAlpha(color, 1f),
+                47);
+            CreateAirIntentLabel(
+                airOverlayRoot,
+                targetPosition + new Vector3(0.08f, -0.08f, 0f),
+                "TARGET",
+                new Color(1f, 0.30f, 0.22f),
+                47);
+        }
+
+        private bool TryGetFlightMissionArea(AirFlight flight, out AirMissionArea area)
+        {
+            area = flight.ActiveEffectArea;
+            if (area != null)
+                return true;
+
+            try
+            {
+                area = flight.MissionArea;
+                return area != null;
+            }
+            catch (InvalidOperationException)
+            {
+                area = null;
+                return false;
+            }
+        }
+
+        private Vector3 GetMissionAreaMapCenter(AirMissionArea area)
+        {
+            if (hexCentersByCell.TryGetValue(GetCell(area.CenterTileId), out var center))
+                return center;
+
+            return AirPositionToMapPosition(AirspaceGeometry.TileCenterFeet(
+                area.CenterTileId,
+                gameManager.SimulationSettings.TileDistanceKM));
+        }
+
+        private static float GetMissionAreaMapRadius(AirMissionArea area)
+        {
+            return Mathf.Max(0.34f, (area.RadiusTiles + 0.62f) * HexHeight);
+        }
+
+        private void CreateAirIntentPolyline(
+            string objectName,
+            Transform parent,
+            IReadOnlyList<Vector3> points,
+            Color color,
+            float width,
+            float zOffset,
+            int sortingOrder)
+        {
+            if (parent == null || points == null || points.Count < 2)
+                return;
+
+            var lineObject = new GameObject(objectName);
+            lineObject.transform.SetParent(parent, false);
+            var line = lineObject.AddComponent<LineRenderer>();
+            line.useWorldSpace = false;
+            line.positionCount = points.Count;
+            line.SetPositions(points
+                .Select(point => point + new Vector3(0f, 0f, zOffset))
+                .ToArray());
+            line.startWidth = width;
+            line.endWidth = width;
+            line.numCapVertices = 3;
+            line.numCornerVertices = 3;
+            line.material = GetMovementArrowMaterial();
+            line.startColor = color;
+            line.endColor = color;
+            line.sortingOrder = sortingOrder;
+        }
+
+        private void CreateAirIntentCircle(
+            string objectName,
+            Transform parent,
+            Vector3 center,
+            float radius,
+            Color color,
+            float width,
+            float zOffset,
+            int sortingOrder)
+        {
+            const int segmentCount = 36;
+            var points = new Vector3[segmentCount + 1];
+            for (var index = 0; index <= segmentCount; index++)
+            {
+                var angle = index / (float)segmentCount * Mathf.PI * 2f;
+                points[index] = center + new Vector3(
+                    Mathf.Cos(angle) * radius,
+                    Mathf.Sin(angle) * radius,
+                    0f);
+            }
+
+            CreateAirIntentPolyline(
+                objectName,
+                parent,
+                points,
+                color,
+                width,
+                zOffset,
+                sortingOrder);
+        }
+
+        private void CreateAirIntentChevron(
+            Transform parent,
+            Vector3 tip,
+            Vector3 direction,
+            float size,
+            Color color,
+            int sortingOrder)
+        {
+            if (parent == null || direction.sqrMagnitude <= 0.0001f)
+                return;
+
+            direction = direction.normalized;
+            var normal = new Vector3(-direction.y, direction.x, 0f);
+            var left = tip - direction * size + normal * size * 0.55f;
+            var right = tip - direction * size - normal * size * 0.55f;
+            CreateAirIntentPolyline(
+                "Air Intent Chevron",
+                parent,
+                new[] { left, tip, right },
+                color,
+                Mathf.Max(0.018f, size * 0.22f),
+                -0.39f,
+                sortingOrder);
+        }
+
+        private void CreateAirIntentLabel(
+            Transform parent,
+            Vector3 position,
+            string text,
+            Color color,
+            int sortingOrder)
+        {
+            if (parent == null || string.IsNullOrWhiteSpace(text))
+                return;
+
+            var labelObject = new GameObject($"Air Intent Label {text}");
+            labelObject.transform.SetParent(parent, false);
+            labelObject.transform.localPosition = position + new Vector3(0f, 0f, -0.43f);
+            var textMesh = labelObject.AddComponent<TextMesh>();
+            textMesh.anchor = TextAnchor.MiddleCenter;
+            textMesh.alignment = TextAlignment.Center;
+            textMesh.characterSize = 0.014f;
+            textMesh.fontSize = 22;
+            textMesh.color = color;
+            textMesh.text = text;
+            labelObject.GetComponent<MeshRenderer>().sortingOrder = sortingOrder;
+        }
+
+        private static Vector3 GetFlightHeadingVector(AirFlight flight)
+        {
+            var heading = flight.HeadingDegrees * Mathf.Deg2Rad;
+            var direction = new Vector3(Mathf.Sin(heading), Mathf.Cos(heading), 0f);
+            return direction.sqrMagnitude <= 0.0001f ? Vector3.up : direction.normalized;
+        }
+
+        private static Color WithAlpha(Color color, float alpha)
+        {
+            color.a = alpha;
+            return color;
+        }
+
+        private static Color GetAirMissionIntentColor(AirMissionRequestType mission, Alliance alliance)
+        {
+            return mission switch
+            {
+                AirMissionRequestType.OffensiveCounterAirSweep => new Color(1f, 0.48f, 0.18f),
+                AirMissionRequestType.DefensiveCounterAirPatrol => Color.Lerp(
+                    GetAirAllianceColor(alliance),
+                    new Color(0.20f, 1f, 0.72f),
+                    0.35f),
+                AirMissionRequestType.ProvideAirborneC2 => new Color(0.42f, 0.86f, 1f),
+                AirMissionRequestType.ProvideAerialRefueling => new Color(0.38f, 1f, 0.46f),
+                _ => GetAirAllianceColor(alliance)
+            };
+        }
+
+        private static string GetAirIntentLabel(AirMissionRequestType mission)
+        {
+            return mission switch
+            {
+                AirMissionRequestType.OffensiveCounterAirSweep => "SWEEP",
+                AirMissionRequestType.DefensiveCounterAirPatrol => "CAP",
+                AirMissionRequestType.ProvideAirborneC2 => "C2",
+                AirMissionRequestType.ProvideAerialRefueling => "TANKER",
+                _ => "AIR"
+            };
         }
 
         private void RefreshOrdnanceOverlay()
@@ -4021,10 +4729,24 @@ namespace Engine.Monobehaviours.Managers
             lineRenderer.numCornerVertices = 2;
             lineRenderer.material = GetMovementArrowMaterial();
             var color = GetAirAllianceColor(alliance);
-            color.a = 0.72f;
+            var hasTacticalGuidance = IsSelectedFlightUsingCounterAirGuidance(flight);
+            color.a = hasTacticalGuidance ? 0.22f : 0.72f;
             lineRenderer.startColor = color;
             lineRenderer.endColor = color;
+            if (hasTacticalGuidance)
+            {
+                lineRenderer.startWidth = AirRouteLineWidth * 0.65f;
+                lineRenderer.endWidth = AirRouteLineWidth * 0.65f;
+            }
             lineRenderer.sortingOrder = 24;
+        }
+
+        private bool IsSelectedFlightUsingCounterAirGuidance(AirFlight flight)
+        {
+            return selectedFlightId != Guid.Empty
+                   && flight.FlightId == selectedFlightId
+                   && TryFindFlight(flight.FlightId, out _, out var package, out _)
+                   && TryFindCounterAirGuidance(package, flight, out _, out _);
         }
 
         private void CreateAirMarker(AirFlight flight, Alliance alliance)

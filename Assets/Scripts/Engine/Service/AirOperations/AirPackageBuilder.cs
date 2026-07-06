@@ -22,6 +22,8 @@ namespace Engine.Service
         private const float DcaAndOcaAltitudeFeet = 40000f;
         private const float AwacsAltitudeFeet = 35000f;
         private const float TankerAltitudeFeet = 25000f;
+        private const float DefaultStationTrackHalfLengthTiles = 0.5f;
+        private const float OcaProbeTrackHalfLengthTiles = 1.5f;
 
         private readonly GameManager gameManager;
         private readonly ProjectedAirEffectService projectedEffects;
@@ -399,12 +401,6 @@ namespace Engine.Service
                 missionAltitude);
             var tileDistanceFeet = gameManager.SimulationSettings.TileDistanceKM
                                    * AirspaceGeometry.FeetPerKilometer;
-            var missionEntry = request.FulfillmentPattern == AirMissionRequestFulfillmentPattern.Sustained
-                ? missionCenter - Vector3.right * tileDistanceFeet * 0.5f
-                : missionCenter;
-            var missionExit = request.FulfillmentPattern == AirMissionRequestFulfillmentPattern.Sustained
-                ? missionCenter + Vector3.right * tileDistanceFeet * 0.5f
-                : missionCenter;
             var combat = request.RequestType == AirMissionRequestType.DefensiveCounterAirPatrol
                          || request.RequestType == AirMissionRequestType.OffensiveCounterAirSweep;
             var hasRendezvous = combat && plans.Count > 1;
@@ -421,10 +417,17 @@ namespace Engine.Service
 
             foreach (var plan in plans)
             {
+                var missionOrigin = hasRendezvous ? rendezvousPosition : plan.BasePositionFeet;
+                SetMissionGeometry(
+                    plan,
+                    request,
+                    missionOrigin,
+                    missionCenter,
+                    tileDistanceFeet);
                 plan.RouteGeometry = routeGeometryPlanner.Plan(new AirRouteGeometryPlanningContext(
-                    hasRendezvous ? rendezvousPosition : plan.BasePositionFeet,
-                    missionEntry,
-                    missionExit,
+                    missionOrigin,
+                    plan.MissionEntryPosition,
+                    plan.MissionExitPosition,
                     plan.BasePositionFeet,
                     tileDistanceFeet,
                     package.PackageId));
@@ -438,7 +441,7 @@ namespace Engine.Service
                     TravelSecondsAlong(
                         rendezvousPosition,
                         plans[0].RouteGeometry.IngressWaypoints,
-                        missionEntry,
+                        plans[0].MissionEntryPosition,
                         coordinatedSpeed,
                         plans.Min(plan => plan.AircraftType.ClimbRateFeetPerMinute),
                         plans.Min(plan => plan.AircraftType.DescentRateFeetPerMinute)));
@@ -459,7 +462,7 @@ namespace Engine.Service
                         TravelSecondsAlong(
                             plan.BasePositionFeet,
                             plan.RouteGeometry.IngressWaypoints,
-                            missionEntry,
+                            plan.MissionEntryPosition,
                             plan.AircraftType.CruiseSpeedKnots,
                             plan.AircraftType.ClimbRateFeetPerMinute,
                             plan.AircraftType.DescentRateFeetPerMinute));
@@ -487,7 +490,6 @@ namespace Engine.Service
                 BuildRoute(
                     plan,
                     request,
-                    missionCenter,
                     plannedEffectStart,
                     proposedEffectEnd,
                     hasRendezvous,
@@ -499,10 +501,45 @@ namespace Engine.Service
             return true;
         }
 
+        private static void SetMissionGeometry(
+            RoutePlan plan,
+            AirMissionRequest request,
+            Vector3 missionOrigin,
+            Vector3 missionCenter,
+            float tileDistanceFeet)
+        {
+            if (request.FulfillmentPattern != AirMissionRequestFulfillmentPattern.Sustained)
+            {
+                plan.MissionEntryPosition = missionCenter;
+                plan.MissionExitPosition = missionCenter;
+                return;
+            }
+
+            if (request.RequestType == AirMissionRequestType.OffensiveCounterAirSweep)
+            {
+                var horizontal = new Vector3(
+                    missionCenter.x - missionOrigin.x,
+                    0f,
+                    missionCenter.z - missionOrigin.z);
+                var direction = horizontal.sqrMagnitude > 1f
+                    ? horizontal.normalized
+                    : Vector3.right;
+                var offset = direction * tileDistanceFeet * OcaProbeTrackHalfLengthTiles;
+                plan.MissionEntryPosition = missionCenter - offset;
+                plan.MissionExitPosition = missionCenter + offset;
+                return;
+            }
+
+            var trackOffset = Vector3.right
+                              * tileDistanceFeet
+                              * DefaultStationTrackHalfLengthTiles;
+            plan.MissionEntryPosition = missionCenter - trackOffset;
+            plan.MissionExitPosition = missionCenter + trackOffset;
+        }
+
         private void BuildRoute(
             RoutePlan plan,
             AirMissionRequest request,
-            Vector3 missionCenter,
             DateTime effectStart,
             DateTime effectEnd,
             bool hasRendezvous,
@@ -530,23 +567,23 @@ namespace Engine.Service
 
             if (request.FulfillmentPattern == AirMissionRequestFulfillmentPattern.Sustained)
             {
-                var tileDistanceFeet = gameManager.SimulationSettings.TileDistanceKM
-                                       * AirspaceGeometry.FeetPerKilometer;
-                var trackOffset = Vector3.right * tileDistanceFeet * 0.5f;
                 var stationEntry = NewWaypoint(
-                    missionCenter - trackOffset,
+                    plan.MissionEntryPosition,
                     AirWaypointAction.StationEntry,
                     effectStart,
                     new AirMissionArea(
                         request.MissionArea.CenterTileId,
                         request.MissionArea.RadiusTiles));
                 var stationEnd = NewWaypoint(
-                    missionCenter + trackOffset,
+                    plan.MissionExitPosition,
                     AirWaypointAction.StationEndpoint,
                     effectStart + TimeSpan.FromSeconds(
-                        AirspaceGeometry.HorizontalTravelSeconds(
-                            tileDistanceFeet,
-                            plan.AircraftType.CruiseSpeedKnots)),
+                        AirspaceGeometry.TravelSeconds(
+                            plan.MissionEntryPosition,
+                            plan.MissionExitPosition,
+                            plan.AircraftType.CruiseSpeedKnots,
+                            plan.AircraftType.ClimbRateFeetPerMinute,
+                            plan.AircraftType.DescentRateFeetPerMinute)),
                     hasRepeat: true,
                     repeatFromWaypointId: stationEntry.WaypointId,
                     repeatUntil: effectEnd);
@@ -556,7 +593,7 @@ namespace Engine.Service
             else
             {
                 route.Add(NewWaypoint(
-                    missionCenter,
+                    plan.MissionEntryPosition,
                     AirWaypointAction.MissionAction,
                     effectStart,
                     new AirMissionArea(
@@ -713,6 +750,8 @@ namespace Engine.Service
             public readonly Vector3 BasePositionFeet;
             public DateTime PlannedTakeoff;
             public AirRouteGeometry RouteGeometry;
+            public Vector3 MissionEntryPosition;
+            public Vector3 MissionExitPosition;
 
             public RoutePlan(
                 AirFlight flight,

@@ -13,10 +13,14 @@ namespace Engine.Models
     {
         private const double MaximumIntegrationStepSeconds = 1d;
         private const float WaypointCaptureFeet = 100f;
+        private const float MaximumDynamicWaypointCaptureFeet = 25000f;
+        private const float CounterAirPreferredRangeFraction = 0.85f;
+        private const float OcaTacticalGuidancePaddingTiles = 2f;
 
         private readonly GameManager gameManager;
         private readonly AirTaskingSystem airTaskingSystem;
         private readonly IReadOnlyDictionary<Guid, AircraftTypeDefinition> aircraftTypes;
+        private readonly IReadOnlyDictionary<Guid, OrdnanceTypeDefinition> ordnanceTypes;
         private readonly AirLoadoutPlanner loadoutPlanner;
 
         public AirExecutionSystem(
@@ -28,6 +32,8 @@ namespace Engine.Models
             this.airTaskingSystem = airTaskingSystem;
             aircraftTypes = module.AircraftTypeDefinitions
                 .ToDictionary(definition => definition.AircraftTypeDefinitionId);
+            ordnanceTypes = module.OrdnanceTypeDefinitions
+                .ToDictionary(definition => definition.OrdnanceTypeDefinitionId);
             loadoutPlanner = new AirLoadoutPlanner(
                 module,
                 alliance =>
@@ -131,16 +137,39 @@ namespace Engine.Models
             if (!flight.IsAirborne)
                 return null;
 
-            flight.ContinueAbortRecovery(cursor);
-            AbortIfMissionUsefulOrdnanceExhausted(flight, squadron, cursor);
+            if (flight.LifecycleState == AirTaskingLifecycleState.Aborted
+                && flight.IsAirborne
+                && flight.ExecutionPhase != FlightExecutionPhase.Landing
+                && flight.CurrentWaypoint?.Action == AirWaypointAction.ReturnToBase)
+            {
+                AbortToImmediateRecovery(
+                    package,
+                    flight,
+                    squadron,
+                    aircraftType,
+                    cursor,
+                    "Flight continued its aborted recovery.");
+            }
+            else
+            {
+                flight.ContinueAbortRecovery(cursor);
+            }
+            AbortIfMissionUsefulOrdnanceExhausted(
+                package,
+                flight,
+                squadron,
+                aircraftType,
+                cursor);
             return new FlightTickState(
                 cursor,
                 Math.Max(0d, (currentTime - cursor).TotalSeconds));
         }
 
         private void AbortIfMissionUsefulOrdnanceExhausted(
+            AirPackage package,
             AirFlight flight,
             Squadron squadron,
+            AircraftTypeDefinition aircraftType,
             DateTime occurredAt)
         {
             if (!IsTimeBasedAirCombatMission(flight.MissionType)
@@ -158,9 +187,36 @@ namespace Engine.Models
             if (hasMissionUsefulOrdnance)
                 return;
 
-            flight.Cancel(
+            AbortToImmediateRecovery(
+                package,
+                flight,
+                squadron,
+                aircraftType,
                 occurredAt,
                 "Flight exhausted mission-useful air-to-air ordnance.");
+        }
+
+        private void AbortToImmediateRecovery(
+            AirPackage package,
+            AirFlight flight,
+            Squadron squadron,
+            AircraftTypeDefinition aircraftType,
+            DateTime occurredAt,
+            string reason)
+        {
+            if (!TryBuildRecoveryRoute(
+                    package,
+                    flight,
+                    squadron,
+                    aircraftType,
+                    occurredAt,
+                    out var recoveryRoute))
+            {
+                LoseAirborneFlight(flight, occurredAt, "No friendly recovery airport remains.");
+                return;
+            }
+
+            flight.AbortAndReplaceRecoveryRoute(occurredAt, reason, recoveryRoute);
         }
 
         private void AdvanceFlight(
@@ -186,7 +242,11 @@ namespace Engine.Models
                 }
 
                 var speedKnots = GetGuidanceSpeedKnots(package, flight, aircraftType);
-                if (HasReached(flight.PositionFeet, waypoint.PositionFeet))
+                if (HasReached(
+                        flight.PositionFeet,
+                        waypoint.PositionFeet,
+                        aircraftType,
+                        speedKnots))
                 {
                     flight.UpdateKinematics(
                         waypoint.PositionFeet,
@@ -196,26 +256,53 @@ namespace Engine.Models
                     continue;
                 }
 
+                var guidanceTarget = waypoint.PositionFeet;
+                var usingTacticalGuidance = TryGetCounterAirTacticalGuidanceTarget(
+                    package,
+                    flight,
+                    state.Cursor,
+                    out var tacticalTarget);
+                if (usingTacticalGuidance)
+                    guidanceTarget = tacticalTarget;
+
                 var step = Math.Min(MaximumIntegrationStepSeconds, state.RemainingSeconds);
                 var secondsToReach = EstimateReachSeconds(
                     flight,
-                    waypoint,
+                    guidanceTarget,
                     aircraftType,
                     speedKnots,
                     step);
                 if (secondsToReach >= 0d)
                 {
                     flight.UpdateKinematics(
-                        waypoint.PositionFeet,
+                        guidanceTarget,
                         flight.HeadingDegrees,
                         speedKnots);
                     state.Advance(secondsToReach);
-                    HandleWaypoint(package, flight, state.Cursor);
+                    if (!usingTacticalGuidance)
+                        HandleWaypoint(package, flight, state.Cursor);
                     continue;
                 }
 
-                IntegrateMotion(flight, waypoint.PositionFeet, aircraftType, speedKnots, step);
+                var previousPosition = flight.PositionFeet;
+                IntegrateMotion(flight, guidanceTarget, aircraftType, speedKnots, step);
                 state.Advance(step);
+                if (!ShouldCaptureTarget(
+                        previousPosition,
+                        flight.PositionFeet,
+                        guidanceTarget,
+                        aircraftType,
+                        speedKnots))
+                {
+                    continue;
+                }
+
+                flight.UpdateKinematics(
+                    guidanceTarget,
+                    flight.HeadingDegrees,
+                    speedKnots);
+                if (!usingTacticalGuidance)
+                    HandleWaypoint(package, flight, state.Cursor);
             }
         }
 
@@ -253,43 +340,101 @@ namespace Engine.Models
                     $"Flight {flight.FlightId} context became unavailable during recovery.");
             }
 
-            Guid recoveryAirportId;
-            if (IsAirportFriendly(squadron.AirportBuildingId, package.Alliance))
-            {
-                recoveryAirportId = squadron.AirportBuildingId;
-            }
-            else
-            {
-                var nearest = GetFriendlyAirports(package.Alliance)
-                    .Select(airport => new
-                    {
-                        Airport = airport,
-                        Position = AirspaceGeometry.TileCenterFeet(
-                            airport.TileId,
-                            gameManager.SimulationSettings.TileDistanceKM)
-                    })
-                    .OrderBy(candidate => Vector2.Distance(
-                        new Vector2(flight.PositionFeet.x, flight.PositionFeet.z),
-                        new Vector2(candidate.Position.x, candidate.Position.z)))
-                    .ThenBy(candidate => candidate.Airport.BuildingId)
-                    .FirstOrDefault();
-                if (nearest == null)
-                    return false;
-                recoveryAirportId = nearest.Airport.BuildingId;
-            }
-
-            if (!gameManager.buildingSystem.TryGetBuilding(recoveryAirportId, out var recovery))
+            if (!TryBuildRecoveryRoute(
+                    package,
+                    flight,
+                    squadron,
+                    aircraftType,
+                    currentTime,
+                    out var recoveryTail))
                 return false;
-            var recoveryTail = AirRecoveryRouteBuilder.Build(
+            flight.ReplaceRecoveryRoute(recoveryTail);
+            return true;
+        }
+
+        private bool TryBuildRecoveryRoute(
+            AirPackage package,
+            AirFlight flight,
+            Squadron squadron,
+            AircraftTypeDefinition aircraftType,
+            DateTime currentTime,
+            out IReadOnlyList<AirWaypoint> recoveryRoute)
+        {
+            recoveryRoute = null;
+            if (!TrySelectRecoveryAirport(
+                    package,
+                    flight,
+                    squadron,
+                    out var recoveryAirportId,
+                    out var recoveryPosition))
+                return false;
+
+            recoveryRoute = AirRecoveryRouteBuilder.Build(
                 flight.PositionFeet,
                 aircraftType,
                 recoveryAirportId,
-                AirspaceGeometry.TileCenterFeet(
-                    recovery.TileId,
-                    gameManager.SimulationSettings.TileDistanceKM),
+                recoveryPosition,
                 currentTime);
-            flight.ReplaceRecoveryRoute(recoveryTail);
             return true;
+        }
+
+        private bool TrySelectRecoveryAirport(
+            AirPackage package,
+            AirFlight flight,
+            Squadron squadron,
+            out Guid recoveryAirportId,
+            out Vector3 recoveryPosition)
+        {
+            recoveryAirportId = Guid.Empty;
+            recoveryPosition = default;
+            if (IsAirportFriendly(flight.RecoveryAirportBuildingId, package.Alliance)
+                && TryGetAirportPosition(flight.RecoveryAirportBuildingId, out recoveryPosition))
+            {
+                recoveryAirportId = flight.RecoveryAirportBuildingId;
+                return true;
+            }
+
+            if (IsAirportFriendly(squadron.AirportBuildingId, package.Alliance)
+                && TryGetAirportPosition(squadron.AirportBuildingId, out recoveryPosition))
+            {
+                recoveryAirportId = squadron.AirportBuildingId;
+                return true;
+            }
+
+            var nearest = GetFriendlyAirports(package.Alliance)
+                .Select(airport => new
+                {
+                    Airport = airport,
+                    Position = AirspaceGeometry.TileCenterFeet(
+                        airport.TileId,
+                        gameManager.SimulationSettings.TileDistanceKM)
+                })
+                .OrderBy(candidate => Vector2.Distance(
+                    new Vector2(flight.PositionFeet.x, flight.PositionFeet.z),
+                    new Vector2(candidate.Position.x, candidate.Position.z)))
+                .ThenBy(candidate => candidate.Airport.BuildingId)
+                .FirstOrDefault();
+            if (nearest == null)
+                return false;
+
+            recoveryAirportId = nearest.Airport.BuildingId;
+            recoveryPosition = nearest.Position;
+            return true;
+        }
+
+        private bool TryGetAirportPosition(Guid airportId, out Vector3 position)
+        {
+            if (gameManager.buildingSystem.TryGetBuilding(airportId, out var building)
+                && building is Airport)
+            {
+                position = AirspaceGeometry.TileCenterFeet(
+                    building.TileId,
+                    gameManager.SimulationSettings.TileDistanceKM);
+                return true;
+            }
+
+            position = default;
+            return false;
         }
 
         private void CompleteLanding(AirFlight flight, DateTime occurredAt)
@@ -410,6 +555,161 @@ namespace Engine.Models
                    || missionType == AirMissionRequestType.OffensiveCounterAirSweep;
         }
 
+        private bool TryGetCounterAirTacticalGuidanceTarget(
+            AirPackage sourcePackage,
+            AirFlight sourceFlight,
+            DateTime currentTime,
+            out Vector3 targetPosition)
+        {
+            targetPosition = default;
+            if (!CanUseCounterAirTacticalGuidance(sourceFlight, currentTime))
+                return false;
+
+            var maximumRangeKm = GetMaximumAirToAirRangeKm(sourceFlight);
+            if (maximumRangeKm <= 0f)
+                return false;
+
+            var preferredRangeKm = Math.Max(
+                1f,
+                maximumRangeKm * CounterAirPreferredRangeFraction);
+            var ownHorizontal = new Vector2(
+                sourceFlight.PositionFeet.x,
+                sourceFlight.PositionFeet.z);
+
+            var target = airTaskingSystem.GetPackages()
+                .Where(package => AreHostile(sourcePackage.Alliance, package.Alliance))
+                .SelectMany(package => package.Flights)
+                .Where(candidate => candidate.IsAirborne
+                                    && candidate.ExecutionPhase != FlightExecutionPhase.Returning
+                                    && candidate.ExecutionPhase != FlightExecutionPhase.Landing)
+                .Where(candidate => TryGetFlightContext(candidate, out var squadron, out _)
+                                    && squadron.Aircraft.Any(aircraft =>
+                                        aircraft.AssignedFlightId == candidate.FlightId
+                                        && aircraft.Status != CampaignAircraftStatus.Lost)
+                                    && IsInsideCounterAirTacticalGuidanceArea(sourceFlight, candidate))
+                .Select(candidate => new
+                {
+                    Flight = candidate,
+                    DistanceKm = Vector2.Distance(
+                        ownHorizontal,
+                        new Vector2(
+                            candidate.PositionFeet.x,
+                            candidate.PositionFeet.z))
+                                 / AirspaceGeometry.FeetPerKilometer
+                })
+                .Where(candidate => candidate.DistanceKm > preferredRangeKm)
+                .OrderBy(candidate => candidate.DistanceKm)
+                .ThenBy(candidate => candidate.Flight.FlightId)
+                .FirstOrDefault();
+            if (target == null)
+                return false;
+
+            var targetFeet = target.Flight.PositionFeet;
+            var horizontal = new Vector3(
+                targetFeet.x - sourceFlight.PositionFeet.x,
+                0f,
+                targetFeet.z - sourceFlight.PositionFeet.z);
+            if (horizontal.sqrMagnitude <= 1f)
+                return false;
+
+            var standoffFeet = preferredRangeKm * AirspaceGeometry.FeetPerKilometer;
+            var aimPoint = targetFeet - horizontal.normalized * standoffFeet;
+            aimPoint.y = sourceFlight.CurrentWaypoint?.PositionFeet.y
+                         ?? sourceFlight.PositionFeet.y;
+            targetPosition = aimPoint;
+            return !HasReached(sourceFlight.PositionFeet, targetPosition);
+        }
+
+        private static bool CanUseCounterAirTacticalGuidance(
+            AirFlight flight,
+            DateTime currentTime)
+        {
+            if (flight.LifecycleState != AirTaskingLifecycleState.Active
+                || !IsTimeBasedAirCombatMission(flight.MissionType)
+                || flight.ExecutionPhase == FlightExecutionPhase.Returning
+                || flight.ExecutionPhase == FlightExecutionPhase.Landing
+                || flight.ExecutionPhase == FlightExecutionPhase.Ended
+                || currentTime >= flight.EffectEnd)
+                return false;
+
+            return flight.MissionType == AirMissionRequestType.OffensiveCounterAirSweep
+                       && (flight.ExecutionPhase == FlightExecutionPhase.Outbound
+                           || flight.ExecutionPhase == FlightExecutionPhase.Executing)
+                   || flight.MissionType == AirMissionRequestType.DefensiveCounterAirPatrol
+                       && flight.ExecutionPhase == FlightExecutionPhase.Executing;
+        }
+
+        private bool IsInsideCounterAirTacticalGuidanceArea(
+            AirFlight sourceFlight,
+            AirFlight targetFlight)
+        {
+            var paddingTiles = sourceFlight.MissionType == AirMissionRequestType.OffensiveCounterAirSweep
+                ? OcaTacticalGuidancePaddingTiles
+                : 0f;
+            var center = AirspaceGeometry.TileCenterFeet(
+                sourceFlight.MissionArea.CenterTileId,
+                gameManager.SimulationSettings.TileDistanceKM);
+            var horizontalDistance = Vector2.Distance(
+                new Vector2(center.x, center.z),
+                new Vector2(targetFlight.PositionFeet.x, targetFlight.PositionFeet.z));
+            var radiusFeet = (sourceFlight.MissionArea.RadiusTiles + paddingTiles + 0.55f)
+                             * gameManager.SimulationSettings.TileDistanceKM
+                             * AirspaceGeometry.FeetPerKilometer;
+            return horizontalDistance <= radiusFeet;
+        }
+
+        private float GetMaximumAirToAirRangeKm(
+            AirFlight flight)
+        {
+            if (!gameManager.squadronSystem.TryGetSquadron(flight.SquadronId, out var squadron))
+                return 0f;
+
+            return squadron.Aircraft
+                .Where(aircraft => aircraft.AssignedFlightId == flight.FlightId
+                                   && aircraft.Status != CampaignAircraftStatus.Lost)
+                .SelectMany(aircraft => aircraft.Loadout)
+                .Where(item => item.Count > 0
+                               && ordnanceTypes.TryGetValue(
+                                   item.OrdnanceTypeDefinitionId,
+                                   out var definition)
+                               && IsAirToAir(definition))
+                .Select(item => EffectiveMaximumRangeKm(
+                    ordnanceTypes[item.OrdnanceTypeDefinitionId],
+                    flight))
+                .DefaultIfEmpty(0f)
+                .Max();
+        }
+
+        private static float EffectiveMaximumRangeKm(
+            OrdnanceTypeDefinition ordnance,
+            AirFlight sourceFlight)
+        {
+            if (ordnance.EmploymentCategory != OrdnanceEmploymentCategory.AirToAirRadar)
+                return ordnance.MaximumRangeKm;
+
+            var altitudeMultiplier = 1f + Mathf.Clamp(
+                (sourceFlight.PositionFeet.y - 10000f) / 100000f,
+                0f,
+                0.3f);
+            var speedMultiplier = 1f + Mathf.Clamp(
+                (sourceFlight.SpeedKnots - 400f) / 2000f,
+                -0.05f,
+                0.2f);
+            return ordnance.MaximumRangeKm * altitudeMultiplier * speedMultiplier;
+        }
+
+        private static bool IsAirToAir(OrdnanceTypeDefinition definition)
+        {
+            return definition.EmploymentCategory == OrdnanceEmploymentCategory.AirToAirRadar
+                   || definition.EmploymentCategory == OrdnanceEmploymentCategory.AirToAirInfrared;
+        }
+
+        private static bool AreHostile(Alliance first, Alliance second)
+        {
+            return (first == Alliance.Bluefor && second == Alliance.Redfor)
+                   || (first == Alliance.Redfor && second == Alliance.Bluefor);
+        }
+
         private float GetGuidanceSpeedKnots(
             AirPackage package,
             AirFlight flight,
@@ -433,13 +733,13 @@ namespace Engine.Models
 
         private static double EstimateReachSeconds(
             AirFlight flight,
-            AirWaypoint waypoint,
+            Vector3 target,
             AircraftTypeDefinition aircraftType,
             float speedKnots,
             double maximumStep)
         {
             var from = flight.PositionFeet;
-            var to = waypoint.PositionFeet;
+            var to = target;
             var horizontal = Vector2.Distance(
                 new Vector2(from.x, from.z),
                 new Vector2(to.x, to.z));
@@ -499,6 +799,56 @@ namespace Engine.Models
         private static bool HasReached(Vector3 current, Vector3 target)
         {
             return Vector3.Distance(current, target) <= WaypointCaptureFeet;
+        }
+
+        private static bool HasReached(
+            Vector3 current,
+            Vector3 target,
+            AircraftTypeDefinition aircraftType,
+            float speedKnots)
+        {
+            return Vector3.Distance(current, target)
+                   <= GetDynamicWaypointCaptureFeet(aircraftType, speedKnots);
+        }
+
+        private static bool ShouldCaptureTarget(
+            Vector3 previous,
+            Vector3 current,
+            Vector3 target,
+            AircraftTypeDefinition aircraftType,
+            float speedKnots)
+        {
+            var captureFeet = GetDynamicWaypointCaptureFeet(aircraftType, speedKnots);
+            if (Vector3.Distance(current, target) <= captureFeet)
+                return true;
+
+            var travel = current - previous;
+            var travelMagnitudeSquared = travel.sqrMagnitude;
+            if (travelMagnitudeSquared <= 0.01f)
+                return false;
+
+            var previousToTarget = target - previous;
+            var projection = Vector3.Dot(previousToTarget, travel) / travelMagnitudeSquared;
+            if (projection < 0f || projection > 1f)
+                return false;
+
+            var closest = previous + travel * projection;
+            return Vector3.Distance(closest, target) <= captureFeet;
+        }
+
+        private static float GetDynamicWaypointCaptureFeet(
+            AircraftTypeDefinition aircraftType,
+            float speedKnots)
+        {
+            var feetPerSecond = Math.Max(1f, speedKnots)
+                                * AirspaceGeometry.FeetPerNauticalMile / 3600f;
+            var turnRateRadians = Math.Max(0.1f, aircraftType.TurnRateDegreesPerSecond)
+                                  * Mathf.Deg2Rad;
+            var turnRadiusFeet = feetPerSecond / turnRateRadians;
+            return Mathf.Clamp(
+                Math.Max(WaypointCaptureFeet, turnRadiusFeet),
+                WaypointCaptureFeet,
+                MaximumDynamicWaypointCaptureFeet);
         }
 
         private static float HeadingTo(Vector3 from, Vector3 to)
