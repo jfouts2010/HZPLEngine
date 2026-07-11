@@ -30,6 +30,9 @@ namespace Engine.Monobehaviours.Managers
     public class GameManager : MonoBehaviour
     {
         public event Action GameTurnCompleted;
+        public event Action AirTacticalStepCompleted;
+
+        public const double AirTacticalStepSeconds = 5d;
 
         public bool IsGamePaused { get; private set; }
         public bool IsCampaignStarted => _campaignStarted;
@@ -65,6 +68,8 @@ namespace Engine.Monobehaviours.Managers
         private Coroutine GameTurnCoroutine = null;
         private bool _campaignStarted;
         private DateTime _campaignStartTime;
+        private DateTime _nextGameTurnAt;
+        private TurnSnapshot _gameTurnSnapshot;
         private readonly List<CampaignTurnChange> _lastTurnChanges = new List<CampaignTurnChange>();
 
         private void Start()
@@ -140,12 +145,17 @@ namespace Engine.Monobehaviours.Managers
                 _airTaskingSystem,
                 _IADSSystem,
                 activeModule);
+            _airExecutionSystem.AttachOrdnanceEmploymentSystem(
+                _ordnanceEmploymentSystem);
             _groundOperationsSystem = new GroundOperationsSystem(this);
             _groundCombatSystem = new GroundCombatSystem(this, _groundOperationsSystem);
             _supplySystem = new SupplySystem(this);
             _supplySystem.GameTurn();
             _groundTaskingSystem.OperationalCadenceTurn();
             _airTaskingSystem.Initialize();
+            _nextGameTurnAt = CurrentTime.AddMinutes(
+                SimulationSettings.SimulationTickMinutes);
+            _gameTurnSnapshot = CaptureTurnSnapshot();
             IsGamePaused = true;
             _campaignStarted = true;
         }
@@ -249,7 +259,18 @@ namespace Engine.Monobehaviours.Managers
             if (!_campaignStarted || !IsGamePaused || GameTurnCoroutine != null)
                 return false;
 
-            GameTurn();
+            var turnEnd = _nextGameTurnAt;
+            while (CurrentTime < turnEnd)
+                AdvanceAirTacticalStep(false);
+            return true;
+        }
+
+        public bool AdvanceOneAirTacticalStep()
+        {
+            if (!_campaignStarted || !IsGamePaused || GameTurnCoroutine != null)
+                return false;
+
+            AdvanceAirTacticalStep(true);
             return true;
         }
 
@@ -262,28 +283,43 @@ namespace Engine.Monobehaviours.Managers
                 return;
 
             if (GameTurnCoroutine == null)
-                GameTurnCoroutine = StartCoroutine(SlowGameTurn());
+                GameTurnCoroutine = StartCoroutine(FastAirTacticalStep());
         }
 
-        private IEnumerator SlowGameTurn()
+        private IEnumerator FastAirTacticalStep()
         {
-            yield return null; // yield return new WaitForSeconds(0.16f);
-            GameTurn();
+            yield return null;
+            AdvanceAirTacticalStep(true);
             GameTurnCoroutine = null;
         }
 
-        private void GameTurn()
+        private void AdvanceAirTacticalStep(bool notifyTacticalStep)
+        {
+            var previousTime = CurrentTime;
+            var stepEnd = CurrentTime.AddSeconds(AirTacticalStepSeconds);
+            CurrentTime = stepEnd < _nextGameTurnAt ? stepEnd : _nextGameTurnAt;
+
+            _airExecutionSystem.GameTurn(previousTime, CurrentTime);
+            _IADSSystem.TacticalTurn();
+            _ordnanceEmploymentSystem.RefreshTacticalState(CurrentTime);
+            if (notifyTacticalStep)
+                AirTacticalStepCompleted?.Invoke();
+
+            if (CurrentTime < _nextGameTurnAt)
+                return;
+
+            CompleteGameTurn();
+        }
+
+        private void CompleteGameTurn()
         {
             var elapsedHours = SimulationSettings.SimulationTickMinutes / 60f;
-            var previousTime = CurrentTime;
-            var turnSnapshot = CaptureTurnSnapshot();
-            CurrentTime = CurrentTime.AddMinutes(SimulationSettings.SimulationTickMinutes);
-            LastTurnStartedAt = previousTime;
+            var previousTurnTime = LastTurnStartedAt;
 
             var crossedOperationalCadenceBoundary =
                 SimulationSettings.CrossedOperationalCadenceBoundary(
                     _campaignStartTime,
-                    previousTime,
+                    previousTurnTime,
                     CurrentTime,
                     SimulationSettings.OperationalCadenceHours);
             if (crossedOperationalCadenceBoundary)
@@ -292,19 +328,15 @@ namespace Engine.Monobehaviours.Managers
             }
 
             var resolveCombatRound = SimulationSettings.CrossedOperationalCadenceBoundary(
-                _campaignStartTime,
-                previousTime,
-                CurrentTime,
-                1);
+                    _campaignStartTime,
+                    previousTurnTime,
+                    CurrentTime,
+                    1);
             if (resolveCombatRound)
                 _groundTaskingSystem.CombatCadenceTurn();
 
             _groundCombatSystem.GameTurn(resolveCombatRound);
             _groundOperationsSystem.GameTurn(elapsedHours);
-            _ordnanceEmploymentSystem.AdvanceScheduledEvents(CurrentTime);
-            _airExecutionSystem.GameTurn(previousTime, CurrentTime);
-            _IADSSystem.TacticalTurn();
-            _ordnanceEmploymentSystem.RefreshTacticalState(CurrentTime);
             _supplySystem.GameTurn(elapsedHours);
             _airTaskingSystem.GameTurn(crossedOperationalCadenceBoundary);
             divisionSystem.ApplyCombatSupplyPenalties(
@@ -317,9 +349,13 @@ namespace Engine.Monobehaviours.Managers
                 _groundCombatSystem.IsDivisionEngagedInCombat,
                 _supplySystem.GetSupplyRatio,
                 division => division?.CurrentOrder is not MoveGroundOrder { Purpose: MoveGroundOrderPurpose.Retreat });
-            BuildTurnChanges(turnSnapshot);
+            BuildTurnChanges(_gameTurnSnapshot);
             LastTurnCompletedAt = CurrentTime;
             GameTurnCompleted?.Invoke();
+            LastTurnStartedAt = CurrentTime;
+            _nextGameTurnAt = CurrentTime.AddMinutes(
+                SimulationSettings.SimulationTickMinutes);
+            _gameTurnSnapshot = CaptureTurnSnapshot();
         }
 
         private TurnSnapshot CaptureTurnSnapshot()

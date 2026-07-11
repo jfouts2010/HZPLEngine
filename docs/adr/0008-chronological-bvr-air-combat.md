@@ -1,0 +1,9 @@
+# Chronological BVR air combat
+
+Campaign air combat resolves chronologically inside the public simulation tick. Air execution advances through shared tactical checkpoints no more than five campaign seconds apart, with additional boundaries at exact takeoff, ordnance-release, and effect-resolution times. All airborne flights calculate commands from one immutable checkpoint snapshot before movement is applied, removing whole-tick per-flight ordering as a source of tactical causality.
+
+Flights remain aggregate point masses with individual member-aircraft loadouts, damage, and outcomes. Each flight persists a high-level air-combat intent and immediate maneuver plus the minimal timing and target state required for continuity. Maneuver policy is implemented as stateless rules rather than per-maneuver objects, behavior trees, encounter entities, or a general state-machine framework.
+
+Air-to-air employment is authorized by the same decision that guides the source flight. Preparation and release both validate live range, altitude, and forward geometry. Released missiles remain pending effects rather than moving entities; their terminal probability incorporates snapshotted launch quality, post-launch guidance support, target defensive maneuvering, countermeasure resistance, lethality, and survivability. Active-radar, semi-active-radar, and infrared guidance profiles have distinct support behavior.
+
+The materialized route remains mission intent and resumes after tactical guidance ends. Initial close combat stops at an explicit deferred WVR boundary: flights extend through an unresolved merge rather than synthesizing dogfight or gun outcomes. Future air-to-ground, SEAD, DEAD, and SAM deepening should reuse chronological checkpoints, explicit commands, preparation/release validation, pending effects, and diagnostics without introducing a universal combat-actor hierarchy before multiple implemented consumers demonstrate the need.

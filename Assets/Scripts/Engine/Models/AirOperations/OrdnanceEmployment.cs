@@ -23,7 +23,8 @@ namespace Models.Gameplay.Campaign
     {
         Hit = 0,
         Miss = 1,
-        Ineffective = 2
+        Ineffective = 2,
+        Damaged = 3
     }
 
     [Serializable]
@@ -58,6 +59,7 @@ namespace Models.Gameplay.Campaign
         public int PlannedQuantity;
         public DateTime PreparationStartedAt;
         public DateTime ReleaseAt;
+        public float LaunchQuality;
     }
 
     [Serializable]
@@ -80,6 +82,16 @@ namespace Models.Gameplay.Campaign
         public UnityEngine.Vector3 SourcePositionFeet;
         public UnityEngine.Vector3 TargetPositionFeet;
         public List<OrdnanceLaunchDiagnostic> Launches = new List<OrdnanceLaunchDiagnostic>();
+        public OrdnanceGuidanceStage GuidanceStage = OrdnanceGuidanceStage.Midcourse;
+        public DateTime AutonomousAt;
+        public bool SupportRequired;
+        public Guid SupportSourceFlightId;
+        public DateTime LastGuidanceUpdateAt;
+        public float LaunchQuality = 1f;
+        public float SupportSeconds;
+        public float SupportedSeconds;
+        public float DefensiveSeconds;
+        public float PrincipalThreatBearingDegrees;
     }
 
     [Serializable]

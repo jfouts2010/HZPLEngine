@@ -9,6 +9,7 @@
             <ui:VisualElement name="simulation-controls" class="simulation-controls">
                 <ui:Label name="simulation-state-label" text="SIMULATION PAUSED" class="simulation-state-label simulation-state-label--paused" />
                 <ui:Button name="pause-button" text="Resume" class="workbench-button workbench-button--primary" />
+                <ui:Button name="next-air-step-button" text="Step +5s" class="workbench-button workbench-button--primary" />
                 <ui:Button name="next-turn-button" text="Next Turn" class="workbench-button" />
             </ui:VisualElement>
             <ui:VisualElement class="diagnostic-strip">

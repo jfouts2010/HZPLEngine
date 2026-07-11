@@ -15,6 +15,14 @@ namespace Models.Gameplay.Campaign
         public float DesiredAirCombatAdvantage = DefaultDesiredAirCombatAdvantage;
         public int BaselineAirborneC2Slots = 4;
         public int BaselineAerialRefuelingSlots = 4;
+        public float MinimumLaunchQuality = 0.35f;
+        public float DesiredExpectedKillsPerHostileFlight = 1f;
+        public int MaximumSimultaneousMissilesPerTargetAircraft = 1;
+        public int MinimumAirToAirWeaponReserve = 1;
+        public float MaximumPursuitMinutes = 12f;
+        public int MaximumRecommits = 2;
+        public float JokerFuelFraction = 0.35f;
+        public float BingoFuelFraction = 0.2f;
         public Dictionary<AirMissionRequestType, float> PriorityWeights =
             CreateDefaultPriorityWeights();
 
@@ -34,6 +42,18 @@ namespace Models.Gameplay.Campaign
                 DesiredAirCombatAdvantage = Mathf.Max(0.1f, DesiredAirCombatAdvantage),
                 BaselineAirborneC2Slots = Math.Max(0, BaselineAirborneC2Slots),
                 BaselineAerialRefuelingSlots = Math.Max(0, BaselineAerialRefuelingSlots),
+                MinimumLaunchQuality = Mathf.Clamp01(MinimumLaunchQuality),
+                DesiredExpectedKillsPerHostileFlight = Mathf.Max(
+                    0.1f,
+                    DesiredExpectedKillsPerHostileFlight),
+                MaximumSimultaneousMissilesPerTargetAircraft = Math.Max(
+                    1,
+                    MaximumSimultaneousMissilesPerTargetAircraft),
+                MinimumAirToAirWeaponReserve = Math.Max(0, MinimumAirToAirWeaponReserve),
+                MaximumPursuitMinutes = Mathf.Max(1f, MaximumPursuitMinutes),
+                MaximumRecommits = Math.Max(0, MaximumRecommits),
+                JokerFuelFraction = Mathf.Clamp01(JokerFuelFraction),
+                BingoFuelFraction = Mathf.Clamp01(Mathf.Min(BingoFuelFraction, JokerFuelFraction)),
                 PriorityWeights = PriorityWeights.ToDictionary(
                     entry => entry.Key,
                     entry => Mathf.Max(0f, entry.Value))

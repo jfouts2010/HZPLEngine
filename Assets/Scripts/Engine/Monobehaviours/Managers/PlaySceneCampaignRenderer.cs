@@ -70,8 +70,6 @@ namespace Engine.Monobehaviours.Managers
         private const float AirIntentAreaLineWidth = 0.038f;
         private const float AirEngagementLineWidth = 0.060f;
         private const float AirMarkerRadius = 0.12f;
-        private const float CounterAirPreferredRangeFraction = 0.85f;
-        private const float OcaTacticalGuidancePaddingTiles = 2f;
         private static readonly Color RailwayLineColor = new Color(0.38f, 0.32f, 0.24f);
         private static readonly Color SupplyHubMarkerColor = new Color(0.88f, 0.58f, 0.10f);
         private static readonly Color SupplyHubMarkerBorderColor = new Color(0.98f, 0.92f, 0.78f);
@@ -110,6 +108,7 @@ namespace Engine.Monobehaviours.Managers
         private Foldout unitsFoldout;
         private VisualElement unitsList;
         private Button pauseButton;
+        private Button nextAirStepButton;
         private Button nextTurnButton;
         private Label simulationStateLabel;
         private VisualElement simulationControls;
@@ -228,7 +227,10 @@ namespace Engine.Monobehaviours.Managers
             gameManager = gameManager != null ? gameManager : GetComponent<GameManager>();
             sceneCamera = sceneCamera != null ? sceneCamera : Camera.main;
             if (gameManager != null)
+            {
                 gameManager.GameTurnCompleted += RefreshCampaignAfterGameTurn;
+                gameManager.AirTacticalStepCompleted += RefreshAirAfterTacticalStep;
+            }
 
             EnsureTilemap();
             EnsureEventSystem();
@@ -244,7 +246,10 @@ namespace Engine.Monobehaviours.Managers
         {
             IsPointerOverCampaignUi = false;
             if (gameManager != null)
+            {
                 gameManager.GameTurnCompleted -= RefreshCampaignAfterGameTurn;
+                gameManager.AirTacticalStepCompleted -= RefreshAirAfterTacticalStep;
+            }
         }
 
         private void Update()
@@ -294,6 +299,14 @@ namespace Engine.Monobehaviours.Managers
             UpdateGroundOperationsUi();
             UpdateTurnReportUi();
             UpdateDiagnosticsUi();
+            RefreshPinnedInspectors();
+        }
+
+        private void RefreshAirAfterTacticalStep()
+        {
+            RefreshAirOverlaysForSelection();
+            RefreshOrdnanceOverlay();
+            RefreshFlightDetails();
             RefreshPinnedInspectors();
         }
 
@@ -510,6 +523,7 @@ namespace Engine.Monobehaviours.Managers
             unitsFoldout = root.Q<Foldout>("units-foldout");
             unitsList = root.Q<VisualElement>("units-list");
             pauseButton = root.Q<Button>("pause-button");
+            nextAirStepButton = root.Q<Button>("next-air-step-button");
             nextTurnButton = root.Q<Button>("next-turn-button");
             simulationStateLabel = root.Q<Label>("simulation-state-label");
             simulationControls = root.Q<VisualElement>("simulation-controls");
@@ -583,6 +597,7 @@ namespace Engine.Monobehaviours.Managers
             ApplyRuntimeFont(timeLabel);
             ApplyRuntimeFont(selectedTileLabel);
             ApplyRuntimeFont(pauseButton);
+            ApplyRuntimeFont(nextAirStepButton);
             ApplyRuntimeFont(nextTurnButton);
             ApplyRuntimeFont(simulationStateLabel);
             ApplyRuntimeFont(mapTabButton);
@@ -679,6 +694,12 @@ namespace Engine.Monobehaviours.Managers
                 mapTabButton.clicked += () => ShowWorkbenchPage(WorkbenchPage.Tile);
             }
 
+            if (nextAirStepButton != null)
+            {
+                nextAirStepButton.pickingMode = PickingMode.Position;
+                nextAirStepButton.clicked += AdvanceOneAirTacticalStep;
+            }
+
             if (airOpsTabButton != null)
             {
                 airOpsTabButton.pickingMode = PickingMode.Position;
@@ -742,7 +763,8 @@ namespace Engine.Monobehaviours.Managers
                 || timeLabel == null
                 || selectedTileLabel == null
                 || pauseButton == null
-                || nextTurnButton == null)
+                || nextTurnButton == null
+                || nextAirStepButton == null)
             {
                 Debug.LogError("PlaySceneCampaignRenderer could not find one or more required elements in the Campaign HUD UXML.");
                 return false;
@@ -2168,6 +2190,7 @@ namespace Engine.Monobehaviours.Managers
             {
                 var shots = GetResolvedShots(record).ToList();
                 var hits = shots.Count(shot => shot.Result == OrdnanceShotResult.Hit);
+                var damaged = shots.Count(shot => shot.Result == OrdnanceShotResult.Damaged);
                 var misses = shots.Count(shot => shot.Result == OrdnanceShotResult.Miss);
                 var ineffective = shots.Count(shot => shot.Result == OrdnanceShotResult.Ineffective);
                 var launches = GetRecordLaunches(record).ToList();
@@ -2178,7 +2201,7 @@ namespace Engine.Monobehaviours.Managers
                 {
                     new AirCardField("Ordnance", $"{record.Quantity}× {GetOrdnanceName(record.OrdnanceTypeDefinitionId)}"),
                     new AirCardField("Launches", $"{launches.Count} launches / {shots.Count} resolved shots"),
-                    new AirCardField("Outcome", $"Hit {hits} / Miss {misses} / Ineffective {ineffective}"),
+                    new AirCardField("Outcome", $"Destroyed {hits} / Damaged {damaged} / Miss {misses} / Ineffective {ineffective}"),
                     new AirCardField("Snapshot", $"Range {record.ReleaseRangeKm:0.0} km / P(hit) {record.HitProbability:P1}"),
                     new AirCardField("Source", GetSourceLabel(record)),
                     new AirCardField("Target", GetFlightLabel(record.TargetFlightId))
@@ -2514,6 +2537,20 @@ namespace Engine.Monobehaviours.Managers
                 $"Rendezvous hold: {(flight.IsWaitingAtRendezvous ? "Waiting" : "No")}",
                 $"Route progress: {Mathf.Clamp(flight.CurrentWaypointIndex + 1, 0, flight.Route.Count)} of {flight.Route.Count}",
                 $"Next action: {(nextWaypoint == null ? "None" : GetWaypointLabel(nextWaypoint.Action))}");
+
+            var tactical = flight.TacticalState;
+            AddFlightDetailSection(
+                "AIR COMBAT DECISION",
+                $"Intent: {tactical.Intent}",
+                $"Maneuver: {tactical.Maneuver}",
+                tactical.TargetFlightId == Guid.Empty
+                    ? "Target: None"
+                    : $"Target: FLT {ShortId(tactical.TargetFlightId)}",
+                $"Decision: {tactical.DecisionReason}",
+                $"Intent since: {tactical.IntentStartedAt:HH:mm:ss}",
+                $"Committed through: {tactical.MinimumManeuverEndAt:HH:mm:ss}",
+                $"Fuel remaining: {tactical.FuelFraction:P0}",
+                $"Recommits: {tactical.RecommitCount}");
 
             AddFlightDetailSection(
                 "POSITION & SCHEDULE",
@@ -2952,9 +2989,16 @@ namespace Engine.Monobehaviours.Managers
 
             var threshold = shot.Probability > 0f ? shot.Probability : record.HitProbability;
             var roll = shot.Roll < 0f ? 0f : shot.Roll;
-            return shot.Result == OrdnanceShotResult.Hit
-                ? $"Hit because roll {roll:0.000} was below snapshotted P(hit) {threshold:P1}."
-                : $"Miss because roll {roll:0.000} was at or above snapshotted P(hit) {threshold:P1}.";
+            return shot.Result switch
+            {
+                OrdnanceShotResult.Hit =>
+                    $"Destroyed after roll {roll:0.000} was below terminal P(hit) {threshold:P1}.",
+                OrdnanceShotResult.Damaged =>
+                    $"Damaged after roll {roll:0.000} was below terminal P(hit) {threshold:P1}, but the lethality check did not destroy the aircraft.",
+                OrdnanceShotResult.Miss =>
+                    $"Miss because roll {roll:0.000} was at or above terminal P(hit) {threshold:P1}.",
+                _ => $"Result: {shot.Result}."
+            };
         }
 
         private string BuildOrdnanceLaunchLine(
@@ -3182,11 +3226,13 @@ namespace Engine.Monobehaviours.Managers
             if (timeLabel == null || gameManager == null)
                 return;
 
-            timeLabel.text = $"{gameManager.GameTime:yyyy-MM-dd HH:mm} | Tiles: {gameManager.CampaignTiles.Count}";
+            timeLabel.text = $"{gameManager.GameTime:yyyy-MM-dd HH:mm:ss} | Tiles: {gameManager.CampaignTiles.Count}";
             if (pauseButton != null)
                 pauseButton.text = gameManager.IsGamePaused ? "Resume" : "Pause";
             if (nextTurnButton != null)
                 nextTurnButton.SetEnabled(gameManager.IsGamePaused);
+            if (nextAirStepButton != null)
+                nextAirStepButton.SetEnabled(gameManager.IsGamePaused);
             if (simulationStateLabel != null)
             {
                 simulationStateLabel.text = gameManager.IsGamePaused
@@ -3881,12 +3927,10 @@ namespace Engine.Monobehaviours.Managers
                 source,
                 target,
                 guidancePositionFeet,
-                source.MissionType == AirMissionRequestType.OffensiveCounterAirSweep
-                    ? "TACTICAL VECTOR"
-                    : "ENGAGING",
-                source.MissionType == AirMissionRequestType.OffensiveCounterAirSweep
-                    ? new Color(1f, 0.47f, 0.18f)
-                    : new Color(1f, 0.80f, 0.22f));
+                source.TacticalState.Maneuver.ToString().ToUpperInvariant(),
+                source.TacticalState.Intent == AirCombatIntent.Defend
+                    ? new Color(1f, 0.32f, 0.22f)
+                    : new Color(1f, 0.68f, 0.18f));
         }
 
         private bool TryFindCounterAirGuidance(
@@ -3897,176 +3941,18 @@ namespace Engine.Monobehaviours.Managers
         {
             targetFlight = null;
             guidancePositionFeet = default;
+            var tactical = sourceFlight.TacticalState;
             if (sourcePackage == null
-                || !CanShowCounterAirTarget(sourceFlight, gameManager.CurrentTime))
+                || tactical.TargetFlightId == Guid.Empty
+                || !tactical.HasTacticalAimPoint
+                || !TryFindFlight(
+                    tactical.TargetFlightId,
+                    out targetFlight,
+                    out _,
+                    out _))
                 return false;
-
-            var maximumRangeKm = GetMaximumAirToAirRangeKm(sourceFlight);
-            if (maximumRangeKm <= 0f)
-                return false;
-
-            var preferredRangeKm = Math.Max(1f, maximumRangeKm * CounterAirPreferredRangeFraction);
-            var ownHorizontal = new Vector2(
-                sourceFlight.PositionFeet.x,
-                sourceFlight.PositionFeet.z);
-            targetFlight = GetAllAirPackages()
-                .Where(package => AreHostile(sourcePackage.Alliance, package.Alliance))
-                .SelectMany(package => package.Flights)
-                .Where(candidate => candidate.IsAirborne
-                                    && candidate.HasPosition
-                                    && candidate.ExecutionPhase != FlightExecutionPhase.Returning
-                                    && candidate.ExecutionPhase != FlightExecutionPhase.Landing
-                                    && HasLiveAircraft(candidate)
-                                    && IsInsideCounterAirTargetArea(sourceFlight, candidate))
-                .Select(candidate => new
-                {
-                    Flight = candidate,
-                    DistanceKm = Vector2.Distance(
-                                     ownHorizontal,
-                                     new Vector2(
-                                         candidate.PositionFeet.x,
-                                         candidate.PositionFeet.z))
-                                 / AirspaceGeometry.FeetPerKilometer
-                })
-                .Where(candidate => candidate.DistanceKm > preferredRangeKm)
-                .OrderBy(candidate => candidate.DistanceKm)
-                .ThenBy(candidate => candidate.Flight.FlightId)
-                .Select(candidate => candidate.Flight)
-                .FirstOrDefault();
-
-            if (targetFlight == null)
-                return false;
-
-            var targetFeet = targetFlight.PositionFeet;
-            var horizontal = new Vector3(
-                targetFeet.x - sourceFlight.PositionFeet.x,
-                0f,
-                targetFeet.z - sourceFlight.PositionFeet.z);
-            if (horizontal.sqrMagnitude <= 1f)
-                return false;
-
-            var standoffFeet = preferredRangeKm * AirspaceGeometry.FeetPerKilometer;
-            guidancePositionFeet = targetFeet - horizontal.normalized * standoffFeet;
-            guidancePositionFeet.y = sourceFlight.CurrentWaypoint?.PositionFeet.y
-                                     ?? sourceFlight.PositionFeet.y;
-            return true;
-        }
-
-        private bool CanShowCounterAirTarget(AirFlight flight, DateTime currentTime)
-        {
-            if (flight.LifecycleState != AirTaskingLifecycleState.Active
-                || !IsCounterAirMission(flight.MissionType)
-                || flight.ExecutionPhase == FlightExecutionPhase.Returning
-                || flight.ExecutionPhase == FlightExecutionPhase.Landing
-                || flight.ExecutionPhase == FlightExecutionPhase.Ended)
-                return false;
-
-            try
-            {
-                if (currentTime >= flight.EffectEnd)
-                    return false;
-            }
-            catch (InvalidOperationException)
-            {
-                return false;
-            }
-
-            return flight.MissionType == AirMissionRequestType.OffensiveCounterAirSweep
-                       && (flight.ExecutionPhase == FlightExecutionPhase.Outbound
-                           || flight.ExecutionPhase == FlightExecutionPhase.Executing)
-                   || flight.MissionType == AirMissionRequestType.DefensiveCounterAirPatrol
-                       && flight.ExecutionPhase == FlightExecutionPhase.Executing;
-        }
-
-        private bool IsInsideCounterAirTargetArea(
-            AirFlight sourceFlight,
-            AirFlight targetFlight)
-        {
-            AirMissionArea missionArea;
-            try
-            {
-                missionArea = sourceFlight.MissionArea;
-            }
-            catch (InvalidOperationException)
-            {
-                return false;
-            }
-
-            var paddingTiles = sourceFlight.MissionType == AirMissionRequestType.OffensiveCounterAirSweep
-                ? OcaTacticalGuidancePaddingTiles
-                : 0f;
-            var center = AirspaceGeometry.TileCenterFeet(
-                missionArea.CenterTileId,
-                gameManager.SimulationSettings.TileDistanceKM);
-            var horizontalDistance = Vector2.Distance(
-                new Vector2(center.x, center.z),
-                new Vector2(targetFlight.PositionFeet.x, targetFlight.PositionFeet.z));
-            var radiusFeet = (missionArea.RadiusTiles + paddingTiles + 0.55f)
-                             * gameManager.SimulationSettings.TileDistanceKM
-                             * AirspaceGeometry.FeetPerKilometer;
-            return horizontalDistance <= radiusFeet;
-        }
-
-        private float GetMaximumAirToAirRangeKm(AirFlight flight)
-        {
-            if (!gameManager.squadronSystem.TryGetSquadron(flight.SquadronId, out var squadron))
-                return 0f;
-
-            var ordnanceTypes = ModuleSingleton.Instance?.ActiveModule?.OrdnanceTypeDefinitions
-                ?.ToDictionary(definition => definition.OrdnanceTypeDefinitionId);
-            if (ordnanceTypes == null)
-                return 0f;
-
-            return squadron.Aircraft
-                .Where(aircraft => aircraft.AssignedFlightId == flight.FlightId
-                                   && aircraft.Status != CampaignAircraftStatus.Lost)
-                .SelectMany(aircraft => aircraft.Loadout)
-                .Where(item => item.Count > 0
-                               && ordnanceTypes.TryGetValue(
-                                   item.OrdnanceTypeDefinitionId,
-                                   out var definition)
-                               && IsAirToAir(definition))
-                .Select(item => EffectiveMaximumRangeKm(
-                    ordnanceTypes[item.OrdnanceTypeDefinitionId],
-                    flight))
-                .DefaultIfEmpty(0f)
-                .Max();
-        }
-
-        private static float EffectiveMaximumRangeKm(
-            OrdnanceTypeDefinition ordnance,
-            AirFlight sourceFlight)
-        {
-            if (ordnance.EmploymentCategory != OrdnanceEmploymentCategory.AirToAirRadar)
-                return ordnance.MaximumRangeKm;
-
-            var altitudeMultiplier = 1f + Mathf.Clamp(
-                (sourceFlight.PositionFeet.y - 10000f) / 100000f,
-                0f,
-                0.3f);
-            var speedMultiplier = 1f + Mathf.Clamp(
-                (sourceFlight.SpeedKnots - 400f) / 2000f,
-                -0.05f,
-                0.2f);
-            return ordnance.MaximumRangeKm * altitudeMultiplier * speedMultiplier;
-        }
-
-        private static bool IsAirToAir(OrdnanceTypeDefinition definition)
-        {
-            return definition.EmploymentCategory == OrdnanceEmploymentCategory.AirToAirRadar
-                   || definition.EmploymentCategory == OrdnanceEmploymentCategory.AirToAirInfrared;
-        }
-
-        private static bool IsCounterAirMission(AirMissionRequestType missionType)
-        {
-            return missionType == AirMissionRequestType.DefensiveCounterAirPatrol
-                   || missionType == AirMissionRequestType.OffensiveCounterAirSweep;
-        }
-
-        private static bool AreHostile(Alliance first, Alliance second)
-        {
-            return (first == Alliance.Bluefor && second == Alliance.Redfor)
-                   || (first == Alliance.Redfor && second == Alliance.Bluefor);
+            guidancePositionFeet = tactical.TacticalAimPointFeet;
+            return targetFlight != null;
         }
 
         private bool HasLiveAircraft(AirFlight flight)
@@ -4361,11 +4247,12 @@ namespace Engine.Monobehaviours.Managers
                 || gameManager == null)
                 return;
 
-            var from = gameManager.LastTurnStartedAt;
-            var to = gameManager.LastTurnCompletedAt;
+            var pendingEffectIds = gameManager.GetPendingOrdnanceEffects()
+                .Select(effect => effect.PendingEffectId)
+                .ToHashSet();
             var records = gameManager.GetOrdnanceEmploymentRecords()
                 .Where(record => record.Stage == OrdnanceEmploymentRecordStage.OrdnanceReleased
-                                 && (to <= from || record.OccurredAt > from && record.OccurredAt <= to))
+                                 && pendingEffectIds.Contains(record.PendingEffectId))
                 .ToList();
             foreach (var record in records)
             {
@@ -6047,6 +5934,15 @@ namespace Engine.Monobehaviours.Managers
 
             for (var i = airInspectionRoot.childCount - 1; i >= 0; i--)
                 Destroy(airInspectionRoot.GetChild(i).gameObject);
+        }
+
+        private void AdvanceOneAirTacticalStep()
+        {
+            if (gameManager == null || !gameManager.IsGamePaused)
+                return;
+
+            gameManager.AdvanceOneAirTacticalStep();
+            UpdateTimeUi();
         }
 
         private void ClearOrdnanceOverlay()

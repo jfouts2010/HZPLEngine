@@ -11,8 +11,6 @@ namespace Engine.Models
 {
     public sealed class OrdnanceEmploymentSystem
     {
-        private const float HotAspectDegrees = 30f;
-        private const float CloseRangePreferenceKm = 18f;
         private const float MinimumWeaponQualityTrack = 0.5f;
         private const int MaximumEmploymentRecords = 5000;
 
@@ -52,10 +50,173 @@ namespace Engine.Models
             ProcessDueEvents(currentTime);
         }
 
+        public DateTime? GetNextScheduledEvent(DateTime after, DateTime noLaterThan)
+        {
+            var release = ActivePasses
+                .Where(pass => pass.ReleaseAt > after && pass.ReleaseAt <= noLaterThan)
+                .Select(pass => (DateTime?)pass.ReleaseAt)
+                .DefaultIfEmpty()
+                .Min();
+            var effect = PendingEffects
+                .Where(item => item.ResolveAt > after && item.ResolveAt <= noLaterThan)
+                .Select(item => (DateTime?)item.ResolveAt)
+                .DefaultIfEmpty()
+                .Min();
+            return Earlier(release, effect);
+        }
+
+        public bool TryStartAirToAirPass(
+            AirCombatEmploymentProposal proposal,
+            DateTime currentTime)
+        {
+            if (proposal == null
+                || proposal.SourceFlightId == Guid.Empty
+                || proposal.TargetFlightId == Guid.Empty
+                || proposal.Quantity <= 0
+                || ActivePasses.Any(pass => pass.SourceFlightId == proposal.SourceFlightId))
+                return false;
+
+            var contexts = BuildFlightContexts();
+            if (!contexts.TryGetValue(proposal.SourceFlightId, out var source)
+                || !contexts.TryGetValue(proposal.TargetFlightId, out var target)
+                || source.LiveAircraft.Count == 0
+                || target.LiveAircraft.Count == 0
+                || !source.Flight.IsAirborne
+                || !target.Flight.IsAirborne
+                || !ordnanceTypes.TryGetValue(
+                    proposal.OrdnanceTypeDefinitionId,
+                    out var ordnance)
+                || !IsAirToAir(ordnance)
+                || !AirCombatRules.EvaluateLaunch(
+                    source.Flight,
+                    source.AircraftType,
+                    target.Flight,
+                    ordnance,
+                    out var launchQuality))
+                return false;
+
+            var preferredAircraft = source.LiveAircraft
+                .Where(aircraft => CountRounds(
+                    aircraft,
+                    proposal.OrdnanceTypeDefinitionId) > 0)
+                .OrderByDescending(aircraft => CountRounds(
+                    aircraft,
+                    proposal.OrdnanceTypeDefinitionId))
+                .ThenBy(aircraft => aircraft.AircraftId)
+                .FirstOrDefault();
+            if (preferredAircraft == null)
+                return false;
+
+            var available = source.LiveAircraft.Sum(aircraft => CountRounds(
+                aircraft,
+                proposal.OrdnanceTypeDefinitionId));
+            var quantity = Math.Min(proposal.Quantity, available);
+            if (quantity <= 0)
+                return false;
+
+            var preparationSeconds = ordnance.PreparationSeconds
+                                     / source.AircraftType.OrdnanceEmploymentEfficiency;
+            var pass = new ActiveOrdnanceEmploymentPass
+            {
+                SourceFlightId = source.Flight.FlightId,
+                PreferredSourceAircraftId = preferredAircraft.AircraftId,
+                TargetFlightId = target.Flight.FlightId,
+                OrdnanceTypeDefinitionId = ordnance.OrdnanceTypeDefinitionId,
+                PlannedQuantity = quantity,
+                PreparationStartedAt = currentTime,
+                ReleaseAt = currentTime.AddSeconds(preparationSeconds),
+                LaunchQuality = Mathf.Min(launchQuality, proposal.LaunchQuality)
+            };
+            ActivePasses.Add(pass);
+            AddRecord(
+                pass,
+                OrdnanceEmploymentRecordStage.PreparationStarted,
+                currentTime,
+                quantity,
+                $"{source.DisplayName} began preparing {quantity} "
+                + $"{ordnance.Name} against {target.DisplayName}.");
+            return true;
+        }
+
+        public void UpdateAirToAirGuidance(DateTime currentTime)
+        {
+            var contexts = BuildFlightContexts();
+            foreach (var effect in PendingEffects
+                         .Where(item => item.SourceKind ==
+                                        OrdnanceEmploymentSourceKind.AircraftFlight
+                                        && item.ResolveAt > item.ReleasedAt)
+                         .OrderBy(item => item.PendingEffectId))
+            {
+                if (!ordnanceTypes.TryGetValue(effect.OrdnanceTypeDefinitionId, out var ordnance))
+                    continue;
+
+                var previous = effect.LastGuidanceUpdateAt == default
+                    ? effect.ReleasedAt
+                    : effect.LastGuidanceUpdateAt;
+                var boundedCurrent = currentTime > effect.ResolveAt
+                    ? effect.ResolveAt
+                    : currentTime;
+                var seconds = Math.Max(0d, (boundedCurrent - previous).TotalSeconds);
+                if (seconds <= 0d)
+                    continue;
+
+                if (effect.GuidanceStage == OrdnanceGuidanceStage.Midcourse
+                    && effect.AutonomousAt != default
+                    && boundedCurrent >= effect.AutonomousAt)
+                    effect.GuidanceStage = OrdnanceGuidanceStage.Autonomous;
+                if ((effect.ResolveAt - boundedCurrent).TotalSeconds <= 10d)
+                    effect.GuidanceStage = OrdnanceGuidanceStage.Terminal;
+
+                var supportEnd = effect.SupportRequired
+                    ? effect.AutonomousAt < effect.ResolveAt
+                        ? effect.AutonomousAt
+                        : effect.ResolveAt
+                    : previous;
+                var supportIntervalEnd = boundedCurrent < supportEnd
+                    ? boundedCurrent
+                    : supportEnd;
+                var supportIntervalSeconds = Math.Max(
+                    0d,
+                    (supportIntervalEnd - previous).TotalSeconds);
+                effect.SupportSeconds += (float)supportIntervalSeconds;
+                var supported = !effect.SupportRequired;
+                if (supportIntervalSeconds > 0d
+                    && contexts.TryGetValue(effect.SourceFlightId, out var source)
+                    && contexts.TryGetValue(effect.TargetFlightId, out var target))
+                {
+                    supported = AirCombatRules.AngleOffNose(
+                        source.Flight,
+                        target.Flight.PositionFeet)
+                                <= ordnance.MaximumSupportAngleDegrees;
+                }
+                if (supported)
+                    effect.SupportedSeconds += (float)supportIntervalSeconds;
+
+                if (contexts.TryGetValue(effect.TargetFlightId, out var defendedTarget))
+                {
+                    var defensiveStrength = defendedTarget.Flight.TacticalState.Maneuver switch
+                    {
+                        AirCombatManeuver.BeamLeft => 1f,
+                        AirCombatManeuver.BeamRight => 1f,
+                        AirCombatManeuver.Drag => 0.75f,
+                        AirCombatManeuver.Extend => 0.4f,
+                        _ => 0f
+                    };
+                    effect.DefensiveSeconds += (float)seconds * defensiveStrength;
+                    if (contexts.TryGetValue(effect.SourceFlightId, out var threatSource))
+                    {
+                        effect.PrincipalThreatBearingDegrees = AirCombatRules.HeadingTo(
+                            defendedTarget.Flight.PositionFeet,
+                            threatSource.Flight.PositionFeet);
+                    }
+                }
+                effect.LastGuidanceUpdateAt = boundedCurrent;
+            }
+        }
+
         public void RefreshTacticalState(DateTime currentTime)
         {
             var contexts = BuildFlightContexts();
-            StartFlightEmploymentPasses(contexts, currentTime);
             ProcessDueEvents(currentTime);
 
             contexts = BuildFlightContexts();
@@ -112,221 +273,6 @@ namespace Engine.Models
             return first.Value <= second.Value ? first : second;
         }
 
-        private void StartFlightEmploymentPasses(
-            IReadOnlyDictionary<Guid, FlightContext> contexts,
-            DateTime currentTime)
-        {
-            var activeSourceIds = ActivePasses
-                .Select(pass => pass.SourceFlightId)
-                .ToHashSet();
-
-            foreach (var source in contexts.Values
-                         .Where(context => context.Flight.IsAirborne
-                                           && context.LiveAircraft.Count > 0
-                                           && !activeSourceIds.Contains(context.Flight.FlightId))
-                         .OrderBy(context => context.Flight.FlightId))
-            {
-                var candidate = SelectFlightEmployment(source, contexts);
-                if (candidate == null)
-                    continue;
-
-                var preferredAircraft = source.LiveAircraft
-                    .Where(aircraft => CountRounds(
-                        aircraft,
-                        candidate.Ordnance.OrdnanceTypeDefinitionId) > 0)
-                    .OrderByDescending(aircraft => CountRounds(
-                        aircraft,
-                        candidate.Ordnance.OrdnanceTypeDefinitionId))
-                    .ThenBy(aircraft => aircraft.AircraftId)
-                    .First();
-                var quantity = Math.Min(
-                    candidate.Target.LiveAircraft.Count,
-                    source.LiveAircraft.Sum(aircraft => CountRounds(
-                        aircraft,
-                        candidate.Ordnance.OrdnanceTypeDefinitionId)));
-                if (quantity <= 0)
-                    continue;
-
-                var preparationSeconds = candidate.Ordnance.PreparationSeconds
-                                         / source.AircraftType.OrdnanceEmploymentEfficiency;
-                var pass = new ActiveOrdnanceEmploymentPass
-                {
-                    SourceFlightId = source.Flight.FlightId,
-                    PreferredSourceAircraftId = preferredAircraft.AircraftId,
-                    TargetFlightId = candidate.Target.Flight.FlightId,
-                    OrdnanceTypeDefinitionId =
-                        candidate.Ordnance.OrdnanceTypeDefinitionId,
-                    PlannedQuantity = quantity,
-                    PreparationStartedAt = currentTime,
-                    ReleaseAt = currentTime.AddSeconds(preparationSeconds)
-                };
-                ActivePasses.Add(pass);
-                AddRecord(
-                    pass,
-                    OrdnanceEmploymentRecordStage.PreparationStarted,
-                    currentTime,
-                    quantity,
-                    $"{source.DisplayName} began preparing {quantity} " +
-                    $"{candidate.Ordnance.Name} against {candidate.Target.DisplayName}.");
-            }
-        }
-
-        private FlightEmploymentCandidate SelectFlightEmployment(
-            FlightContext source,
-            IReadOnlyDictionary<Guid, FlightContext> contexts)
-        {
-            var candidates = new List<FlightEmploymentCandidate>();
-            foreach (var target in contexts.Values)
-            {
-                if (target.Flight.FlightId == source.Flight.FlightId
-                    || target.Alliance == source.Alliance
-                    || target.Alliance == Alliance.Neutral
-                    || target.LiveAircraft.Count == 0
-                    || !target.Flight.IsAirborne)
-                    continue;
-
-                var distanceKm = Vector3.Distance(
-                                     source.Flight.PositionFeet,
-                                     target.Flight.PositionFeet)
-                                 / AirspaceGeometry.FeetPerKilometer;
-                var ordnance = SelectAirToAirOrdnance(source, target, distanceKm);
-                if (ordnance == null)
-                    continue;
-
-                var aspect = HotAspect(source.Flight, target.Flight);
-                var isHot = aspect <= HotAspectDegrees;
-                var hasPendingAttack = PendingEffects.Any(effect =>
-                    effect.SourceKind == OrdnanceEmploymentSourceKind.AircraftFlight
-                    && effect.SourceFlightId == target.Flight.FlightId
-                    && effect.TargetFlightId == source.Flight.FlightId);
-                if (!PostureAllows(source, target, isHot, hasPendingAttack))
-                    continue;
-
-                candidates.Add(new FlightEmploymentCandidate(
-                    target,
-                    ordnance,
-                    distanceKm,
-                    aspect,
-                    isHot,
-                    hasPendingAttack));
-            }
-
-            return candidates
-                .OrderByDescending(candidate => candidate.HasPendingAttack)
-                .ThenByDescending(candidate => candidate.IsHot)
-                .ThenBy(candidate => candidate.ThreatScore)
-                .ThenBy(candidate => candidate.DistanceKm)
-                .ThenByDescending(candidate => candidate.Target.LiveAircraft.Count)
-                .ThenBy(candidate => candidate.Target.Flight.FlightId)
-                .FirstOrDefault();
-        }
-
-        private bool PostureAllows(
-            FlightContext source,
-            FlightContext target,
-            bool isHot,
-            bool hasPendingAttack)
-        {
-            switch (source.Flight.MissionType)
-            {
-                case AirMissionRequestType.DefensiveCounterAirPatrol:
-                    return IsInsideMissionArea(source.Flight.MissionArea, target.Flight.PositionFeet);
-
-                case AirMissionRequestType.OffensiveCounterAirSweep:
-                    if (source.Flight.ExecutionPhase == FlightExecutionPhase.Outbound
-                        || source.Flight.ExecutionPhase == FlightExecutionPhase.Executing)
-                        return true;
-                    return isHot || hasPendingAttack;
-
-                default:
-                    return isHot || hasPendingAttack;
-            }
-        }
-
-        private bool IsInsideMissionArea(AirMissionArea area, Vector3 positionFeet)
-        {
-            var center = AirspaceGeometry.TileCenterFeet(
-                area.CenterTileId,
-                gameManager.SimulationSettings.TileDistanceKM);
-            var horizontalDistance = Vector2.Distance(
-                new Vector2(center.x, center.z),
-                new Vector2(positionFeet.x, positionFeet.z));
-            var radiusFeet = (area.RadiusTiles + 0.55f)
-                             * gameManager.SimulationSettings.TileDistanceKM
-                             * AirspaceGeometry.FeetPerKilometer;
-            return horizontalDistance <= radiusFeet;
-        }
-
-        private OrdnanceTypeDefinition SelectAirToAirOrdnance(
-            FlightContext source,
-            FlightContext target,
-            float distanceKm)
-        {
-            var available = source.LiveAircraft
-                .SelectMany(aircraft => aircraft.Loadout)
-                .Where(item => item.Count > 0
-                               && ordnanceTypes.TryGetValue(
-                                   item.OrdnanceTypeDefinitionId,
-                                   out var definition)
-                               && IsAirToAir(definition)
-                               && IsInAircraftEnvelope(
-                                   source,
-                                   target,
-                                   definition,
-                                   distanceKm))
-                .Select(item => ordnanceTypes[item.OrdnanceTypeDefinitionId])
-                .Distinct()
-                .ToList();
-            if (available.Count == 0)
-                return null;
-
-            var closeRange = distanceKm <= CloseRangePreferenceKm;
-            return available
-                .OrderBy(definition => closeRange
-                    ? definition.EmploymentCategory ==
-                      OrdnanceEmploymentCategory.AirToAirInfrared ? 0 : 1
-                    : definition.EmploymentCategory ==
-                      OrdnanceEmploymentCategory.AirToAirRadar ? 0 : 1)
-                .ThenByDescending(definition => definition.HitProbability)
-                .ThenByDescending(definition => definition.GetEffectiveness(
-                    OrdnanceTargetCategory.Aircraft))
-                .ThenBy(definition => definition.OrdnanceTypeDefinitionId)
-                .First();
-        }
-
-        private bool IsInAircraftEnvelope(
-            FlightContext source,
-            FlightContext target,
-            OrdnanceTypeDefinition ordnance,
-            float distanceKm)
-        {
-            var maximumRange = EffectiveMaximumRangeKm(ordnance, source.Flight);
-            var targetAltitude = target.Flight.PositionFeet.y;
-            return maximumRange > 0f
-                   && distanceKm >= ordnance.MinimumRangeKm
-                   && distanceKm <= maximumRange
-                   && targetAltitude >= ordnance.MinimumTargetAltitudeFeet
-                   && targetAltitude <= ordnance.MaximumTargetAltitudeFeet;
-        }
-
-        private static float EffectiveMaximumRangeKm(
-            OrdnanceTypeDefinition ordnance,
-            AirFlight source)
-        {
-            if (ordnance.EmploymentCategory != OrdnanceEmploymentCategory.AirToAirRadar)
-                return ordnance.MaximumRangeKm;
-
-            var altitudeMultiplier = 1f + Mathf.Clamp(
-                (source.PositionFeet.y - 10000f) / 100000f,
-                0f,
-                0.3f);
-            var speedMultiplier = 1f + Mathf.Clamp(
-                (source.SpeedKnots - 400f) / 2000f,
-                -0.05f,
-                0.2f);
-            return ordnance.MaximumRangeKm * altitudeMultiplier * speedMultiplier;
-        }
-
         private void ReleaseFlightPass(
             ActiveOrdnanceEmploymentPass pass,
             DateTime releaseAt)
@@ -347,6 +293,22 @@ namespace Engine.Models
                     releaseAt,
                     0,
                     "Employment preparation aborted because its source or target was no longer valid.");
+                return;
+            }
+
+            if (!AirCombatRules.EvaluateLaunch(
+                    source.Flight,
+                    source.AircraftType,
+                    target.Flight,
+                    ordnance,
+                    out var releaseQuality))
+            {
+                AddRecord(
+                    pass,
+                    OrdnanceEmploymentRecordStage.PreparationAborted,
+                    releaseAt,
+                    0,
+                    "Employment preparation aborted because release geometry was no longer valid.");
                 return;
             }
 
@@ -375,11 +337,22 @@ namespace Engine.Models
             var travelSeconds = AirspaceGeometry.HorizontalTravelSeconds(
                 distanceFeet,
                 ordnance.EffectSpeedKnots);
+            var launchQuality = Mathf.Clamp01(Mathf.Min(pass.LaunchQuality, releaseQuality));
             var hitProbability = CalculateAircraftHitProbability(
                 source,
                 target,
                 ordnance,
-                distanceFeet / AirspaceGeometry.FeetPerKilometer);
+                distanceFeet / AirspaceGeometry.FeetPerKilometer)
+                                 * launchQuality;
+            var isActiveRadar = ordnance.GuidanceMode == OrdnanceGuidanceMode.ActiveRadar;
+            var isSemiActive = ordnance.GuidanceMode == OrdnanceGuidanceMode.SemiActiveRadar;
+            var supportRequired = isSemiActive
+                                  || ordnance.RequiresSupportUntilAutonomous;
+            var autonomousAt = isActiveRadar
+                ? releaseAt.AddSeconds(ordnance.SecondsUntilAutonomous)
+                : isSemiActive
+                    ? releaseAt.AddSeconds(travelSeconds)
+                    : releaseAt;
             var pending = new PendingOrdnanceEffect
             {
                 EmploymentPassId = pass.EmploymentPassId,
@@ -395,7 +368,18 @@ namespace Engine.Models
                 ReleaseRangeKm = distanceFeet / AirspaceGeometry.FeetPerKilometer,
                 SourcePositionFeet = source.Flight.PositionFeet,
                 TargetPositionFeet = target.Flight.PositionFeet,
-                Launches = launches
+                Launches = launches,
+                GuidanceStage = autonomousAt <= releaseAt
+                    ? OrdnanceGuidanceStage.Autonomous
+                    : OrdnanceGuidanceStage.Midcourse,
+                AutonomousAt = autonomousAt,
+                SupportRequired = supportRequired,
+                SupportSourceFlightId = source.Flight.FlightId,
+                LastGuidanceUpdateAt = releaseAt,
+                LaunchQuality = launchQuality,
+                PrincipalThreatBearingDegrees = AirCombatRules.HeadingTo(
+                    target.Flight.PositionFeet,
+                    source.Flight.PositionFeet)
             };
             PendingEffects.Add(pending);
             AddRecord(
@@ -438,7 +422,7 @@ namespace Engine.Models
                     var sequence = launches.Count + 1;
                     var targetIndex = targetAircraft.Count == 0
                         ? -1
-                        : StableIndex(aircraft.AircraftId, sequence, targetAircraft.Count);
+                        : (sequence - 1) % targetAircraft.Count;
                     var targetAircraftId = targetIndex < 0
                         ? Guid.Empty
                         : targetAircraft[targetIndex].AircraftId;
@@ -450,8 +434,6 @@ namespace Engine.Models
                         OrdnanceTypeDefinitionId = ordnanceTypeDefinitionId,
                         ReleasedAt = releaseAt
                     });
-                    if (targetIndex >= 0)
-                        targetAircraft.RemoveAt(targetIndex);
                 }
                 remaining -= spent;
                 if (remaining == 0)
@@ -470,10 +452,10 @@ namespace Engine.Models
         {
             var maximumRange = Math.Max(
                 ordnance.MinimumRangeKm + 0.01f,
-                EffectiveMaximumRangeKm(ordnance, source.Flight));
+                AirCombatRules.EffectiveMaximumRangeKm(ordnance, source.Flight));
             var rangeRatio = Mathf.Clamp01(distanceKm / maximumRange);
             var probability = ordnance.HitProbability * (1f - 0.25f * rangeRatio);
-            if (ordnance.GuidanceMode == OrdnanceGuidanceMode.Radar)
+            if (IsRadarGuided(ordnance.GuidanceMode))
             {
                 probability *= 0.75f + 0.25f * Mathf.Clamp01(source.AircraftType.RadarQuality);
                 probability *= 1f - 0.35f * Mathf.Clamp01(target.AircraftType.EcmQuality);
@@ -490,12 +472,13 @@ namespace Engine.Models
             DateTime resolveAt)
         {
             var losses = new HashSet<Guid>();
+            var damages = new HashSet<Guid>();
             var contexts = BuildFlightContexts();
             foreach (var targetGroup in effects
                          .GroupBy(effect => effect.TargetFlightId)
                          .OrderBy(group => group.Key))
             {
-                var availableTargets = contexts.TryGetValue(targetGroup.Key, out var target)
+                var batchTargets = contexts.TryGetValue(targetGroup.Key, out var target)
                     ? target.LiveAircraft
                         .OrderBy(aircraft => aircraft.AircraftId)
                         .ToList()
@@ -503,13 +486,24 @@ namespace Engine.Models
 
                 foreach (var effect in targetGroup.OrderBy(item => item.PendingEffectId))
                 {
+                    if (target != null
+                        && ordnanceTypes.TryGetValue(
+                            effect.OrdnanceTypeDefinitionId,
+                            out var resolvingOrdnance))
+                    {
+                        effect.HitProbability = CalculateTerminalHitProbability(
+                            effect,
+                            resolvingOrdnance);
+                    }
+                    effect.GuidanceStage = OrdnanceGuidanceStage.Resolved;
                     var hits = 0;
+                    var damaged = 0;
                     var misses = 0;
                     var ineffective = 0;
                     var shotDiagnostics = new List<OrdnanceShotDiagnostic>();
                     for (var missileIndex = 0; missileIndex < effect.Quantity; missileIndex++)
                     {
-                        if (availableTargets.Count == 0)
+                        if (batchTargets.Count == 0)
                         {
                             ineffective++;
                             shotDiagnostics.Add(new OrdnanceShotDiagnostic
@@ -529,11 +523,10 @@ namespace Engine.Models
                         }
 
                         var launch = GetLaunch(effect, missileIndex);
-                        var targetIndex = -1;
                         CampaignAircraft selectedAircraft;
                         if (launch != null && launch.TargetAircraftId != Guid.Empty)
                         {
-                            selectedAircraft = availableTargets.FirstOrDefault(
+                            selectedAircraft = batchTargets.FirstOrDefault(
                                 aircraft => aircraft.AircraftId == launch.TargetAircraftId);
                             if (selectedAircraft == null)
                             {
@@ -549,21 +542,35 @@ namespace Engine.Models
                                 });
                                 continue;
                             }
-                            targetIndex = availableTargets.IndexOf(selectedAircraft);
                         }
                         else
                         {
-                            targetIndex = StableIndex(
+                            var targetIndex = StableIndex(
                                 effect.PendingEffectId,
                                 missileIndex,
-                                availableTargets.Count);
-                            selectedAircraft = availableTargets[targetIndex];
+                                batchTargets.Count);
+                            selectedAircraft = batchTargets[targetIndex];
                         }
-                        availableTargets.RemoveAt(targetIndex);
                         var roll = (float)StableRoll(effect.PendingEffectId, missileIndex);
                         var result = roll < effect.HitProbability
                             ? OrdnanceShotResult.Hit
                             : OrdnanceShotResult.Miss;
+                        if (result == OrdnanceShotResult.Hit
+                            && target != null
+                            && ordnanceTypes.TryGetValue(
+                                effect.OrdnanceTypeDefinitionId,
+                                out var impactOrdnance))
+                        {
+                            var destructionProbability = Mathf.Clamp01(
+                                impactOrdnance.TerminalLethality
+                                * (1f - 0.55f * Mathf.Clamp01(
+                                    target.AircraftType.Survivability)));
+                            var damageRoll = (float)StableRoll(
+                                effect.PendingEffectId,
+                                missileIndex + 10000);
+                            if (damageRoll >= destructionProbability)
+                                result = OrdnanceShotResult.Damaged;
+                        }
                         shotDiagnostics.Add(new OrdnanceShotDiagnostic
                         {
                             Sequence = missileIndex + 1,
@@ -578,6 +585,12 @@ namespace Engine.Models
                             hits++;
                             losses.Add(selectedAircraft.AircraftId);
                         }
+                        else if (result == OrdnanceShotResult.Damaged)
+                        {
+                            hits++;
+                            damaged++;
+                            damages.Add(selectedAircraft.AircraftId);
+                        }
                         else
                         {
                             misses++;
@@ -589,7 +602,7 @@ namespace Engine.Models
                         OrdnanceEmploymentRecordStage.EffectResolved,
                         resolveAt,
                         effect.Quantity,
-                        $"Effect resolved: {hits} hit, {misses} missed, " +
+                        $"Effect resolved: {hits} hit ({damaged} damaged), {misses} missed, " +
                         $"{ineffective} became ineffective.",
                         shotDiagnostics);
                     PendingEffects.Remove(effect);
@@ -604,6 +617,15 @@ namespace Engine.Models
                 aircraft.ClearLoadout();
             }
 
+            foreach (var aircraft in gameManager.squadronSystem.Squadrons
+                         .SelectMany(squadron => squadron.Aircraft)
+                         .Where(aircraft => damages.Contains(aircraft.AircraftId)
+                                            && !losses.Contains(aircraft.AircraftId)))
+            {
+                aircraft.Status = CampaignAircraftStatus.Damaged;
+                aircraft.ClearLoadout();
+            }
+
             foreach (var targetFlightId in effects
                          .Select(effect => effect.TargetFlightId)
                          .Distinct())
@@ -615,6 +637,42 @@ namespace Engine.Models
 
                 target.Flight.Fail(resolveAt, "All aircraft were lost to ordnance effects.");
             }
+
+
+            foreach (var targetFlightId in effects
+                         .Select(effect => effect.TargetFlightId)
+                         .Distinct())
+            {
+                if (!contexts.TryGetValue(targetFlightId, out var target)
+                    || !target.LiveAircraft.Any(aircraft =>
+                        damages.Contains(aircraft.AircraftId)))
+                    continue;
+                target.Flight.Cancel(
+                    resolveAt,
+                    "Aircraft damage forced the flight to disengage and recover.");
+            }
+        }
+
+        private static float CalculateTerminalHitProbability(
+            PendingOrdnanceEffect effect,
+            OrdnanceTypeDefinition ordnance)
+        {
+            var totalSeconds = Math.Max(
+                1d,
+                (effect.ResolveAt - effect.ReleasedAt).TotalSeconds);
+            var supportRatio = effect.SupportRequired
+                ? Mathf.Clamp01(effect.SupportedSeconds / Math.Max(1f, effect.SupportSeconds))
+                : 1f;
+            var supportMultiplier = effect.SupportRequired
+                ? 0.3f + 0.7f * supportRatio
+                : 1f;
+            var defenseRatio = Mathf.Clamp01(
+                effect.DefensiveSeconds / (float)totalSeconds);
+            var defenseAuthority = 0.35f
+                                   + 0.45f * (1f - ordnance.CountermeasureResistance);
+            var defenseMultiplier = 1f - defenseRatio * defenseAuthority;
+            return Mathf.Clamp01(
+                effect.HitProbability * supportMultiplier * defenseMultiplier);
         }
 
         private static OrdnanceLaunchDiagnostic GetLaunch(
@@ -916,7 +974,8 @@ namespace Engine.Models
 
                     var liveAircraft = squadron.Aircraft
                         .Where(aircraft => aircraft.AssignedFlightId == flight.FlightId
-                                           && aircraft.Status != CampaignAircraftStatus.Lost)
+                                           && aircraft.Status != CampaignAircraftStatus.Lost
+                                           && aircraft.Status != CampaignAircraftStatus.Damaged)
                         .OrderBy(aircraft => aircraft.AircraftId)
                         .ToList();
                     contexts[flight.FlightId] = new FlightContext(
@@ -999,6 +1058,13 @@ namespace Engine.Models
                    OrdnanceEmploymentCategory.AirToAirInfrared;
         }
 
+        private static bool IsRadarGuided(OrdnanceGuidanceMode mode)
+        {
+            return mode == OrdnanceGuidanceMode.Radar
+                   || mode == OrdnanceGuidanceMode.ActiveRadar
+                   || mode == OrdnanceGuidanceMode.SemiActiveRadar;
+        }
+
         private static int CountRounds(
             CampaignAircraft aircraft,
             Guid ordnanceTypeDefinitionId)
@@ -1006,15 +1072,6 @@ namespace Engine.Models
             return aircraft.Loadout
                 .Where(item => item.OrdnanceTypeDefinitionId == ordnanceTypeDefinitionId)
                 .Sum(item => Math.Max(0, item.Count));
-        }
-
-        private static float HotAspect(AirFlight source, AirFlight target)
-        {
-            var bearingToSource = Mathf.Atan2(
-                                      source.PositionFeet.x - target.PositionFeet.x,
-                                      source.PositionFeet.z - target.PositionFeet.z)
-                                  * Mathf.Rad2Deg;
-            return Math.Abs(Mathf.DeltaAngle(target.HeadingDegrees, bearingToSource));
         }
 
         private static int StableIndex(Guid id, int sequence, int count)
@@ -1075,33 +1132,5 @@ namespace Engine.Models
                 : Squadron.Name;
         }
 
-        private sealed class FlightEmploymentCandidate
-        {
-            public readonly FlightContext Target;
-            public readonly OrdnanceTypeDefinition Ordnance;
-            public readonly float DistanceKm;
-            public readonly float AspectDegrees;
-            public readonly bool IsHot;
-            public readonly bool HasPendingAttack;
-
-            public FlightEmploymentCandidate(
-                FlightContext target,
-                OrdnanceTypeDefinition ordnance,
-                float distanceKm,
-                float aspectDegrees,
-                bool isHot,
-                bool hasPendingAttack)
-            {
-                Target = target;
-                Ordnance = ordnance;
-                DistanceKm = distanceKm;
-                AspectDegrees = aspectDegrees;
-                IsHot = isHot;
-                HasPendingAttack = hasPendingAttack;
-            }
-
-            public float ThreatScore =>
-                DistanceKm * (1f + Mathf.Clamp01(AspectDegrees / HotAspectDegrees) * 0.5f);
-        }
     }
 }

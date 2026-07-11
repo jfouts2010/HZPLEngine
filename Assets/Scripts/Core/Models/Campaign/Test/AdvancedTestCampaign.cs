@@ -11,7 +11,6 @@ namespace Models.Gameplay.Campaign
 
         // Radius-7 hex disc: 169 tiles, large enough to separate rear and forward air operations.
         private const int HexRadius = 7;
-        private const int DivisionsPerFrontTile = 1;
         private const int RearFighterAircraftPerSquadron = 6;
         private const int ForwardFighterAircraftPerSquadron = 3;
 
@@ -70,7 +69,11 @@ namespace Models.Gameplay.Campaign
             Guid.Parse("c3d4e5f6-7890-4abc-def1-234567890abc"),
             Guid.Parse("f4c047bf-4b74-4aa4-bb4b-dcf1abe53254"),
             Guid.Parse("20981a2a-ba4c-4778-bfe7-fea0fe0b6881"),
-            Guid.Parse("d4e5f6a7-8901-4bcd-ef12-345678901bcd")
+            Guid.Parse("d4e5f6a7-8901-4bcd-ef12-345678901bcd"),
+            Guid.Parse("6d142536-789a-4456-e89a-23456789abcd"),
+            Guid.Parse("7e253647-89ab-4567-f9ab-3456789abcde"),
+            Guid.Parse("8f364758-9abc-4678-8abc-456789abcdef"),
+            Guid.Parse("90475869-abcd-4789-9bcd-56789abcdef0")
         };
 
         private static readonly Guid[] RedFrontDivisionIds =
@@ -81,7 +84,11 @@ namespace Models.Gameplay.Campaign
             Guid.Parse("e5f6a7b8-9012-4cde-f123-456789012cde"),
             Guid.Parse("dc41ff3f-ff9c-47ce-918a-4b41d54dfb78"),
             Guid.Parse("d0692c0c-b5f8-4643-b327-339d06559bd9"),
-            Guid.Parse("f6a7b8c9-0123-4def-0123-567890123def")
+            Guid.Parse("f6a7b8c9-0123-4def-0123-567890123def"),
+            Guid.Parse("29d0e1f2-3456-4012-a456-890123456cde"),
+            Guid.Parse("3ae1f203-4567-4123-b567-901234567def"),
+            Guid.Parse("4bf20314-5678-4234-c678-012345678efa"),
+            Guid.Parse("5c031425-6789-4345-d789-123456789fab")
         };
 
         private static readonly Vector3Int BlueCapitalTileId = new Vector3Int(-3, 3, 0);
@@ -125,7 +132,7 @@ namespace Models.Gameplay.Campaign
                     SimulationTickMinutes = 5,
                     OperationalCadenceHours = 6
                 },
-                ContentHash = "advanced-mechanics-test-campaign-v8",
+                ContentHash = "advanced-mechanics-test-campaign-v9",
                 CountryAllianceAssignments = CreateCountryAllianceAssignments(),
                 OrdnanceAllowances = CreateOrdnanceAllowances(),
                 AirDoctrineByAlliance = CreateAirDoctrineByAlliance(),
@@ -432,40 +439,49 @@ namespace Models.Gameplay.Campaign
         private static List<DivisionStartingCondition> CreateDivisionStartingConditions()
         {
             var divisions = new List<DivisionStartingCondition>();
+            var blueDivisionNumber = 1;
 
             for (var i = 0; i < BlueFrontTileIds.Length; i++)
             {
-                for (var divisionSlot = 0; divisionSlot < DivisionsPerFrontTile; divisionSlot++)
+                for (var divisionSlot = 0; divisionSlot < GetFrontTileDivisionCount(i); divisionSlot++)
                 {
-                    var divisionNumber = i * DivisionsPerFrontTile + divisionSlot + 1;
                     divisions.Add(new DivisionStartingCondition
                     {
-                        DivisionId = BlueFrontDivisionIds[divisionNumber - 1],
+                        DivisionId = BlueFrontDivisionIds[blueDivisionNumber - 1],
                         DivisionTemplateId = TestModule.BlueArmoredDivisionTemplateId,
                         CountryId = BlueCountryId,
                         TileId = BlueFrontTileIds[i],
-                        Name = $"{divisionNumber}{GetOrdinalSuffix(divisionNumber)} Blue Front Division"
+                        Name = $"{blueDivisionNumber}{GetOrdinalSuffix(blueDivisionNumber)} Blue Front Division"
                     });
+                    blueDivisionNumber++;
                 }
             }
 
+            var redDivisionNumber = 1;
             for (var i = 0; i < RedFrontTileIds.Length; i++)
             {
-                for (var divisionSlot = 0; divisionSlot < DivisionsPerFrontTile; divisionSlot++)
+                for (var divisionSlot = 0; divisionSlot < GetFrontTileDivisionCount(i); divisionSlot++)
                 {
-                    var divisionNumber = i * DivisionsPerFrontTile + divisionSlot + 1;
                     divisions.Add(new DivisionStartingCondition
                     {
-                        DivisionId = RedFrontDivisionIds[divisionNumber - 1],
+                        DivisionId = RedFrontDivisionIds[redDivisionNumber - 1],
                         DivisionTemplateId = TestModule.RedTankDivisionTemplateId,
                         CountryId = RedCountryId,
                         TileId = RedFrontTileIds[i],
-                        Name = $"{divisionNumber}{GetOrdinalSuffix(divisionNumber)} Red Front Division"
+                        Name = $"{redDivisionNumber}{GetOrdinalSuffix(redDivisionNumber)} Red Front Division"
                     });
+                    redDivisionNumber++;
                 }
             }
 
             return divisions;
+        }
+
+        // Two interior front tiles retain a defender while contributing two divisions to assaults.
+        // Both alliances use the same distribution: 1, 3, 1, 3, 1, 1, 1 (11 divisions each).
+        private static int GetFrontTileDivisionCount(int frontTileIndex)
+        {
+            return frontTileIndex == 1 || frontTileIndex == 3 ? 3 : 1;
         }
 
         private static string GetOrdinalSuffix(int value)

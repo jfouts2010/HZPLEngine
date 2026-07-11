@@ -111,6 +111,7 @@ namespace Models.Gameplay.Campaign
         private Vector3 positionFeet;
         private float headingDegrees;
         private float speedKnots;
+        private FlightTacticalState tacticalState = new FlightTacticalState();
         private bool isWaitingAtRendezvous;
         private bool missionAchieved;
         private List<FlightExecutionEvent> executionEvents =
@@ -134,6 +135,8 @@ namespace Models.Gameplay.Campaign
         public Vector3 PositionFeet => positionFeet;
         public float HeadingDegrees => headingDegrees;
         public float SpeedKnots => speedKnots;
+        public FlightTacticalState TacticalState =>
+            tacticalState ??= new FlightTacticalState();
         public bool IsWaitingAtRendezvous => isWaitingAtRendezvous;
         public bool MissionAchieved => missionAchieved;
         public DateTime PlannedTakeoffTime =>
@@ -271,6 +274,8 @@ namespace Models.Gameplay.Campaign
             lifecycleState = AirTaskingLifecycleState.Active;
             executionPhase = FlightExecutionPhase.Outbound;
             headingDegrees = HeadingTo(positionFeet, route[1].PositionFeet);
+            TacticalState.FuelFraction = 1f;
+            TacticalState.ClearCombat(occurredAt, "Flight began route execution.");
             RecordEvent(takeoff, occurredAt, "Flight took off.");
             return true;
         }
