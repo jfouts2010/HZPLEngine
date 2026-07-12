@@ -808,11 +808,27 @@ _Avoid_: fixed aircraft reservations or guaranteed fulfillment based only on mis
 
 Defensive counter-air, offensive counter-air, airborne C2, aerial refueling, and DEAD may preserve or improve air superiority through distinct requested effects.
 
-Air superiority is assessed from relative projected **air-combat power**, not raw aircraft counts. Air-combat power reflects active and committed fighter coverage, ready fighters able to reach the area, aircraft capability and loadout, available support, expected hostile forces, losses, and alliance doctrine for the relevant area and time.
+Air superiority is assessed from relative projected **air-combat power**, not raw aircraft counts. Air-combat power reflects active and committed fighter coverage, ready fighters able to reach the area, airframe capability, available support, expected hostile forces, losses, and alliance doctrine for the relevant area and time. Air-control intelligence does not depend on knowing an aircraft's current weapons or remaining ammunition.
 
 _Avoid_: air superiority mission.
 
 _Avoid_: measuring local air control only by counting aircraft without considering their capability or ability to affect the area.
+
+### Air-control assessment
+
+An **air-control assessment** is an alliance-scoped, cached estimate for a campaign tile. It remembers accumulated friendly and hostile combat power independently and exposes each as a normalized **combat-presence rating** from `0` to `1`. Low friendly and hostile presence means quiet or unknown airspace; high values for both mean heavily contested airspace. **Air-control advantage** is the derived comparison from `-1` for hostile dominance through `0` for no remembered advantage or balanced power to `1` for friendly dominance. It is not tile ownership and does not replace ground control.
+
+The assessment is refreshed every 30 campaign minutes from aircraft dwell accumulated since the previous refresh. Airborne aircraft create physical **air activity** only in the tile they occupy. Friendly and hostile activity are remembered separately; their combined value describes general busyness. Each aircraft in a defensive or offensive counter-air flight projects its airframe's authored **air-control capability** across a radar-adjusted combat-speed response envelope. The aircraft projects full power through ten minutes of response travel, then declines smoothly to zero at twenty minutes of response travel. Current loadout, weapon characteristics, and remaining ammunition do not affect this intelligence product. These per-aircraft envelopes are accumulated on campaign tiles; ordinary traffic never projects combat presence merely by being airborne, and projected presence does not create physical activity outside the aircraft's occupied tile.
+
+AI safety decisions use absolute hostile combat presence rather than relative advantage: low known hostile presence identifies an operationally safer tile even when neither alliance controls it, while high friendly and hostile presence remains dangerous despite balanced advantage. Relative advantage remains useful for counter-air priority and deciding which alliance is favored. The air-control overlay uses advantage for red-purple-blue hue and total combat presence for opacity, so quiet airspace is transparent and heavily contested balanced airspace remains visible.
+
+New combat presence is learned quickly with a 30-minute rise half-life, while remembered combat presence decays with a six-hour half-life so routine takeoff and landing cycles do not cause the control map to fluctuate sharply. Physical air activity remains more responsive and uses a two-hour half-life. When neither side reinforces its remembered presence, control gradually returns toward the balanced `0.5` baseline.
+
+Each alliance owns its assessment because hostile evidence depends on that alliance's intelligence. Friendly flights currently use truth, and hostile flights use perfect information only as a temporary observation source. A future IADS-track source supplies sanitized contact identity, estimated position, strength, combat power, and observation quality to the same accumulator without exposing the true hostile flight or aircraft type.
+
+Grounded ready aircraft do not contribute to observed air control. A future deck-launch-interceptor or quick-reaction-alert contribution requires an explicit alert assignment; ordinary readiness is not treated as proof that fighters will contest a tile. Surface-to-air threat remains a separate route-risk input.
+
+_Avoid_: recalculating control when an AI asks for it, recording an unbounded aircraft-position history, treating quiet unknown airspace as proven friendly control, or deriving hostile control directly from hidden enemy campaign objects once track-based intelligence is active.
 
 ### Initial air-tasking mission requests
 

@@ -13,6 +13,9 @@ namespace Engine.Service
     {
         private const int DefaultMissionRadiusTiles = 2;
         private const int DefaultCombatFlightStrength = 4;
+        private const float StrongFriendlyAdvantage = 0.40f;
+        private const float MeaningfulCombatPresence = 0.10f;
+        private const float MeaningfulAirActivity = 0.10f;
         private static readonly TimeSpan HandoffBuffer = TimeSpan.FromMinutes(30);
 
         private readonly AirMissionPriorityService priorityService;
@@ -54,7 +57,7 @@ namespace Engine.Service
                         effectStart,
                         effectEnd,
                         desiredAircraftStrength: desiredStrength,
-                        rationale: "Protect friendly air operations and nearby airspace");
+                        rationale: "Maintain defensive counter-air coverage over friendly air operations");
                     dcaRequest.PriorityComponents["desiredAircraftStrength"] = desiredStrength;
                     generated.Add(dcaRequest);
                 }
@@ -74,8 +77,14 @@ namespace Engine.Service
             }
 
             var ocaCandidates = BuildOcaTargetCandidates(
+                commander,
                 snapshot,
-                commander.Doctrine);
+                commander.Doctrine)
+                .Where(candidate =>
+                    candidate.AirControlAdvantage < StrongFriendlyAdvantage
+                    && (candidate.HostileCombatPresence >= MeaningfulCombatPresence
+                        || candidate.HostileAirActivity >= MeaningfulAirActivity))
+                .ToList();
             var bestPenetrationLayer = ocaCandidates
                 .Select(candidate => candidate.InterveningKnownAirCombatAreas)
                 .DefaultIfEmpty(0)
@@ -138,7 +147,20 @@ namespace Engine.Service
             }
 
             foreach (var request in generated)
-                priorityService.Score(request, commander.Doctrine, snapshot);
+            {
+                var airControl = CalculateAreaAirControl(
+                    commander,
+                    request.MissionArea);
+                priorityService.Score(
+                    request,
+                    commander.Doctrine,
+                    snapshot,
+                    airControl.FriendlyPresence,
+                    airControl.HostilePresence,
+                    airControl.Advantage,
+                    airControl.Activity,
+                    airControl.HostileActivity);
+            }
 
             return generated
                 .OrderByDescending(request => request.Priority)
@@ -201,6 +223,7 @@ namespace Engine.Service
         }
 
         private List<OcaTargetCandidate> BuildOcaTargetCandidates(
+            AllianceAirTaskingCommander commander,
             AirPlanningSnapshot snapshot,
             AllianceAirDoctrine doctrine)
         {
@@ -233,6 +256,9 @@ namespace Engine.Service
                     var missionArea = new AirMissionArea(
                         airportTile,
                         DefaultMissionRadiusTiles);
+                    var airControl = CalculateAreaAirControl(
+                        commander,
+                        new AirMissionArea(probeCenter, DefaultMissionRadiusTiles));
                     return new OcaTargetCandidate(
                         probeCenter,
                         CalculateDesiredCombatStrength(
@@ -248,7 +274,10 @@ namespace Engine.Service
                         CalculateInterveningKnownAirCombatAreas(
                             friendlyAirCombatOrigins,
                             knownHostileAirCombatTiles,
-                            airportTile));
+                            airportTile),
+                        airControl.Advantage,
+                        airControl.HostilePresence,
+                        airControl.HostileActivity);
                 })
                 .OrderBy(candidate => candidate.InterveningKnownAirCombatAreas)
                 .ThenBy(candidate => candidate.PenetrationDepthTiles)
@@ -257,6 +286,33 @@ namespace Engine.Service
                 .ThenBy(candidate => candidate.ProbeCenterTileId.y)
                 .ThenBy(candidate => candidate.ProbeCenterTileId.z)
                 .ToList();
+        }
+
+        private static (
+            float FriendlyPresence,
+            float HostilePresence,
+            float Advantage,
+            float Activity,
+            float HostileActivity) CalculateAreaAirControl(
+            AllianceAirTaskingCommander commander,
+            AirMissionArea missionArea)
+        {
+            var assessments = commander.AirControlAssessments
+                .Where(assessment => missionArea.Contains(assessment.TileId))
+                .ToList();
+            if (assessments.Count == 0)
+                return (0f, 0f, 0f, 0f, 0f);
+
+            return (
+                Mathf.Clamp01(assessments.Average(
+                    assessment => assessment.FriendlyCombatPresence)),
+                Mathf.Clamp01(assessments.Average(
+                    assessment => assessment.HostileCombatPresence)),
+                Mathf.Clamp(assessments.Average(
+                    assessment => assessment.AirControlAdvantage), -1f, 1f),
+                Mathf.Clamp01(assessments.Average(assessment => assessment.AirActivity)),
+                Mathf.Clamp01(assessments.Average(
+                    assessment => assessment.HostileAirActivity)));
         }
 
         private static Vector3Int SelectBestOcaApproachOrigin(
@@ -389,21 +445,31 @@ namespace Engine.Service
             public readonly int PenetrationDepthTiles;
             public readonly int ProbeDepthTiles;
             public readonly int InterveningKnownAirCombatAreas;
+            public readonly float AirControlAdvantage;
+            public readonly float HostileCombatPresence;
+            public readonly float HostileAirActivity;
 
             public OcaTargetCandidate(
                 Vector3Int probeCenterTileId,
                 int desiredAircraftStrength,
                 int penetrationDepthTiles,
                 int probeDepthTiles,
-                int interveningKnownAirCombatAreas)
+                int interveningKnownAirCombatAreas,
+                float airControlAdvantage,
+                float hostileCombatPresence,
+                float hostileAirActivity)
             {
                 ProbeCenterTileId = probeCenterTileId;
                 DesiredAircraftStrength = Math.Max(0, desiredAircraftStrength);
                 PenetrationDepthTiles = Math.Max(0, penetrationDepthTiles);
                 ProbeDepthTiles = Math.Max(0, probeDepthTiles);
                 InterveningKnownAirCombatAreas = Math.Max(0, interveningKnownAirCombatAreas);
+                AirControlAdvantage = Mathf.Clamp(airControlAdvantage, -1f, 1f);
+                HostileCombatPresence = Mathf.Clamp01(hostileCombatPresence);
+                HostileAirActivity = Mathf.Clamp01(hostileAirActivity);
             }
         }
+
     }
 
 }

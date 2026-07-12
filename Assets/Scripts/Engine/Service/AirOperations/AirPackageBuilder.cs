@@ -24,6 +24,7 @@ namespace Engine.Service
         private const float TankerAltitudeFeet = 25000f;
         private const float DefaultStationTrackHalfLengthTiles = 0.5f;
         private const float OcaProbeTrackHalfLengthTiles = 1.5f;
+        private const float MaximumSupportStationHostilePresence = 0.10f;
 
         private readonly GameManager gameManager;
         private readonly ProjectedAirEffectService projectedEffects;
@@ -92,6 +93,13 @@ namespace Engine.Service
             var requiredCapability = request.RequestType == AirMissionRequestType.ProvideAirborneC2
                 ? AirSupportCapability.AirborneC2
                 : AirSupportCapability.AerialRefueling;
+            if (!TrySelectSupportStationTile(
+                    commander,
+                    request,
+                    out var stationTileId,
+                    out reason))
+                return AirPackageBuildOutcome.Deferred;
+
             var remainingSlots = Math.Max(1, request.DesiredSupportSlots - projectedSlots);
             var candidates = GetFriendlySquadrons(commander.Alliance)
                 .Where(squadron =>
@@ -105,7 +113,7 @@ namespace Engine.Service
                     AvailableAircraft = GetAvailableAircraft(squadron)
                 })
                 .Where(candidate => candidate.AvailableAircraft.Count > 0)
-                .OrderBy(candidate => GetAirportDistance(candidate.Squadron, request.MissionArea.CenterTileId))
+                .OrderBy(candidate => GetAirportDistance(candidate.Squadron, stationTileId))
                 .ThenBy(candidate => candidate.Squadron.SquadronId)
                 .FirstOrDefault();
             if (candidates == null)
@@ -137,6 +145,7 @@ namespace Engine.Service
                     planningStart,
                     effectStart,
                     effectEnd,
+                    stationTileId,
                     out reason))
             {
                 package = null;
@@ -189,9 +198,7 @@ namespace Engine.Service
             var squadronCandidates = GetFriendlySquadrons(commander.Alliance)
                 .Where(squadron =>
                     aircraftTypes.TryGetValue(squadron.AircraftTypeDefinitionId, out var aircraftType)
-                    && priorityService.CanPerformAirCombat(
-                        aircraftType,
-                        commander.Alliance))
+                    && priorityService.CanPerformAirCombat(aircraftType))
                 .Select(squadron =>
                 {
                     var aircraftType = aircraftTypes[squadron.AircraftTypeDefinitionId];
@@ -251,6 +258,7 @@ namespace Engine.Service
                     planningStart,
                     effectStart,
                     effectEnd,
+                    null,
                     out reason))
             {
                 package = null;
@@ -363,12 +371,52 @@ namespace Engine.Service
             return AirMissionArea.HexDistance(building.TileId, targetTile);
         }
 
+        private static bool TrySelectSupportStationTile(
+            AllianceAirTaskingCommander commander,
+            AirMissionRequest request,
+            out Vector3Int stationTileId,
+            out string reason)
+        {
+            stationTileId = request.MissionArea.CenterTileId;
+            reason = string.Empty;
+            var candidates = commander.AirControlAssessments
+                .Where(assessment => request.MissionArea.Contains(assessment.TileId))
+                .Select(assessment => new
+                {
+                    Assessment = assessment,
+                    Safety = 1f - assessment.HostileCombatPresence
+                             + assessment.FriendlyCombatPresence * 0.25f
+                })
+                .OrderByDescending(candidate => candidate.Safety)
+                .ThenBy(candidate => AirMissionArea.HexDistance(
+                    request.MissionArea.CenterTileId,
+                    candidate.Assessment.TileId))
+                .ThenBy(candidate => candidate.Assessment.TileId.x)
+                .ThenBy(candidate => candidate.Assessment.TileId.y)
+                .ThenBy(candidate => candidate.Assessment.TileId.z)
+                .ToList();
+            if (candidates.Count == 0)
+                return true;
+
+            var selected = candidates[0].Assessment;
+            if (selected.HostileCombatPresence
+                >= MaximumSupportStationHostilePresence)
+            {
+                reason = "No support station in the requested area is outside meaningful hostile combat presence.";
+                return false;
+            }
+
+            stationTileId = selected.TileId;
+            return true;
+        }
+
         private bool TryMaterializeRoutes(
             AirPackage package,
             AirMissionRequest request,
             DateTime earliestTakeoff,
             DateTime proposedEffectStart,
             DateTime proposedEffectEnd,
+            Vector3Int? missionCenterOverride,
             out string reason)
         {
             reason = string.Empty;
@@ -396,7 +444,7 @@ namespace Engine.Service
             var missionAltitude = plans.Min(plan =>
                 Math.Min(desiredMissionAltitude, plan.AircraftType.ServiceCeilingFeet));
             var missionCenter = AirspaceGeometry.TileCenterFeet(
-                request.MissionArea.CenterTileId,
+                missionCenterOverride ?? request.MissionArea.CenterTileId,
                 gameManager.SimulationSettings.TileDistanceKM,
                 missionAltitude);
             var tileDistanceFeet = gameManager.SimulationSettings.TileDistanceKM

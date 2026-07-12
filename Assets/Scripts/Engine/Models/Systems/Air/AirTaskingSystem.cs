@@ -15,6 +15,8 @@ namespace Engine.Models
         public const int MaximumPackageCreationsPerAlliancePerTick = 4;
 
         private readonly IAirPlanningIntelligence planningIntelligence;
+        private readonly AirMissionPriorityService priorityService;
+        private readonly AirControlAssessmentService airControlAssessmentService;
         private readonly AirMissionRequestGenerator requestGenerator;
         private readonly AirPackageBuilder packageBuilder;
         private readonly AircraftReservationService aircraftReservations;
@@ -31,12 +33,10 @@ namespace Engine.Models
             this.planningIntelligence = planningIntelligence
                                         ?? new PerfectAirPlanningIntelligence(gameManager);
             var projectedEffects = new ProjectedAirEffectService();
-            var priorityService = new AirMissionPriorityService(
-                module,
-                alliance =>
-                    gameManager.OrdnanceAllowances.TryGetValue(alliance, out var allowed)
-                        ? allowed
-                        : Array.Empty<Guid>());
+            priorityService = new AirMissionPriorityService(module);
+            airControlAssessmentService = new AirControlAssessmentService(
+                gameManager.CampaignTiles,
+                gameManager.SimulationSettings.TileDistanceKM);
             requestGenerator = new AirMissionRequestGenerator(priorityService);
             packageBuilder = new AirPackageBuilder(
                 gameManager,
@@ -84,11 +84,24 @@ namespace Engine.Models
 
         public void Initialize()
         {
+            airControlAssessmentService.Initialize(
+                gameManager.CurrentTime,
+                blueforCommander,
+                redforCommander);
             foreach (var commander in GetCommanders())
             {
                 RebuildGlobalPlan(commander);
                 FulfillRequests(commander);
             }
+        }
+
+        public void AdvanceAirControl(DateTime currentTime)
+        {
+            airControlAssessmentService.RefreshIfDue(
+                currentTime,
+                blueforCommander,
+                redforCommander);
+            RecordPerfectAirControlObservations(currentTime);
         }
 
         public void GameTurn(bool crossedOperationalCadenceBoundary)
@@ -127,6 +140,74 @@ namespace Engine.Models
                 snapshot,
                 cadenceHours);
             commander.AddMissionRequests(generatedRequests, gameManager.CurrentTime);
+        }
+
+        private void RecordPerfectAirControlObservations(DateTime currentTime)
+        {
+            var observedContactIdsByAlliance = GetCommanders()
+                .ToDictionary(
+                    commander => commander.Alliance,
+                    _ => new HashSet<Guid>());
+
+            foreach (var package in GetPackages())
+            {
+                if (package == null || package.IsTerminal)
+                    continue;
+
+                foreach (var flight in package.Flights)
+                {
+                    if (flight == null
+                        || !flight.IsAirborne
+                        || flight.HasPhysicallyEnded
+                        || !flight.HasPosition
+                        || !gameManager.squadronSystem.TryGetSquadron(
+                            flight.SquadronId,
+                            out var squadron))
+                        continue;
+
+                    var airborneAircraftCount = squadron.Aircraft.Count(aircraft =>
+                        aircraft.AssignedFlightId == flight.FlightId
+                        && aircraft.Status != CampaignAircraftStatus.Lost);
+                    if (airborneAircraftCount <= 0)
+                        continue;
+
+                    var tileId = AirspaceGeometry.TileCoordinateFromPositionFeet(
+                        flight.PositionFeet,
+                        gameManager.SimulationSettings.TileDistanceKM);
+                    if (!airControlAssessmentService.ContainsTile(tileId))
+                        continue;
+
+                    var combatProjections = priorityService
+                        .CalculateAirborneAirCombatProjections(
+                            flight,
+                            squadron);
+                    var combatPower = combatProjections.Sum(
+                        projection => projection.Power);
+                    foreach (var commander in GetCommanders())
+                    {
+                        airControlAssessmentService.RecordContact(
+                            commander.Alliance,
+                            package.Alliance,
+                            flight.FlightId,
+                            tileId,
+                            airborneAircraftCount,
+                            combatPower,
+                            combatProjections,
+                            1f,
+                            currentTime);
+                        observedContactIdsByAlliance[commander.Alliance].Add(
+                            flight.FlightId);
+                    }
+                }
+            }
+
+            foreach (var commander in GetCommanders())
+            {
+                airControlAssessmentService.EndContactsNotObserved(
+                    commander.Alliance,
+                    observedContactIdsByAlliance[commander.Alliance],
+                    currentTime);
+            }
         }
 
         private void FulfillRequests(AllianceAirTaskingCommander commander)

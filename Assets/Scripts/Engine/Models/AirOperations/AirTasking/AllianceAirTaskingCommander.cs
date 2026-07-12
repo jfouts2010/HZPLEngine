@@ -32,12 +32,21 @@ namespace Models.Gameplay.Campaign
         [SerializeField, FormerlySerializedAs("History")]
         private List<AirTaskingHistoryEntry> history =
             new List<AirTaskingHistoryEntry>();
+        [SerializeField]
+        private List<AirControlTileAssessment> airControlAssessments =
+            new List<AirControlTileAssessment>();
+
+        [NonSerialized]
+        private Dictionary<Vector3Int, AirControlTileAssessment>
+            airControlAssessmentsByTileId;
 
         public IReadOnlyList<AirMissionRequest> MissionRequests => missionRequests;
         public IReadOnlyList<AirPackage> Packages => packages;
         public IReadOnlyList<SupportDemandSample> SupportDemandHistory => supportDemandHistory;
         public IReadOnlyList<AirTaskingDiagnostic> Diagnostics => diagnostics;
         public IReadOnlyList<AirTaskingHistoryEntry> History => history;
+        public IReadOnlyList<AirControlTileAssessment> AirControlAssessments =>
+            airControlAssessments;
 
         public AllianceAirTaskingCommander()
         {
@@ -47,6 +56,79 @@ namespace Models.Gameplay.Campaign
         {
             Alliance = alliance;
             Doctrine = doctrine.Clone();
+        }
+
+        public void InitializeAirControlAssessments(
+            IEnumerable<Vector3Int> tileIds)
+        {
+            EnsureAirControlAssessmentIndex();
+            var desiredTileIds = new HashSet<Vector3Int>(tileIds ?? Array.Empty<Vector3Int>());
+            airControlAssessments.RemoveAll(assessment =>
+                assessment == null || !desiredTileIds.Contains(assessment.TileId));
+            airControlAssessmentsByTileId = null;
+            EnsureAirControlAssessmentIndex();
+
+            foreach (var tileId in desiredTileIds
+                         .OrderBy(tile => tile.x)
+                         .ThenBy(tile => tile.y)
+                         .ThenBy(tile => tile.z))
+            {
+                GetOrCreateAirControlAssessment(tileId);
+            }
+        }
+
+        public bool TryGetAirControlAssessment(
+            Vector3Int tileId,
+            out AirControlTileAssessment assessment)
+        {
+            EnsureAirControlAssessmentIndex();
+            return airControlAssessmentsByTileId.TryGetValue(tileId, out assessment);
+        }
+
+        public float GetAirControl(Vector3Int tileId)
+        {
+            return TryGetAirControlAssessment(tileId, out var assessment)
+                ? Mathf.Clamp01(assessment.AirControl)
+                : 0.5f;
+        }
+
+        public float GetAirActivity(Vector3Int tileId)
+        {
+            return TryGetAirControlAssessment(tileId, out var assessment)
+                ? Mathf.Clamp01(assessment.AirActivity)
+                : 0f;
+        }
+
+        internal AirControlTileAssessment GetOrCreateAirControlAssessment(
+            Vector3Int tileId)
+        {
+            EnsureAirControlAssessmentIndex();
+            if (airControlAssessmentsByTileId.TryGetValue(tileId, out var assessment))
+                return assessment;
+
+            assessment = new AirControlTileAssessment(tileId);
+            airControlAssessments.Add(assessment);
+            airControlAssessmentsByTileId[tileId] = assessment;
+            return assessment;
+        }
+
+        private void EnsureAirControlAssessmentIndex()
+        {
+            if (airControlAssessments == null)
+                airControlAssessments = new List<AirControlTileAssessment>();
+            if (airControlAssessmentsByTileId != null)
+                return;
+
+            airControlAssessments = airControlAssessments
+                .Where(assessment => assessment != null)
+                .GroupBy(assessment => assessment.TileId)
+                .Select(group => group.First())
+                .OrderBy(assessment => assessment.TileId.x)
+                .ThenBy(assessment => assessment.TileId.y)
+                .ThenBy(assessment => assessment.TileId.z)
+                .ToList();
+            airControlAssessmentsByTileId = airControlAssessments
+                .ToDictionary(assessment => assessment.TileId);
         }
 
         public void BeginPlanningCycle(DateTime currentTime)

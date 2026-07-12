@@ -9,29 +9,66 @@ using UnityEngine;
 
 namespace Engine.Service
 {
+    public readonly struct AirCombatProjection
+    {
+        public float Power { get; }
+        public float FullResponseRangeKm { get; }
+        public float MaximumInterceptRangeKm { get; }
+
+        public AirCombatProjection(
+            float power,
+            float fullResponseRangeKm,
+            float maximumInterceptRangeKm)
+        {
+            Power = Mathf.Max(0f, power);
+            FullResponseRangeKm = Mathf.Max(0f, fullResponseRangeKm);
+            MaximumInterceptRangeKm = Mathf.Max(
+                FullResponseRangeKm,
+                maximumInterceptRangeKm);
+        }
+
+        public float CalculateInfluence(float distanceKm)
+        {
+            if (Power <= 0f || MaximumInterceptRangeKm <= 0f)
+                return 0f;
+
+            var distance = Mathf.Max(0f, distanceKm);
+            if (distance <= FullResponseRangeKm)
+                return Power;
+            if (distance >= MaximumInterceptRangeKm)
+                return 0f;
+
+            var responseProgress = Mathf.InverseLerp(
+                FullResponseRangeKm,
+                MaximumInterceptRangeKm,
+                distance);
+            return Power * (1f - Mathf.SmoothStep(0f, 1f, responseProgress));
+        }
+    }
+
     public sealed class AirMissionPriorityService
     {
-        private readonly IReadOnlyDictionary<Guid, AircraftTypeDefinition> aircraftTypes;
-        private readonly IReadOnlyDictionary<Guid, OrdnanceTypeDefinition> ordnanceTypes;
-        private readonly AirLoadoutPlanner loadoutPlanner;
+        private const float FullResponseMinutes = 10f;
+        private const float MaximumResponseMinutes = 20f;
+        private const float KilometersPerNauticalMile = 1.852f;
 
-        public AirMissionPriorityService(
-            ModuleDefinition module,
-            Func<Alliance, IReadOnlyCollection<Guid>> allowedOrdnanceForAlliance)
+        private readonly IReadOnlyDictionary<Guid, AircraftTypeDefinition> aircraftTypes;
+
+        public AirMissionPriorityService(ModuleDefinition module)
         {
             aircraftTypes = module.AircraftTypeDefinitions
                 .ToDictionary(definition => definition.AircraftTypeDefinitionId);
-            ordnanceTypes = module.OrdnanceTypeDefinitions
-                .ToDictionary(definition => definition.OrdnanceTypeDefinitionId);
-            loadoutPlanner = new AirLoadoutPlanner(
-                module,
-                allowedOrdnanceForAlliance);
         }
 
         public void Score(
             AirMissionRequest request,
             AllianceAirDoctrine doctrine,
-            AirPlanningSnapshot snapshot)
+            AirPlanningSnapshot snapshot,
+            float assessedFriendlyPresence,
+            float assessedHostilePresence,
+            float assessedAirControlAdvantage,
+            float assessedAirActivity,
+            float assessedHostileAirActivity)
         {
             var doctrineWeight = doctrine.GetPriorityWeight(request.RequestType);
             var friendlyPower = CalculatePowerNear(
@@ -45,10 +82,23 @@ namespace Engine.Service
             var friendlyDeficit = Mathf.Clamp01(
                 (hostilePower * doctrine.DesiredAirCombatAdvantage - friendlyPower)
                 / Mathf.Max(0.1f, hostilePower * doctrine.DesiredAirCombatAdvantage));
+            var friendlyPresence = Mathf.Clamp01(assessedFriendlyPresence);
+            var hostilePresence = Mathf.Clamp01(assessedHostilePresence);
+            var airControlAdvantage = Mathf.Clamp(assessedAirControlAdvantage, -1f, 1f);
+            var airActivity = Mathf.Clamp01(assessedAirActivity);
+            var hostileAirActivity = Mathf.Clamp01(assessedHostileAirActivity);
+            var controlDeficit = Mathf.Clamp01((0.4f - airControlAdvantage) / 1.4f);
+            var observedHostilePressure = Mathf.Max(
+                hostilePresence,
+                hostileAirActivity * 0.25f);
             var urgency = request.RequestType switch
             {
-                AirMissionRequestType.DefensiveCounterAirPatrol => hostilePressure,
-                AirMissionRequestType.OffensiveCounterAirSweep => friendlyDeficit,
+                AirMissionRequestType.DefensiveCounterAirPatrol => Mathf.Max(
+                    hostilePressure,
+                    Mathf.Max(hostilePresence, controlDeficit * observedHostilePressure)),
+                AirMissionRequestType.OffensiveCounterAirSweep => Mathf.Max(
+                    friendlyDeficit,
+                    observedHostilePressure),
                 AirMissionRequestType.ProvideAirborneC2 =>
                     Mathf.Clamp01(request.DesiredSupportSlots / 12f),
                 AirMissionRequestType.ProvideAerialRefueling =>
@@ -62,6 +112,12 @@ namespace Engine.Service
             components["doctrineWeight"] = doctrineWeight;
             components["friendlyAirCombatPower"] = friendlyPower;
             components["hostileAirCombatPower"] = hostilePower;
+            components["friendlyCombatPresence"] = friendlyPresence;
+            components["hostileCombatPresence"] = hostilePresence;
+            components["airControlAdvantage"] = airControlAdvantage;
+            components["airActivity"] = airActivity;
+            components["hostileAirActivity"] = hostileAirActivity;
+            components["airControlDeficit"] = controlDeficit;
             components["urgency"] = urgency;
             components["riskTolerance"] = riskAcceptance;
             request.PriorityComponents = components;
@@ -71,39 +127,69 @@ namespace Engine.Service
         public float CalculateAirCombatPower(AirPlanningSquadronSnapshot squadron)
         {
             var aircraftType = aircraftTypes[squadron.AircraftTypeDefinitionId];
-            if (!loadoutPlanner.TryPlanAirCombatLoadout(
-                    aircraftType,
-                    squadron.Alliance,
-                    out var loadout,
-                    out _))
-                return 0f;
-
-            var bestAirWeaponEffectiveness = loadout
-                .Select(item => ordnanceTypes[item.OrdnanceTypeDefinitionId]
-                    .GetEffectiveness(OrdnanceTargetCategory.Aircraft))
-                .DefaultIfEmpty(0f)
-                .Max();
-            var perAircraftPower =
-                0.25f
-                + Mathf.Clamp01(aircraftType.RadarQuality) * 0.35f
-                + Mathf.Clamp01(aircraftType.EcmQuality) * 0.15f
-                + Mathf.Clamp01(aircraftType.Survivability) * 0.15f
-                + bestAirWeaponEffectiveness * 0.35f;
-            return perAircraftPower * Math.Max(0, squadron.ReadyAircraftCount + squadron.AssignedAircraftCount);
+            return aircraftType.AirControlCapability
+                   * Math.Max(
+                       0,
+                       squadron.ReadyAircraftCount + squadron.AssignedAircraftCount);
         }
 
-        public bool CanPerformAirCombat(
-            AircraftTypeDefinition aircraftType,
-            Alliance alliance)
+        public float CalculateAirborneAirCombatPower(
+            AirFlight flight,
+            Squadron squadron)
         {
-            if (aircraftType.SupportCapability != AirSupportCapability.None)
-                return false;
+            return CalculateAirborneAirCombatProjections(flight, squadron)
+                .Sum(projection => projection.Power);
+        }
 
-            return loadoutPlanner.TryPlanAirCombatLoadout(
-                aircraftType,
-                alliance,
-                out _,
-                out _);
+        public IReadOnlyList<AirCombatProjection>
+            CalculateAirborneAirCombatProjections(
+            AirFlight flight,
+            Squadron squadron)
+        {
+            if (flight == null
+                || squadron == null
+                || (flight.MissionType != AirMissionRequestType.DefensiveCounterAirPatrol
+                    && flight.MissionType != AirMissionRequestType.OffensiveCounterAirSweep))
+                return Array.Empty<AirCombatProjection>();
+
+            var projections = new List<AirCombatProjection>();
+            foreach (var aircraft in squadron.Aircraft.Where(aircraft =>
+                         aircraft.AssignedFlightId == flight.FlightId
+                         && aircraft.Status != CampaignAircraftStatus.Damaged
+                         && aircraft.Status != CampaignAircraftStatus.Lost))
+            {
+                if (!aircraftTypes.TryGetValue(
+                        aircraft.AircraftTypeDefinitionId,
+                        out var aircraftType)
+                    || aircraftType.AirControlCapability <= 0f)
+                    continue;
+
+                var organicDetectionFactor = Mathf.Lerp(
+                    0.5f,
+                    1f,
+                    Mathf.Clamp01(aircraftType.RadarQuality));
+                var combatSpeedKmPerHour = aircraftType.CombatSpeedKnots
+                                           * KilometersPerNauticalMile;
+                var fullResponseRange = combatSpeedKmPerHour
+                                        * FullResponseMinutes / 60f
+                                        * organicDetectionFactor;
+                var maximumResponseRange = combatSpeedKmPerHour
+                                           * MaximumResponseMinutes / 60f
+                                           * organicDetectionFactor;
+                projections.Add(new AirCombatProjection(
+                    aircraftType.AirControlCapability,
+                    fullResponseRange,
+                    maximumResponseRange));
+            }
+
+            return projections;
+        }
+
+        public bool CanPerformAirCombat(AircraftTypeDefinition aircraftType)
+        {
+            return aircraftType != null
+                   && aircraftType.SupportCapability == AirSupportCapability.None
+                   && aircraftType.AirControlCapability > 0f;
         }
 
         public float CalculatePowerNear(
@@ -114,6 +200,7 @@ namespace Engine.Service
                 .Where(squadron => missionArea.Contains(squadron.AirportTileId))
                 .Sum(CalculateAirCombatPower);
         }
+
     }
 
 }

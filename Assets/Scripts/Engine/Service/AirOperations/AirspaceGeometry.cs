@@ -24,6 +24,40 @@ namespace Engine.Service
                 (cubeCoordinate.z + cubeCoordinate.x * 0.5f) * spacingFeet);
         }
 
+        public static Vector3Int TileCoordinateFromPositionFeet(
+            Vector3 positionFeet,
+            float tileDistanceKm)
+        {
+            var spacingFeet = Math.Max(0f, tileDistanceKm) * FeetPerKilometer;
+            if (spacingFeet <= 0f)
+                return Vector3Int.zero;
+
+            var x = positionFeet.x / (SqrtThreeOverTwo * spacingFeet);
+            var z = positionFeet.z / spacingFeet - x * 0.5f;
+            var y = -x - z;
+            return CubeRound(x, y, z);
+        }
+
+        private static Vector3Int CubeRound(float x, float y, float z)
+        {
+            var roundedX = Mathf.RoundToInt(x);
+            var roundedY = Mathf.RoundToInt(y);
+            var roundedZ = Mathf.RoundToInt(z);
+
+            var xDifference = Math.Abs(roundedX - x);
+            var yDifference = Math.Abs(roundedY - y);
+            var zDifference = Math.Abs(roundedZ - z);
+
+            if (xDifference > yDifference && xDifference > zDifference)
+                roundedX = -roundedY - roundedZ;
+            else if (yDifference > zDifference)
+                roundedY = -roundedX - roundedZ;
+            else
+                roundedZ = -roundedX - roundedY;
+
+            return new Vector3Int(roundedX, roundedY, roundedZ);
+        }
+
         public static double TravelSeconds(
             Vector3 from,
             Vector3 to,

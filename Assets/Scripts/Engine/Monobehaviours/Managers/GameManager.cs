@@ -301,6 +301,7 @@ namespace Engine.Monobehaviours.Managers
 
             _airExecutionSystem.GameTurn(previousTime, CurrentTime);
             _IADSSystem.TacticalTurn();
+            _airTaskingSystem.AdvanceAirControl(CurrentTime);
             _ordnanceEmploymentSystem.RefreshTacticalState(CurrentTime);
             if (notifyTacticalStep)
                 AirTacticalStepCompleted?.Invoke();

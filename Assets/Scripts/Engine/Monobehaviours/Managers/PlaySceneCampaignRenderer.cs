@@ -26,6 +26,7 @@ namespace Engine.Monobehaviours.Managers
         [SerializeField] private GameManager gameManager;
         [SerializeField] private Grid grid;
         [SerializeField] private Tilemap tilemap;
+        [SerializeField] private Tilemap airControlTilemap;
         [SerializeField] private Camera sceneCamera;
         [SerializeField] private UIDocument uiDocument;
         [SerializeField] private PanelSettings panelSettings;
@@ -42,6 +43,7 @@ namespace Engine.Monobehaviours.Managers
         private readonly Dictionary<string, Sprite> spritesByKey = new Dictionary<string, Sprite>();
         private readonly Dictionary<string, Sprite> unitCounterSpritesByKey = new Dictionary<string, Sprite>();
         private readonly Dictionary<string, Sprite> combatBubbleSpritesByScore = new Dictionary<string, Sprite>();
+        private UnityEngine.Tilemaps.Tile airControlRenderTile;
         private Sprite movementArrowHeadSprite;
         private Material movementArrowMaterial;
 
@@ -73,6 +75,10 @@ namespace Engine.Monobehaviours.Managers
         private static readonly Color RailwayLineColor = new Color(0.38f, 0.32f, 0.24f);
         private static readonly Color SupplyHubMarkerColor = new Color(0.88f, 0.58f, 0.10f);
         private static readonly Color SupplyHubMarkerBorderColor = new Color(0.98f, 0.92f, 0.78f);
+        private const float MaximumAirControlOverlayAlpha = 0.75f;
+        private static readonly Color BlueAirControlColor = new Color(0.12f, 0.38f, 0.95f, 1f);
+        private static readonly Color ContestedAirControlColor = new Color(0.58f, 0.20f, 0.72f, 1f);
+        private static readonly Color RedAirControlColor = new Color(0.92f, 0.16f, 0.18f, 1f);
         private static readonly Vector3Int[] TerritoryBorderNeighborOffsets =
         {
             new Vector3Int(1, -1, 0),
@@ -169,6 +175,7 @@ namespace Engine.Monobehaviours.Managers
         private Toggle overlayRoutesToggle;
         private Toggle overlayOrdnanceToggle;
         private Toggle overlayRailToggle;
+        private Toggle overlayAirControlToggle;
         private VisualElement windowLayer;
         private VisualElement flightDetailPopup;
         private VisualElement flightDetailDragHandle;
@@ -304,6 +311,7 @@ namespace Engine.Monobehaviours.Managers
 
         private void RefreshAirAfterTacticalStep()
         {
+            RefreshAirControlOverlay();
             RefreshAirOverlaysForSelection();
             RefreshOrdnanceOverlay();
             RefreshFlightDetails();
@@ -318,6 +326,7 @@ namespace Engine.Monobehaviours.Managers
             var previousSelectedCell = preserveSelection ? selectedCell : null;
 
             tilemap.ClearAllTiles();
+            airControlTilemap?.ClearAllTiles();
             tilesByCell.Clear();
             hexCentersByCell.Clear();
             tilesById.Clear();
@@ -355,6 +364,7 @@ namespace Engine.Monobehaviours.Managers
                         Quaternion.identity,
                         new Vector3(1f, HexHeight, 1f)));
                 tilemap.SetColor(cell, Color.white);
+                ConfigureAirControlTile(cell, hexCenter);
                 CreateTileLabel(campaignTile, hexCenter);
             }
 
@@ -366,6 +376,7 @@ namespace Engine.Monobehaviours.Managers
             ApplySelectedFlightMarker();
             CreateAirInspection();
             RefreshOrdnanceOverlay();
+            RefreshAirControlOverlay();
             SetAirRouteVisibility(overlayRoutesToggle == null || overlayRoutesToggle.value);
 
             tilemap.RefreshAllTiles();
@@ -405,6 +416,15 @@ namespace Engine.Monobehaviours.Managers
                 tilemapObject.transform.SetParent(grid.transform, false);
                 tilemap = tilemapObject.AddComponent<Tilemap>();
                 tilemapObject.AddComponent<TilemapRenderer>();
+            }
+
+            if (airControlTilemap == null)
+            {
+                var overlayObject = new GameObject("Campaign Airspace Control");
+                overlayObject.transform.SetParent(grid.transform, false);
+                airControlTilemap = overlayObject.AddComponent<Tilemap>();
+                var overlayRenderer = overlayObject.AddComponent<TilemapRenderer>();
+                overlayRenderer.sortingOrder = 5;
             }
 
             if (labelRoot == null)
@@ -584,6 +604,7 @@ namespace Engine.Monobehaviours.Managers
             overlayRoutesToggle = root.Q<Toggle>("overlay-routes-toggle");
             overlayOrdnanceToggle = root.Q<Toggle>("overlay-ordnance-toggle");
             overlayRailToggle = root.Q<Toggle>("overlay-rail-toggle");
+            overlayAirControlToggle = root.Q<Toggle>("overlay-air-control-toggle");
             windowLayer = root.Q<VisualElement>("window-layer");
             flightDetailPopup = root.Q<VisualElement>("flight-detail-popup");
             flightDetailDragHandle = root.Q<VisualElement>("flight-detail-drag-handle");
@@ -907,6 +928,13 @@ namespace Engine.Monobehaviours.Managers
                     railwayRoot.gameObject.SetActive(value);
             });
             ConfigureOverlayToggle(overlayOrdnanceToggle, "Ordnance", true, _ => RefreshOrdnanceOverlay());
+            ConfigureOverlayToggle(overlayAirControlToggle, "AirControl", false, value =>
+            {
+                if (airControlTilemap != null)
+                    airControlTilemap.gameObject.SetActive(value);
+                if (value)
+                    RefreshAirControlOverlay();
+            });
         }
 
         private static void ConfigureOverlayToggle(
@@ -941,6 +969,119 @@ namespace Engine.Monobehaviours.Managers
             }
         }
 
+        private void ConfigureAirControlTile(Vector3Int cell, Vector3 hexCenter)
+        {
+            if (airControlTilemap == null)
+                return;
+
+            airControlTilemap.SetTile(cell, GetAirControlRenderTile());
+            airControlTilemap.SetTileFlags(cell, TileFlags.None);
+            airControlTilemap.SetTransformMatrix(
+                cell,
+                Matrix4x4.TRS(
+                    hexCenter - airControlTilemap.GetCellCenterLocal(cell),
+                    Quaternion.identity,
+                    new Vector3(1f, HexHeight, 1f)));
+        }
+
+        private void RefreshAirControlOverlay()
+        {
+            if (airControlTilemap == null || !airControlTilemap.gameObject.activeSelf)
+                return;
+
+            var blueCommander = gameManager?.GetAllianceAirTaskingCommander(Alliance.Bluefor);
+            var redCommander = gameManager?.GetAllianceAirTaskingCommander(Alliance.Redfor);
+            foreach (var campaignTile in tilesById.Values)
+            {
+                var hasBlueEstimate = TryGetAirControlPicture(
+                    blueCommander,
+                    campaignTile.Coordinates,
+                    out var blueAdvantage,
+                    out var bluePresence);
+                var hasRedEstimate = TryGetAirControlPicture(
+                    redCommander,
+                    campaignTile.Coordinates,
+                    out var redAdvantage,
+                    out var redPresence);
+                var estimateCount = (hasBlueEstimate ? 1 : 0) + (hasRedEstimate ? 1 : 0);
+                var combinedBlueAdvantage = estimateCount > 0
+                    ? ((hasBlueEstimate ? blueAdvantage : 0f)
+                       + (hasRedEstimate ? -redAdvantage : 0f)) / estimateCount
+                    : 0f;
+                var combinedPresence = estimateCount > 0
+                    ? ((hasBlueEstimate ? bluePresence : 0f)
+                       + (hasRedEstimate ? redPresence : 0f)) / estimateCount
+                    : 0f;
+                airControlTilemap.SetColor(
+                    GetCell(campaignTile.Coordinates),
+                    GetAirControlOverlayColor(
+                        combinedBlueAdvantage,
+                        combinedPresence));
+            }
+
+            // SetColor is immediate. RefreshAllTiles would reapply the shared tile's
+            // opaque white default and erase these per-cell translucent tints.
+        }
+
+        private static bool TryGetAirControlPicture(
+            AllianceAirTaskingCommander commander,
+            Vector3Int tileId,
+            out float airControlAdvantage,
+            out float combatPresence)
+        {
+            airControlAdvantage = 0f;
+            combatPresence = 0f;
+            if (commander == null
+                || !commander.TryGetAirControlAssessment(tileId, out var assessment))
+                return false;
+
+            airControlAdvantage = Mathf.Clamp(
+                assessment.AirControlAdvantage,
+                -1f,
+                1f);
+            combatPresence = Mathf.Max(
+                assessment.FriendlyCombatPresence,
+                assessment.HostileCombatPresence);
+            return true;
+        }
+
+        private static Color GetAirControlOverlayColor(
+            float blueAdvantage,
+            float combatPresence)
+        {
+            var advantage = Mathf.Clamp(blueAdvantage, -1f, 1f);
+            var color = advantage >= 0f
+                ? Color.Lerp(ContestedAirControlColor, BlueAirControlColor, advantage)
+                : Color.Lerp(ContestedAirControlColor, RedAirControlColor, -advantage);
+            color.a = Mathf.Clamp01(combatPresence) * MaximumAirControlOverlayAlpha;
+            return color;
+        }
+
+        private UnityEngine.Tilemaps.Tile GetAirControlRenderTile()
+        {
+            if (airControlRenderTile != null)
+                return airControlRenderTile;
+
+            var pixels = Enumerable.Repeat(Color.white, TilePixelSize * TilePixelSize).ToArray();
+            ApplyHexMask(pixels);
+            var texture = new Texture2D(TilePixelSize, TilePixelSize)
+            {
+                filterMode = FilterMode.Point,
+                wrapMode = TextureWrapMode.Clamp
+            };
+            texture.SetPixels(pixels);
+            texture.Apply();
+            var sprite = Sprite.Create(
+                texture,
+                new Rect(0, 0, TilePixelSize, TilePixelSize),
+                new Vector2(0.5f, 0.5f),
+                TilePixelSize);
+            airControlRenderTile = ScriptableObject.CreateInstance<UnityEngine.Tilemaps.Tile>();
+            airControlRenderTile.sprite = sprite;
+            airControlRenderTile.color = Color.white;
+            return airControlRenderTile;
+        }
+
         private void ResetWorkbenchLayout()
         {
             PlayerPrefs.DeleteKey("HZPL.Workbench.Window.Left");
@@ -949,7 +1090,7 @@ namespace Engine.Monobehaviours.Managers
             PlayerPrefs.DeleteKey("HZPL.Workbench.Window.Height");
             PlayerPrefs.DeleteKey("HZPL.Workbench.Panel.Width");
             PlayerPrefs.DeleteKey("HZPL.Workbench.Panel.Hidden");
-            foreach (var name in new[] { "Units", "Combats", "Movement", "Routes", "Ordnance", "Railways" })
+            foreach (var name in new[] { "Units", "Combats", "Movement", "Routes", "Ordnance", "Railways", "AirControl" })
                 PlayerPrefs.DeleteKey($"HZPL.Workbench.Overlay.{name}");
             if (hudPanel != null)
             {
@@ -964,6 +1105,7 @@ namespace Engine.Monobehaviours.Managers
             SetOverlayToggleValue(overlayRoutesToggle, true);
             SetOverlayToggleValue(overlayOrdnanceToggle, true);
             SetOverlayToggleValue(overlayRailToggle, true);
+            SetOverlayToggleValue(overlayAirControlToggle, false);
             if (flightDetailPopup != null)
             {
                 flightDetailPopup.style.left = 670f;
@@ -1744,53 +1886,54 @@ namespace Engine.Monobehaviours.Managers
                     $"Aircraft {allAircraft.Count}  •  Ready {squadrons.Sum(item => item.ReadyAircraft)}  •  Assigned {squadrons.Sum(item => item.AssignedAircraft)}  •  Damaged {squadrons.Sum(item => item.DamagedAircraft)}  •  Lost {squadrons.Sum(item => item.LostAircraft)}");
                 AddCompactLine(
                     panel,
-                    $"Own land: friendly {coverage.FriendlyCovered}/{coverage.TotalLand}  •  hostile {coverage.HostileCovered}/{coverage.TotalLand}  •  contested {coverage.Contested}");
+                    $"Own airspace: favorable {coverage.FriendlyCovered}/{coverage.TotalLand}  •  hostile {coverage.HostileCovered}/{coverage.TotalLand}  •  contested {coverage.Contested}  •  quiet {coverage.Quiet}");
                 AddCompactLine(panel, $"Requests {openRequests}  •  unmet/deferred {unmetRequests}");
                 airOverviewGrid.Add(panel);
             }
         }
 
-        private AirCoverageSummary CalculateAirControlCoverage(Alliance territoryOwner)
+        private (int TotalLand, int FriendlyCovered, int HostileCovered, int Contested, int Quiet)
+            CalculateAirControlCoverage(Alliance territoryOwner)
         {
             var landTiles = tileDataById.Values
                 .OfType<LandTileData>()
                 .Where(tile => tile.Controller == territoryOwner)
                 .ToList();
-            var friendlyAreas = GetActiveCounterAirAreas(territoryOwner);
-            var hostileAlliance = territoryOwner == Alliance.Bluefor
-                ? Alliance.Redfor
-                : Alliance.Bluefor;
-            var hostileAreas = GetActiveCounterAirAreas(hostileAlliance);
+            var commander = gameManager.GetAllianceAirTaskingCommander(territoryOwner);
             var friendly = 0;
             var hostile = 0;
             var contested = 0;
+            var quiet = 0;
             foreach (var tile in landTiles)
             {
-                var friendlyCovered = friendlyAreas.Any(area => area.Contains(tile.TileId));
-                var hostileCovered = hostileAreas.Any(area => area.Contains(tile.TileId));
-                if (friendlyCovered)
-                    friendly++;
-                if (hostileCovered)
-                    hostile++;
-                if (friendlyCovered && hostileCovered)
-                    contested++;
-            }
-            return new AirCoverageSummary(landTiles.Count, friendly, hostile, contested);
-        }
+                if (commander == null
+                    || !commander.TryGetAirControlAssessment(
+                        tile.TileId,
+                        out var assessment))
+                {
+                    quiet++;
+                    continue;
+                }
 
-        private List<AirMissionArea> GetActiveCounterAirAreas(Alliance alliance)
-        {
-            var commander = gameManager.GetAllianceAirTaskingCommander(alliance);
-            if (commander == null)
-                return new List<AirMissionArea>();
-            return commander.Packages
-                .SelectMany(package => package.Flights)
-                .Where(flight => flight.IsAirborne
-                                 && (flight.MissionType == AirMissionRequestType.DefensiveCounterAirPatrol
-                                     || flight.MissionType == AirMissionRequestType.OffensiveCounterAirSweep)
-                                 && flight.ActiveEffectArea != null)
-                .Select(flight => flight.ActiveEffectArea)
-                .ToList();
+                const float meaningfulPresence = 0.25f;
+                var friendlyPresence = assessment.FriendlyCombatPresence;
+                var hostilePresence = assessment.HostileCombatPresence;
+                if (friendlyPresence >= meaningfulPresence
+                    && hostilePresence >= meaningfulPresence)
+                    contested++;
+                else if (friendlyPresence >= meaningfulPresence)
+                    friendly++;
+                else if (hostilePresence >= meaningfulPresence)
+                    hostile++;
+                else
+                    quiet++;
+            }
+            return (
+                landTiles.Count,
+                friendly,
+                hostile,
+                contested,
+                quiet);
         }
 
         private void UpdateGroundOperationsUi()
@@ -1882,7 +2025,7 @@ namespace Engine.Monobehaviours.Managers
                 lines.Add($"{alliance}");
                 lines.Add(
                     $"Aircraft {squadrons.Sum(item => item.Aircraft.Count)}  •  Ready {squadrons.Sum(item => item.ReadyAircraft)}  •  Assigned {squadrons.Sum(item => item.AssignedAircraft)}  •  Damaged {squadrons.Sum(item => item.DamagedAircraft)}  •  Lost {squadrons.Sum(item => item.LostAircraft)}");
-                lines.Add($"Air-control coverage on own land: friendly {coverage.FriendlyCovered}/{coverage.TotalLand}, hostile {coverage.HostileCovered}/{coverage.TotalLand}, contested {coverage.Contested}");
+                lines.Add($"Air control on own land: favorable {coverage.FriendlyCovered}/{coverage.TotalLand}, hostile {coverage.HostileCovered}/{coverage.TotalLand}, contested {coverage.Contested}, quiet {coverage.Quiet}");
             }
             return lines;
         }
@@ -6026,26 +6169,6 @@ namespace Engine.Monobehaviours.Managers
 
             public bool Equals(MapPickTarget other) =>
                 Kind == other.Kind && FlightId == other.FlightId && TileId == other.TileId;
-        }
-
-        private readonly struct AirCoverageSummary
-        {
-            public readonly int TotalLand;
-            public readonly int FriendlyCovered;
-            public readonly int HostileCovered;
-            public readonly int Contested;
-
-            public AirCoverageSummary(
-                int totalLand,
-                int friendlyCovered,
-                int hostileCovered,
-                int contested)
-            {
-                TotalLand = totalLand;
-                FriendlyCovered = friendlyCovered;
-                HostileCovered = hostileCovered;
-                Contested = contested;
-            }
         }
 
         private readonly struct DiagnosticRow
