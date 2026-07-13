@@ -2245,9 +2245,11 @@ namespace Engine.Monobehaviours.Managers
                         GetMissionLabel(request.RequestType)),
                     new AirCardField("Composition", $"{package.Flights.Count} flights / {aircraftCount} aircraft"),
                     new AirCardField("Earliest launch", package.EarliestTakeoffTime.ToString("MM-dd HH:mm")),
-                    request.FulfillmentPattern == AirMissionRequestFulfillmentPattern.Discrete
-                        ? new AirCardField("Effect time", package.EffectStart.ToString("MM-dd HH:mm"))
-                        : new AirCardField("Effect window", $"{package.EffectStart:MM-dd HH:mm} – {package.EffectEnd:MM-dd HH:mm}"),
+                    request.RequestType == AirMissionRequestType.OffensiveCounterAirSweep
+                        ? new AirCardField("Sweep pass", $"{package.EffectStart:MM-dd HH:mm} – {package.EffectEnd:MM-dd HH:mm}")
+                        : request.FulfillmentPattern == AirMissionRequestFulfillmentPattern.Discrete
+                            ? new AirCardField("Effect time", package.EffectStart.ToString("MM-dd HH:mm"))
+                            : new AirCardField("Effect window", $"{package.EffectStart:MM-dd HH:mm} – {package.EffectEnd:MM-dd HH:mm}"),
                     new AirCardField("Source request", ShortId(package.MissionRequestId))
                 };
                 var rendezvous = package.RendezvousWaypoint;
@@ -2706,6 +2708,7 @@ namespace Engine.Monobehaviours.Managers
                 $"Heading: {flight.HeadingDegrees:0}°",
                 $"Planned takeoff: {flight.PlannedTakeoffTime:yyyy-MM-dd HH:mm}",
                 flight.HasSustainedEffect
+                || flight.MissionType == AirMissionRequestType.OffensiveCounterAirSweep
                     ? $"Effect window: {flight.EffectStart:yyyy-MM-dd HH:mm} – {flight.EffectEnd:yyyy-MM-dd HH:mm}"
                     : $"Effect time: {flight.EffectStart:yyyy-MM-dd HH:mm}",
                 $"Mission area: Hex {FormatTile(flight.MissionArea.CenterTileId)}");

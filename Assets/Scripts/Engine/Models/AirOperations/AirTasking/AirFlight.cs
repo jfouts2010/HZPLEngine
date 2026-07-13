@@ -143,7 +143,8 @@ namespace Models.Gameplay.Campaign
             GetRequiredWaypoint(AirWaypointAction.Takeoff).PlannedArrivalTime;
         public DateTime EffectStart => EffectWaypoints.First().PlannedArrivalTime;
         public bool HasSustainedEffect =>
-            EffectWaypoints.Any(waypoint => waypoint.Action == AirWaypointAction.StationEntry);
+            route.Any(waypoint => waypoint.Action == AirWaypointAction.StationEndpoint
+                                  && waypoint.HasRepeat);
         public DateTime EffectEnd
         {
             get
@@ -161,10 +162,16 @@ namespace Models.Gameplay.Campaign
 
                 var endpoint = route
                     .LastOrDefault(waypoint => waypoint.Action == AirWaypointAction.StationEndpoint
-                                               && waypoint.HasRepeat
                                                && waypoint.RepeatFromWaypointId == last.WaypointId);
-                return (endpoint ?? throw new InvalidOperationException(
-                    $"Flight {FlightId} station has no endpoint.")).RepeatUntil;
+                if (endpoint == null)
+                {
+                    throw new InvalidOperationException(
+                        $"Flight {FlightId} station has no endpoint.");
+                }
+
+                return endpoint.HasRepeat
+                    ? endpoint.RepeatUntil
+                    : endpoint.PlannedArrivalTime;
             }
         }
         public AirMissionArea MissionArea =>
@@ -326,6 +333,16 @@ namespace Models.Gameplay.Campaign
                     return FlightWaypointTransition.Advanced;
 
                 case AirWaypointAction.StationEndpoint:
+                    if (!waypoint.HasRepeat)
+                    {
+                        RecordEvent(
+                            waypoint,
+                            occurredAt,
+                            "Flight reached its sweep push point.");
+                        currentWaypointIndex++;
+                        return FlightWaypointTransition.Advanced;
+                    }
+
                     if (waypoint.HasRepeat && occurredAt < waypoint.RepeatUntil)
                     {
                         var repeatIndex = route.FindIndex(candidate =>
@@ -680,10 +697,9 @@ namespace Models.Gameplay.Campaign
             {
                 if (!waypoints.Any(waypoint =>
                         waypoint.Action == AirWaypointAction.StationEndpoint
-                        && waypoint.HasRepeat
                         && waypoint.RepeatFromWaypointId == station.WaypointId))
                 {
-                    reason = "Every station entry must have a repeating station endpoint.";
+                    reason = "Every station entry must have a station endpoint.";
                     return false;
                 }
             }
@@ -691,13 +707,29 @@ namespace Models.Gameplay.Campaign
             foreach (var endpoint in waypoints.Where(waypoint =>
                          waypoint.Action == AirWaypointAction.StationEndpoint))
             {
-                if (!endpoint.HasRepeat
-                    || endpoint.RepeatUntil < endpoint.PlannedArrivalTime
-                    || !waypoints.Any(waypoint =>
-                        waypoint.Action == AirWaypointAction.StationEntry
-                        && waypoint.WaypointId == endpoint.RepeatFromWaypointId))
+                var stationIndex = waypoints
+                    .Select((waypoint, index) => new { Waypoint = waypoint, Index = index })
+                    .Where(entry => entry.Waypoint.Action == AirWaypointAction.StationEntry
+                                    && entry.Waypoint.WaypointId
+                                    == endpoint.RepeatFromWaypointId)
+                    .Select(entry => entry.Index)
+                    .DefaultIfEmpty(-1)
+                    .First();
+                var endpointIndex = waypoints
+                    .Select((waypoint, index) => new { Waypoint = waypoint, Index = index })
+                    .Where(entry => ReferenceEquals(entry.Waypoint, endpoint))
+                    .Select(entry => entry.Index)
+                    .DefaultIfEmpty(-1)
+                    .First();
+                if (stationIndex < 0
+                    || endpointIndex <= stationIndex
+                    || endpoint.HasRepeat
+                    && endpoint.RepeatUntil < endpoint.PlannedArrivalTime
+                    || !endpoint.HasRepeat
+                    && !waypoints.Skip(endpointIndex + 1).Any(waypoint =>
+                        waypoint.Action == AirWaypointAction.MissionAction))
                 {
-                    reason = "A station endpoint must repeat a valid station entry until a valid release time.";
+                    reason = "A station endpoint must follow a valid entry and either repeat or lead to a mission action.";
                     return false;
                 }
             }

@@ -228,6 +228,11 @@ namespace Engine.Models
                 Time = currentTime,
                 TileDistanceKm = gameManager.SimulationSettings.TileDistanceKM,
                 Flights = flights,
+                AirCommanders = new Dictionary<Alliance, AllianceAirTaskingCommander>
+                {
+                    { Alliance.Bluefor, airTaskingSystem.GetCommander(Alliance.Bluefor) },
+                    { Alliance.Redfor, airTaskingSystem.GetCommander(Alliance.Redfor) }
+                },
                 ActivePasses = ordnanceEmploymentSystem.ActivePasses.ToList(),
                 PendingEffects = ordnanceEmploymentSystem.PendingEffects.ToList()
             };

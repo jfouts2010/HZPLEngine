@@ -23,6 +23,7 @@ namespace Engine.Models
         public DateTime Time;
         public float TileDistanceKm;
         public IReadOnlyDictionary<Guid, AirCombatFlightView> Flights;
+        public IReadOnlyDictionary<Alliance, AllianceAirTaskingCommander> AirCommanders;
         public IReadOnlyList<ActiveOrdnanceEmploymentPass> ActivePasses;
         public IReadOnlyList<PendingOrdnanceEffect> PendingEffects;
     }
@@ -131,7 +132,35 @@ namespace Engine.Models
                     $"Continuing committed {state.Maneuver} maneuver.");
             }
 
-            var target = SelectTarget(source, frame, ordnanceTypes);
+            if (flight.MissionType == AirMissionRequestType.OffensiveCounterAirSweep
+                && state.TargetFlightId != Guid.Empty
+                && state.Intent == AirCombatIntent.EngageTarget
+                && frame.Flights.TryGetValue(state.TargetFlightId, out var retainedTarget)
+                && !IsSelfDefenseTarget(source, retainedTarget, frame, ordnanceTypes)
+                && !IsOcaProactiveTargetAuthorized(
+                    source,
+                    retainedTarget,
+                    frame,
+                    doctrine,
+                    ordnanceTypes,
+                    out var disengageReason))
+            {
+                var disengage = AimAtTargetCommand(
+                    source,
+                    retainedTarget,
+                    AirCombatIntent.Disengage,
+                    AirCombatManeuver.Extend,
+                    frame.Time,
+                    frame.Time.AddSeconds(60),
+                    Guid.Empty,
+                    Guid.Empty,
+                    disengageReason,
+                    awayFromTarget: true);
+                disengage.TargetFlightId = Guid.Empty;
+                return disengage;
+            }
+
+            var target = SelectTarget(source, frame, ordnanceTypes, doctrine);
             if (target == null)
                 return RouteCommand(source, frame.Time, AirCombatIntent.FollowMission, "No authorized air target.");
 
@@ -376,12 +405,18 @@ namespace Engine.Models
         private static AirCombatFlightView SelectTarget(
             AirCombatFlightView source,
             AirCombatFrame frame,
-            IReadOnlyDictionary<Guid, OrdnanceTypeDefinition> ordnanceTypes)
+            IReadOnlyDictionary<Guid, OrdnanceTypeDefinition> ordnanceTypes,
+            AllianceAirDoctrine doctrine)
         {
             var retainedId = source.Flight.TacticalState.TargetFlightId;
             if (retainedId != Guid.Empty
                 && frame.Flights.TryGetValue(retainedId, out var retained)
-                && IsEligibleTarget(source, retained, frame, ordnanceTypes))
+                && IsEligibleTarget(
+                    source,
+                    retained,
+                    frame,
+                    ordnanceTypes,
+                    doctrine))
                 return retained;
 
             return frame.Flights.Values
@@ -389,19 +424,33 @@ namespace Engine.Models
                     source,
                     candidate,
                     frame,
-                    ordnanceTypes))
+                    ordnanceTypes,
+                    doctrine))
                 .Select(candidate => new
                 {
                     Flight = candidate,
-                    PendingAttack = frame.PendingEffects.Any(effect =>
+                    AssignedByPackage = source.Package.Flights.Any(flight =>
+                        flight.FlightId != source.Flight.FlightId
+                        && flight.TacticalState.TargetFlightId
+                        == candidate.Flight.FlightId),
+                    PendingPackageAttack = frame.PendingEffects.Any(effect =>
                         effect.SourceKind == OrdnanceEmploymentSourceKind.AircraftFlight
                         && effect.SourceFlightId == candidate.Flight.FlightId
-                        && effect.TargetFlightId == source.Flight.FlightId),
+                        && source.Package.Flights.Any(flight =>
+                            flight.FlightId == effect.TargetFlightId)),
+                    HotThreat = IsHotThreatWithinSelfDefenseEnvelope(
+                        source,
+                        candidate,
+                        ordnanceTypes),
+                    CounterAir = IsCounterAirMission(candidate.Flight.MissionType),
                     Distance = DistanceKm(
                         source.Flight.PositionFeet,
                         candidate.Flight.PositionFeet)
                 })
-                .OrderByDescending(candidate => candidate.PendingAttack)
+                .OrderByDescending(candidate => candidate.PendingPackageAttack)
+                .ThenByDescending(candidate => candidate.HotThreat)
+                .ThenByDescending(candidate => candidate.AssignedByPackage)
+                .ThenByDescending(candidate => candidate.CounterAir)
                 .ThenBy(candidate => candidate.Distance)
                 .ThenByDescending(candidate => candidate.Flight.LiveAircraft.Count)
                 .ThenBy(candidate => candidate.Flight.Flight.FlightId)
@@ -413,7 +462,8 @@ namespace Engine.Models
             AirCombatFlightView source,
             AirCombatFlightView target,
             AirCombatFrame frame,
-            IReadOnlyDictionary<Guid, OrdnanceTypeDefinition> ordnanceTypes)
+            IReadOnlyDictionary<Guid, OrdnanceTypeDefinition> ordnanceTypes,
+            AllianceAirDoctrine doctrine)
         {
             if (target == null
                 || !AreHostile(source.Alliance, target.Alliance)
@@ -428,6 +478,9 @@ namespace Engine.Models
                 && effect.TargetFlightId == source.Flight.FlightId
                 && effect.ResolveAt > frame.Time);
             if (isSelfDefenseTarget)
+                return true;
+
+            if (IsHotThreatWithinSelfDefenseEnvelope(source, target, ordnanceTypes))
                 return true;
 
             if (!IsCounterAirMission(source.Flight.MissionType))
@@ -455,16 +508,162 @@ namespace Engine.Models
 
             if (source.Flight.MissionType == AirMissionRequestType.OffensiveCounterAirSweep)
             {
-                return (source.Flight.ExecutionPhase == FlightExecutionPhase.Outbound
-                        || source.Flight.ExecutionPhase == FlightExecutionPhase.Executing)
-                       && IsInsideMissionArea(
-                           source.Flight.MissionArea,
-                           target.Flight.PositionFeet,
-                           frame.TileDistanceKm,
-                           2f);
+                return source.Flight.ExecutionPhase == FlightExecutionPhase.Executing
+                       && IsOcaProactiveTargetAuthorized(
+                           source,
+                           target,
+                           frame,
+                           doctrine,
+                           ordnanceTypes,
+                           out _);
             }
 
             return false;
+        }
+
+        private static bool IsSelfDefenseTarget(
+            AirCombatFlightView source,
+            AirCombatFlightView target,
+            AirCombatFrame frame,
+            IReadOnlyDictionary<Guid, OrdnanceTypeDefinition> ordnanceTypes)
+        {
+            return frame.PendingEffects.Any(effect =>
+                       effect.SourceKind == OrdnanceEmploymentSourceKind.AircraftFlight
+                       && effect.SourceFlightId == target.Flight.FlightId
+                       && effect.TargetFlightId == source.Flight.FlightId
+                       && effect.ResolveAt > frame.Time)
+                   || IsHotThreatWithinSelfDefenseEnvelope(
+                       source,
+                       target,
+                       ordnanceTypes);
+        }
+
+        private static bool IsOcaProactiveTargetAuthorized(
+            AirCombatFlightView source,
+            AirCombatFlightView target,
+            AirCombatFrame frame,
+            AllianceAirDoctrine doctrine,
+            IReadOnlyDictionary<Guid, OrdnanceTypeDefinition> ordnanceTypes,
+            out string reason)
+        {
+            if (!IsInsideSweepCorridor(source.Flight, target.Flight.PositionFeet, frame))
+            {
+                reason = "Target left the assigned sweep corridor; extending toward the sweep route.";
+                return false;
+            }
+
+            var friendlyPower = CalculateLocalAirCombatPower(
+                frame,
+                source.Alliance,
+                source.Package.PackageId,
+                ordnanceTypes,
+                target.Flight.PositionFeet);
+            var hostilePower = CalculateLocalAirCombatPower(
+                frame,
+                target.Alliance,
+                Guid.Empty,
+                ordnanceTypes,
+                target.Flight.PositionFeet);
+            var liveRatio = friendlyPower / Math.Max(0.1f, hostilePower);
+            var requiredRatio = Mathf.Lerp(
+                Math.Max(1f, doctrine.DesiredAirCombatAdvantage),
+                0.75f,
+                Mathf.Clamp01(doctrine.RiskTolerance));
+            if (liveRatio < requiredRatio)
+            {
+                reason = $"Local combat odds fell to {liveRatio:0.00}:1; extending from the engagement.";
+                return false;
+            }
+
+            var targetTileId = AirspaceGeometry.TileCoordinateFromPositionFeet(
+                target.Flight.PositionFeet,
+                frame.TileDistanceKm);
+            if (frame.AirCommanders != null
+                && frame.AirCommanders.TryGetValue(source.Alliance, out var commander)
+                && commander.TryGetAirControlAssessment(targetTileId, out var assessment))
+            {
+                var maximumHostilePresence = Mathf.Lerp(
+                    0.35f,
+                    0.85f,
+                    Mathf.Clamp01(doctrine.RiskTolerance));
+                if (assessment.HostileCombatPresence > maximumHostilePresence
+                    && assessment.AirControlAdvantage < 0f)
+                {
+                    reason = "Target is withdrawing into airspace with excessive remembered hostile combat presence.";
+                    return false;
+                }
+            }
+
+            reason = string.Empty;
+            return true;
+        }
+
+        private static float CalculateLocalAirCombatPower(
+            AirCombatFrame frame,
+            Alliance alliance,
+            Guid packageId,
+            IReadOnlyDictionary<Guid, OrdnanceTypeDefinition> ordnanceTypes,
+            Vector3 centerFeet)
+        {
+            var radiusKm = Math.Max(1f, frame.TileDistanceKm * 2f);
+            return frame.Flights.Values
+                .Where(view => view.Alliance == alliance
+                               && (packageId == Guid.Empty
+                                   || view.Package.PackageId == packageId)
+                               && view.Flight.IsAirborne
+                               && view.LiveAircraft.Count > 0
+                               && view.AircraftType.AirControlCapability > 0f
+                               && view.LiveAircraft.Any(aircraft => aircraft.Loadout.Any(item =>
+                                   item.Count > 0
+                                   && ordnanceTypes.TryGetValue(
+                                       item.OrdnanceTypeDefinitionId,
+                                       out var ordnance)
+                                   && IsAirToAir(ordnance)))
+                               && DistanceKm(
+                                   view.Flight.PositionFeet,
+                                   centerFeet) <= radiusKm)
+                .Sum(view => view.LiveAircraft.Count
+                             * view.AircraftType.AirControlCapability);
+        }
+
+        private static bool IsInsideSweepCorridor(
+            AirFlight source,
+            Vector3 targetPosition,
+            AirCombatFrame frame)
+        {
+            var entry = source.Route.FirstOrDefault(waypoint =>
+                waypoint.Action == AirWaypointAction.StationEntry);
+            var endpoint = entry == null
+                ? null
+                : source.Route.FirstOrDefault(waypoint =>
+                    waypoint.Action == AirWaypointAction.StationEndpoint
+                    && waypoint.RepeatFromWaypointId == entry.WaypointId);
+            if (entry == null || endpoint == null)
+            {
+                return IsInsideMissionArea(
+                    source.MissionArea,
+                    targetPosition,
+                    frame.TileDistanceKm,
+                    0f);
+            }
+
+            var start = new Vector2(entry.PositionFeet.x, entry.PositionFeet.z);
+            var end = new Vector2(endpoint.PositionFeet.x, endpoint.PositionFeet.z);
+            var target = new Vector2(targetPosition.x, targetPosition.z);
+            var segment = end - start;
+            var segmentLengthSquared = segment.sqrMagnitude;
+            if (segmentLengthSquared < 1f)
+                return Vector2.Distance(start, target) <= frame.TileDistanceKm
+                       * AirspaceGeometry.FeetPerKilometer;
+
+            var progress = Vector2.Dot(target - start, segment) / segmentLengthSquared;
+            if (progress < -0.25f || progress > 1.15f)
+                return false;
+
+            var closest = start + segment * Mathf.Clamp01(progress);
+            var corridorHalfWidthFeet = frame.TileDistanceKm
+                                        * AirspaceGeometry.FeetPerKilometer;
+            return Vector2.Distance(closest, target) <= corridorHalfWidthFeet;
         }
 
         private static bool IsHotThreatWithinSelfDefenseEnvelope(

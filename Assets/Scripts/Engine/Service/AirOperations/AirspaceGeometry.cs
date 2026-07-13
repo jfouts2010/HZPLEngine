@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Models.Gameplay.Campaign;
 using Models.Module;
 using UnityEngine;
@@ -11,6 +12,20 @@ namespace Engine.Service
         public const float FeetPerKilometer = 3280.8399f;
         public const float FeetPerNauticalMile = 6076.1155f;
         private const float SqrtThreeOverTwo = 0.8660254f;
+        private static readonly Vector3Int[] NeighborDirections =
+        {
+            new Vector3Int(1, -1, 0),
+            new Vector3Int(1, 0, -1),
+            new Vector3Int(0, 1, -1),
+            new Vector3Int(-1, 1, 0),
+            new Vector3Int(-1, 0, 1),
+            new Vector3Int(0, -1, 1)
+        };
+
+        public static IEnumerable<Vector3Int> NeighborTiles(Vector3Int tileId)
+        {
+            return NeighborDirections.Select(direction => tileId + direction);
+        }
 
         public static Vector3 TileCenterFeet(
             Vector3Int cubeCoordinate,
