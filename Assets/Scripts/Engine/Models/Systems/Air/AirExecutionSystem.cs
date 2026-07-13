@@ -223,7 +223,7 @@ namespace Engine.Models
                 }
             }
 
-            return new AirCombatFrame
+            var frame = new AirCombatFrame
             {
                 Time = currentTime,
                 TileDistanceKm = gameManager.SimulationSettings.TileDistanceKM,
@@ -234,8 +234,14 @@ namespace Engine.Models
                     { Alliance.Redfor, airTaskingSystem.GetCommander(Alliance.Redfor) }
                 },
                 ActivePasses = ordnanceEmploymentSystem.ActivePasses.ToList(),
-                PendingEffects = ordnanceEmploymentSystem.PendingEffects.ToList()
+                PendingEffects = ordnanceEmploymentSystem.PendingEffects.ToList(),
+                DefensiveTargetByFlightId = new Dictionary<Guid, Guid>()
             };
+            frame.DefensiveTargetByFlightId = AirCombatRules.BuildDefensiveAssignments(
+                frame,
+                ordnanceTypes,
+                GetDoctrine);
+            return frame;
         }
 
         private DateTime NextTacticalBoundary(DateTime cursor, DateTime tickEnd)

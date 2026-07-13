@@ -114,6 +114,21 @@ namespace Engine.Service
             AllianceAirTaskingCommander commander,
             AirMissionRequest request)
         {
+            if (request.RequestType == AirMissionRequestType.DefensiveCounterAirPatrol
+                && request.FulfillmentPattern == AirMissionRequestFulfillmentPattern.Sustained)
+            {
+                return commander.Packages
+                    .Where(package => !package.IsTerminal)
+                    .SelectMany(package => package.Flights)
+                    .Where(flight => !flight.IsTerminal
+                                     && flight.MissionType
+                                     == AirMissionRequestType.DefensiveCounterAirPatrol
+                                     && request.MissionArea.Contains(
+                                             flight.MissionArea.CenterTileId)
+                                     && flight.MissionArea.Contains(
+                                         request.MissionArea.CenterTileId));
+            }
+
             return commander.Packages
                 .Where(package => !package.IsTerminal
                                   && package.MissionRequestId == request.MissionRequestId)

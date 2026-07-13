@@ -91,6 +91,19 @@
     background-color: rgb(48, 92, 153);
 }
 
+.simulation-speed-button {
+    min-width: 58px;
+    color: var(--muted);
+    font-size: 9px;
+    -unity-font-style: bold;
+}
+
+.simulation-speed-button--selected {
+    border-color: rgb(76, 137, 220);
+    background-color: rgb(48, 92, 153);
+    color: white;
+}
+
 .workbench-button--quiet {
     min-width: 98px;
     background-color: transparent;

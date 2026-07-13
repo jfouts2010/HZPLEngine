@@ -77,6 +77,14 @@ namespace Engine.Service
             var hostilePower = CalculatePowerNear(
                 snapshot.HostileSquadrons,
                 request.MissionArea);
+            if (request.RequestType ==
+                    AirMissionRequestType.DefensiveCounterAirPatrol
+                && request.PriorityComponents.TryGetValue(
+                    "dcaHostileAirCombatPower",
+                    out var observedHostilePower))
+            {
+                hostilePower = Mathf.Max(0f, observedHostilePower);
+            }
             var localPowerTotal = Mathf.Max(0.1f, friendlyPower + hostilePower);
             var hostilePressure = Mathf.Clamp01(hostilePower / localPowerTotal);
             var friendlyDeficit = Mathf.Clamp01(
@@ -91,11 +99,18 @@ namespace Engine.Service
             var observedHostilePressure = Mathf.Max(
                 hostilePresence,
                 hostileAirActivity * 0.25f);
+            var dcaSectorPriority = request.PriorityComponents.TryGetValue(
+                "dcaSectorPriority",
+                out var rawDcaSectorPriority)
+                ? Mathf.Clamp01(rawDcaSectorPriority / 3.25f)
+                : 0f;
             var urgency = request.RequestType switch
             {
                 AirMissionRequestType.DefensiveCounterAirPatrol => Mathf.Max(
-                    hostilePressure,
-                    Mathf.Max(hostilePresence, controlDeficit * observedHostilePressure)),
+                    dcaSectorPriority,
+                    Mathf.Max(
+                        hostilePressure,
+                        Mathf.Max(hostilePresence, controlDeficit * observedHostilePressure))),
                 AirMissionRequestType.OffensiveCounterAirSweep => Mathf.Max(
                     friendlyDeficit,
                     observedHostilePressure),

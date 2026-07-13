@@ -26,6 +26,7 @@ namespace Engine.Models
         public IReadOnlyDictionary<Alliance, AllianceAirTaskingCommander> AirCommanders;
         public IReadOnlyList<ActiveOrdnanceEmploymentPass> ActivePasses;
         public IReadOnlyList<PendingOrdnanceEffect> PendingEffects;
+        public IReadOnlyDictionary<Guid, Guid> DefensiveTargetByFlightId;
     }
 
     internal static class AirCombatRules
@@ -36,6 +37,8 @@ namespace Engine.Models
         private const float CrankOffsetDegrees = 55f;
         private const float TerminalDefenseSeconds = 45f;
         private const float HotThreatAspectDegrees = 30f;
+        private const float DcaThreatLookaheadMinutes = 20f;
+        private const float DcaResponsePaddingTiles = 2f;
 
         public static AirCombatCommand Decide(
             AirCombatFlightView source,
@@ -402,12 +405,138 @@ namespace Engine.Models
             return new Vector3(Mathf.Sin(radians), 0f, Mathf.Cos(radians));
         }
 
+        public static IReadOnlyDictionary<Guid, Guid> BuildDefensiveAssignments(
+            AirCombatFrame frame,
+            IReadOnlyDictionary<Guid, OrdnanceTypeDefinition> ordnanceTypes,
+            Func<Alliance, AllianceAirDoctrine> doctrineForAlliance)
+        {
+            var assignments = new Dictionary<Guid, Guid>();
+            var defenders = frame.Flights.Values
+                .Where(view => view.Flight.MissionType
+                               == AirMissionRequestType.DefensiveCounterAirPatrol
+                               && view.Flight.LifecycleState == AirTaskingLifecycleState.Active
+                               && view.Flight.ExecutionPhase == FlightExecutionPhase.Executing
+                               && !view.Flight.MissionAchieved
+                               && frame.Time < view.Flight.EffectEnd
+                               && CalculateFlightAirCombatPower(view, ordnanceTypes) > 0f)
+                .OrderBy(view => view.Flight.FlightId)
+                .ToList();
+
+            var assignedDefenders = new HashSet<Guid>();
+            var threats = frame.Flights.Values
+                .Where(target => target.Flight.IsAirborne
+                                 && target.Flight.ExecutionPhase
+                                 != FlightExecutionPhase.Landing
+                                 && target.LiveAircraft.Count > 0)
+                .Select(target => new
+                {
+                    Target = target,
+                    Eligible = defenders
+                        .Where(defender => AreHostile(defender.Alliance, target.Alliance))
+                        .Select(defender => new
+                        {
+                            Defender = defender,
+                            Authorized = TryGetDcaThreatMinutes(
+                                defender,
+                                target,
+                                frame,
+                                out var minutes),
+                            Minutes = minutes
+                        })
+                        .Where(candidate => candidate.Authorized)
+                        .ToList()
+                })
+                .Where(candidate => candidate.Eligible.Count > 0)
+                .Select(candidate => new
+                {
+                    candidate.Target,
+                    candidate.Eligible,
+                    Minutes = candidate.Eligible.Min(eligible => eligible.Minutes),
+                    Power = CalculateThreatPower(candidate.Target),
+                    CounterAir = IsCounterAirMission(candidate.Target.Flight.MissionType)
+                })
+                .OrderBy(candidate => candidate.Minutes)
+                .ThenByDescending(candidate => candidate.Power)
+                .ThenByDescending(candidate => candidate.CounterAir)
+                .ThenBy(candidate => candidate.Target.Flight.FlightId)
+                .ToList();
+
+            foreach (var threat in threats)
+            {
+                var requiredPower = Math.Max(
+                    0.1f,
+                    threat.Power
+                    * doctrineForAlliance(threat.Eligible[0].Defender.Alliance)
+                        .DesiredAirCombatAdvantage);
+                var accumulatedPower = 0f;
+                foreach (var candidate in threat.Eligible
+                             .Where(candidate => !assignedDefenders.Contains(
+                                 candidate.Defender.Flight.FlightId))
+                             .OrderByDescending(candidate =>
+                                 candidate.Defender.Flight.TacticalState.TargetFlightId
+                                 == threat.Target.Flight.FlightId)
+                             .ThenBy(candidate => DistanceKm(
+                                 candidate.Defender.Flight.PositionFeet,
+                                 threat.Target.Flight.PositionFeet))
+                             .ThenByDescending(candidate =>
+                                 candidate.Defender.Flight.TacticalState.FuelFraction)
+                             .ThenBy(candidate => CalculateFlightAirCombatPower(
+                                 candidate.Defender,
+                                 ordnanceTypes))
+                             .ThenBy(candidate => candidate.Defender.Flight.FlightId))
+                {
+                    var defenderId = candidate.Defender.Flight.FlightId;
+                    assignments[defenderId] = threat.Target.Flight.FlightId;
+                    assignedDefenders.Add(defenderId);
+                    accumulatedPower += CalculateFlightAirCombatPower(
+                        candidate.Defender,
+                        ordnanceTypes);
+                    if (accumulatedPower >= requiredPower)
+                        break;
+                }
+            }
+
+            return assignments;
+        }
+
         private static AirCombatFlightView SelectTarget(
             AirCombatFlightView source,
             AirCombatFrame frame,
             IReadOnlyDictionary<Guid, OrdnanceTypeDefinition> ordnanceTypes,
             AllianceAirDoctrine doctrine)
         {
+            if (source.Flight.MissionType
+                == AirMissionRequestType.DefensiveCounterAirPatrol)
+            {
+                var selfDefenseTarget = frame.Flights.Values
+                    .Where(candidate => AreHostile(source.Alliance, candidate.Alliance)
+                                        && IsSelfDefenseTarget(
+                                            source,
+                                            candidate,
+                                            frame,
+                                            ordnanceTypes))
+                    .OrderBy(candidate => DistanceKm(
+                        source.Flight.PositionFeet,
+                        candidate.Flight.PositionFeet))
+                    .ThenBy(candidate => candidate.Flight.FlightId)
+                    .FirstOrDefault();
+                if (selfDefenseTarget != null)
+                    return selfDefenseTarget;
+
+                if (frame.DefensiveTargetByFlightId != null
+                    && frame.DefensiveTargetByFlightId.TryGetValue(
+                        source.Flight.FlightId,
+                        out var assignedTargetId)
+                    && frame.Flights.TryGetValue(assignedTargetId, out var assignedTarget)
+                    && IsEligibleTarget(
+                        source,
+                        assignedTarget,
+                        frame,
+                        ordnanceTypes,
+                        doctrine))
+                    return assignedTarget;
+            }
+
             var retainedId = source.Flight.TacticalState.TargetFlightId;
             if (retainedId != Guid.Empty
                 && frame.Flights.TryGetValue(retainedId, out var retained)
@@ -499,11 +628,16 @@ namespace Engine.Models
             if (source.Flight.MissionType == AirMissionRequestType.DefensiveCounterAirPatrol)
             {
                 return source.Flight.ExecutionPhase == FlightExecutionPhase.Executing
-                       && IsInsideMissionArea(
-                           source.Flight.MissionArea,
-                           target.Flight.PositionFeet,
-                           frame.TileDistanceKm,
-                           0f);
+                       && frame.DefensiveTargetByFlightId != null
+                       && frame.DefensiveTargetByFlightId.TryGetValue(
+                           source.Flight.FlightId,
+                           out var assignedTargetId)
+                       && assignedTargetId == target.Flight.FlightId
+                       && TryGetDcaThreatMinutes(
+                           source,
+                           target,
+                           frame,
+                           out _);
             }
 
             if (source.Flight.MissionType == AirMissionRequestType.OffensiveCounterAirSweep)
@@ -519,6 +653,85 @@ namespace Engine.Models
             }
 
             return false;
+        }
+
+        private static bool TryGetDcaThreatMinutes(
+            AirCombatFlightView source,
+            AirCombatFlightView target,
+            AirCombatFrame frame,
+            out float minutesToEntry)
+        {
+            minutesToEntry = float.MaxValue;
+            var area = source.Flight.MissionArea;
+            var centerFeet = AirspaceGeometry.TileCenterFeet(
+                area.CenterTileId,
+                frame.TileDistanceKm);
+            var center = new Vector2(centerFeet.x, centerFeet.z);
+            var position = new Vector2(
+                target.Flight.PositionFeet.x,
+                target.Flight.PositionFeet.z);
+            var radiusFeet = (area.RadiusTiles + 0.55f)
+                              * frame.TileDistanceKm
+                              * AirspaceGeometry.FeetPerKilometer;
+            var distance = Vector2.Distance(center, position);
+            if (distance <= radiusFeet)
+            {
+                minutesToEntry = 0f;
+                return true;
+            }
+
+            var responseRadiusFeet = (area.RadiusTiles
+                                      + DcaResponsePaddingTiles
+                                      + 0.55f)
+                                     * frame.TileDistanceKm
+                                     * AirspaceGeometry.FeetPerKilometer;
+            if (distance > responseRadiusFeet)
+                return false;
+
+            var velocity3 = Direction(target.Flight.HeadingDegrees)
+                            * Math.Max(0f, target.Flight.SpeedKnots)
+                            * 1.68781f;
+            var velocity = new Vector2(velocity3.x, velocity3.z);
+            var relative = position - center;
+            var a = velocity.sqrMagnitude;
+            if (a < 1f)
+                return false;
+            var b = 2f * Vector2.Dot(relative, velocity);
+            var c = relative.sqrMagnitude - radiusFeet * radiusFeet;
+            var discriminant = b * b - 4f * a * c;
+            if (discriminant < 0f)
+                return false;
+            var secondsToEntry = (-b - Mathf.Sqrt(discriminant)) / (2f * a);
+            if (secondsToEntry < 0f
+                || secondsToEntry > DcaThreatLookaheadMinutes * 60f)
+                return false;
+
+            minutesToEntry = secondsToEntry / 60f;
+            return true;
+        }
+
+        private static float CalculateFlightAirCombatPower(
+            AirCombatFlightView view,
+            IReadOnlyDictionary<Guid, OrdnanceTypeDefinition> ordnanceTypes)
+        {
+            if (view == null
+                || view.LiveAircraft.Count == 0
+                || view.AircraftType.AirControlCapability <= 0f
+                || !view.LiveAircraft.Any(aircraft => aircraft.Loadout.Any(item =>
+                    item.Count > 0
+                    && ordnanceTypes.TryGetValue(
+                        item.OrdnanceTypeDefinitionId,
+                        out var ordnance)
+                    && IsAirToAir(ordnance))))
+                return 0f;
+
+            return view.LiveAircraft.Count * view.AircraftType.AirControlCapability;
+        }
+
+        private static float CalculateThreatPower(AirCombatFlightView view)
+        {
+            return view.LiveAircraft.Count
+                   * Math.Max(1f, view.AircraftType.AirControlCapability);
         }
 
         private static bool IsSelfDefenseTarget(

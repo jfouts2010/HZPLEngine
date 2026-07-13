@@ -114,8 +114,9 @@ namespace Engine.Monobehaviours.Managers
         private Foldout unitsFoldout;
         private VisualElement unitsList;
         private Button pauseButton;
-        private Button nextAirStepButton;
-        private Button nextTurnButton;
+        private Button speedFiveSecondsButton;
+        private Button speedFiveMinutesButton;
+        private Button nextIncrementButton;
         private Label simulationStateLabel;
         private VisualElement simulationControls;
         private Button mapTabButton;
@@ -543,8 +544,9 @@ namespace Engine.Monobehaviours.Managers
             unitsFoldout = root.Q<Foldout>("units-foldout");
             unitsList = root.Q<VisualElement>("units-list");
             pauseButton = root.Q<Button>("pause-button");
-            nextAirStepButton = root.Q<Button>("next-air-step-button");
-            nextTurnButton = root.Q<Button>("next-turn-button");
+            speedFiveSecondsButton = root.Q<Button>("speed-5s-button");
+            speedFiveMinutesButton = root.Q<Button>("speed-5m-button");
+            nextIncrementButton = root.Q<Button>("next-increment-button");
             simulationStateLabel = root.Q<Label>("simulation-state-label");
             simulationControls = root.Q<VisualElement>("simulation-controls");
             mapTabButton = root.Q<Button>("map-tab-button");
@@ -618,8 +620,9 @@ namespace Engine.Monobehaviours.Managers
             ApplyRuntimeFont(timeLabel);
             ApplyRuntimeFont(selectedTileLabel);
             ApplyRuntimeFont(pauseButton);
-            ApplyRuntimeFont(nextAirStepButton);
-            ApplyRuntimeFont(nextTurnButton);
+            ApplyRuntimeFont(speedFiveSecondsButton);
+            ApplyRuntimeFont(speedFiveMinutesButton);
+            ApplyRuntimeFont(nextIncrementButton);
             ApplyRuntimeFont(simulationStateLabel);
             ApplyRuntimeFont(mapTabButton);
             ApplyRuntimeFont(airOpsTabButton);
@@ -703,11 +706,13 @@ namespace Engine.Monobehaviours.Managers
                 pauseButton.clicked += TogglePause;
             }
 
-            if (nextTurnButton != null)
-            {
-                nextTurnButton.pickingMode = PickingMode.Position;
-                nextTurnButton.clicked += AdvanceOneGameTurn;
-            }
+            if (speedFiveSecondsButton != null)
+                speedFiveSecondsButton.clicked += () => SelectPlaybackIncrement(
+                    CampaignPlaybackIncrement.FiveSeconds);
+
+            if (speedFiveMinutesButton != null)
+                speedFiveMinutesButton.clicked += () => SelectPlaybackIncrement(
+                    CampaignPlaybackIncrement.FiveMinutes);
 
             if (mapTabButton != null)
             {
@@ -715,10 +720,10 @@ namespace Engine.Monobehaviours.Managers
                 mapTabButton.clicked += () => ShowWorkbenchPage(WorkbenchPage.Tile);
             }
 
-            if (nextAirStepButton != null)
+            if (nextIncrementButton != null)
             {
-                nextAirStepButton.pickingMode = PickingMode.Position;
-                nextAirStepButton.clicked += AdvanceOneAirTacticalStep;
+                nextIncrementButton.pickingMode = PickingMode.Position;
+                nextIncrementButton.clicked += AdvanceOnePlaybackIncrement;
             }
 
             if (airOpsTabButton != null)
@@ -784,8 +789,9 @@ namespace Engine.Monobehaviours.Managers
                 || timeLabel == null
                 || selectedTileLabel == null
                 || pauseButton == null
-                || nextTurnButton == null
-                || nextAirStepButton == null)
+                || speedFiveSecondsButton == null
+                || speedFiveMinutesButton == null
+                || nextIncrementButton == null)
             {
                 Debug.LogError("PlaySceneCampaignRenderer could not find one or more required elements in the Campaign HUD UXML.");
                 return false;
@@ -3374,11 +3380,20 @@ namespace Engine.Monobehaviours.Managers
 
             timeLabel.text = $"{gameManager.GameTime:yyyy-MM-dd HH:mm:ss} | Tiles: {gameManager.CampaignTiles.Count}";
             if (pauseButton != null)
-                pauseButton.text = gameManager.IsGamePaused ? "Resume" : "Pause";
-            if (nextTurnButton != null)
-                nextTurnButton.SetEnabled(gameManager.IsGamePaused);
-            if (nextAirStepButton != null)
-                nextAirStepButton.SetEnabled(gameManager.IsGamePaused);
+                pauseButton.text = gameManager.IsGamePaused ? "Play" : "Pause";
+            if (nextIncrementButton != null)
+            {
+                nextIncrementButton.text = gameManager.PlaybackIncrement == CampaignPlaybackIncrement.FiveMinutes
+                    ? "Next +5m"
+                    : "Next +5s";
+                nextIncrementButton.SetEnabled(gameManager.IsGamePaused);
+            }
+            speedFiveSecondsButton?.EnableInClassList(
+                "simulation-speed-button--selected",
+                gameManager.PlaybackIncrement == CampaignPlaybackIncrement.FiveSeconds);
+            speedFiveMinutesButton?.EnableInClassList(
+                "simulation-speed-button--selected",
+                gameManager.PlaybackIncrement == CampaignPlaybackIncrement.FiveMinutes);
             if (simulationStateLabel != null)
             {
                 simulationStateLabel.text = gameManager.IsGamePaused
@@ -5380,12 +5395,12 @@ namespace Engine.Monobehaviours.Managers
             UpdateTimeUi();
         }
 
-        private void AdvanceOneGameTurn()
+        private void SelectPlaybackIncrement(CampaignPlaybackIncrement increment)
         {
-            if (gameManager == null || !gameManager.IsGamePaused)
+            if (gameManager == null)
                 return;
 
-            gameManager.AdvanceOneGameTurn();
+            gameManager.SetPlaybackIncrement(increment);
             UpdateTimeUi();
         }
 
@@ -6082,12 +6097,12 @@ namespace Engine.Monobehaviours.Managers
                 Destroy(airInspectionRoot.GetChild(i).gameObject);
         }
 
-        private void AdvanceOneAirTacticalStep()
+        private void AdvanceOnePlaybackIncrement()
         {
             if (gameManager == null || !gameManager.IsGamePaused)
                 return;
 
-            gameManager.AdvanceOneAirTacticalStep();
+            gameManager.AdvanceOnePlaybackIncrement();
             UpdateTimeUi();
         }
 

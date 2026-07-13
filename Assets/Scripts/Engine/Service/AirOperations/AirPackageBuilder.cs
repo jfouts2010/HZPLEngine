@@ -25,6 +25,9 @@ namespace Engine.Service
         private const float DefaultStationTrackHalfLengthTiles = 0.5f;
         private const float MaximumSupportStationHostilePresence = 0.10f;
         private const float MeaningfulOcaPresence = 0.10f;
+        private const float MeaningfulDcaPressure = 0.10f;
+        private const float DcaFuelPlanningMarginSeconds = 60f;
+        private static readonly TimeSpan DcaHandoffOverlap = TimeSpan.FromMinutes(10);
 
         private readonly GameManager gameManager;
         private readonly ProjectedAirEffectService projectedEffects;
@@ -187,6 +190,16 @@ namespace Engine.Service
                     reason = "Desired combat coverage is already projected.";
                     return AirPackageBuildOutcome.AlreadySatisfied;
                 }
+                if (request.RequestType == AirMissionRequestType.DefensiveCounterAirPatrol
+                    && effectStart > request.EffectStart)
+                {
+                    var earliestHandoff = planningStart > request.EffectStart
+                        ? planningStart
+                        : request.EffectStart;
+                    effectStart = effectStart - DcaHandoffOverlap > earliestHandoff
+                        ? effectStart - DcaHandoffOverlap
+                        : earliestHandoff;
+                }
             }
             else
             {
@@ -225,7 +238,8 @@ namespace Engine.Service
 
             var selectedCandidates = SelectCombatAircraft(
                 squadronCandidates,
-                desiredStrength);
+                desiredStrength,
+                request.RequestType == AirMissionRequestType.DefensiveCounterAirPatrol);
             if (selectedCandidates.Sum(candidate => candidate.Aircraft.Count) < desiredStrength)
             {
                 reason = $"Only {selectedCandidates.Sum(candidate => candidate.Aircraft.Count)}"
@@ -273,7 +287,8 @@ namespace Engine.Service
 
         private static List<SelectedCombatAircraft> SelectCombatAircraft(
             IReadOnlyList<CombatSquadronCandidate> candidates,
-            int desiredStrength)
+            int desiredStrength,
+            bool allowMultipleAirports)
         {
             var sameAirportGroup = candidates
                 .GroupBy(candidate => candidate.Squadron.AirportBuildingId)
@@ -288,7 +303,13 @@ namespace Engine.Service
                 .ThenBy(group => group.Candidates[0].Squadron.AirportBuildingId)
                 .FirstOrDefault();
             if (sameAirportGroup == null)
-                return new List<SelectedCombatAircraft>();
+            {
+                return allowMultipleAirports
+                       && candidates.Sum(candidate => candidate.AvailableAircraft.Count)
+                       >= desiredStrength
+                    ? TakeAircraft(candidates, desiredStrength)
+                    : new List<SelectedCombatAircraft>();
+            }
 
             return TakeAircraft(sameAirportGroup.Candidates, desiredStrength);
         }
@@ -531,10 +552,45 @@ namespace Engine.Service
                     plan.PlannedTakeoff += requiredShift;
             }
 
-            if (plannedEffectStart >= proposedEffectEnd)
+            var plannedEffectEnd = proposedEffectEnd;
+            if (request.RequestType == AirMissionRequestType.DefensiveCounterAirPatrol)
             {
-                reason = "Preparation and transit leave no time for the requested effect.";
+                foreach (var plan in plans)
+                {
+                    var usableFuelSeconds = plan.AircraftType.EnduranceHours
+                                            * 3600f
+                                            * (1f - commander.Doctrine.JokerFuelFraction)
+                                            - DcaFuelPlanningMarginSeconds;
+                    var fuelLimitedEnd = plan.PlannedTakeoff
+                                         + TimeSpan.FromSeconds(Math.Max(0f, usableFuelSeconds));
+                    if (fuelLimitedEnd < plannedEffectEnd)
+                        plannedEffectEnd = fuelLimitedEnd;
+                }
+            }
+
+            if (plannedEffectStart >= plannedEffectEnd)
+            {
+                reason = request.RequestType == AirMissionRequestType.DefensiveCounterAirPatrol
+                    ? "Preparation and transit leave no usable fuel-bounded patrol time."
+                    : "Preparation and transit leave no time for the requested effect.";
                 return false;
+            }
+
+            if (request.RequestType == AirMissionRequestType.DefensiveCounterAirPatrol)
+            {
+                var firstTrackEnd = plans.Max(plan =>
+                    plannedEffectStart + TimeSpan.FromSeconds(
+                        AirspaceGeometry.TravelSeconds(
+                            plan.MissionEntryPosition,
+                            plan.MissionExitPosition,
+                            plan.AircraftType.CruiseSpeedKnots,
+                            plan.AircraftType.ClimbRateFeetPerMinute,
+                            plan.AircraftType.DescentRateFeetPerMinute)));
+                if (firstTrackEnd > plannedEffectEnd)
+                {
+                    reason = "The fuel-bounded patrol window is shorter than one station circuit.";
+                    return false;
+                }
             }
 
             foreach (var plan in plans)
@@ -543,7 +599,7 @@ namespace Engine.Service
                     plan,
                     request,
                     plannedEffectStart,
-                    proposedEffectEnd,
+                    plannedEffectEnd,
                     hasRendezvous,
                     rendezvousPosition,
                     rendezvousTime,
@@ -588,6 +644,48 @@ namespace Engine.Service
                 return;
             }
 
+            if (request.RequestType == AirMissionRequestType.DefensiveCounterAirPatrol)
+            {
+                var tileDistanceKm = tileDistanceFeet / AirspaceGeometry.FeetPerKilometer;
+                var originTileId = AirspaceGeometry.TileCoordinateFromPositionFeet(
+                    missionOrigin,
+                    tileDistanceKm);
+                var stationTileId = SelectDcaStationTile(
+                    commander,
+                    request.MissionArea,
+                    originTileId,
+                    out var threatTileId);
+                var stationCenter = AirspaceGeometry.TileCenterFeet(
+                    stationTileId,
+                    tileDistanceKm,
+                    missionCenter.y);
+                var threatCenter = AirspaceGeometry.TileCenterFeet(
+                    threatTileId,
+                    tileDistanceKm,
+                    missionCenter.y);
+                var threatDirection = threatCenter - stationCenter;
+                threatDirection.y = 0f;
+                if (threatDirection.sqrMagnitude < 1f)
+                {
+                    threatDirection = stationCenter - missionOrigin;
+                    threatDirection.y = 0f;
+                }
+                if (threatDirection.sqrMagnitude < 1f)
+                    threatDirection = Vector3.forward;
+                threatDirection.Normalize();
+                var trackDirection = new Vector3(
+                    -threatDirection.z,
+                    0f,
+                    threatDirection.x);
+                var dcaTrackOffset = trackDirection
+                                     * tileDistanceFeet
+                                     * DefaultStationTrackHalfLengthTiles;
+                plan.MissionEntryPosition = stationCenter - dcaTrackOffset;
+                plan.MissionPushPosition = stationCenter + dcaTrackOffset;
+                plan.MissionExitPosition = stationCenter + dcaTrackOffset;
+                return;
+            }
+
             if (request.FulfillmentPattern != AirMissionRequestFulfillmentPattern.Sustained)
             {
                 plan.MissionEntryPosition = missionCenter;
@@ -602,6 +700,52 @@ namespace Engine.Service
             plan.MissionEntryPosition = missionCenter - trackOffset;
             plan.MissionPushPosition = missionCenter + trackOffset;
             plan.MissionExitPosition = missionCenter + trackOffset;
+        }
+
+        private static Vector3Int SelectDcaStationTile(
+            AllianceAirTaskingCommander commander,
+            AirMissionArea missionArea,
+            Vector3Int originTileId,
+            out Vector3Int threatTileId)
+        {
+            var threat = commander.AirControlAssessments
+                .Where(assessment => missionArea.Contains(assessment.TileId))
+                .OrderByDescending(assessment => Math.Max(
+                    assessment.HostileAirActivity,
+                    assessment.HostileCombatPresence))
+                .ThenByDescending(assessment => assessment.HostileAirActivity)
+                .ThenBy(assessment => assessment.TileId.x)
+                .ThenBy(assessment => assessment.TileId.y)
+                .ThenBy(assessment => assessment.TileId.z)
+                .FirstOrDefault();
+            if (threat == null
+                || Math.Max(threat.HostileAirActivity, threat.HostileCombatPresence)
+                < MeaningfulDcaPressure)
+            {
+                threatTileId = missionArea.CenterTileId;
+                return missionArea.CenterTileId;
+            }
+
+            threatTileId = threat.TileId;
+            var threatDistance = AirMissionArea.HexDistance(originTileId, threatTileId);
+            return AirspaceGeometry.NeighborTiles(threatTileId)
+                .Where(missionArea.Contains)
+                .Where(tileId => AirMissionArea.HexDistance(originTileId, tileId)
+                                 < threatDistance)
+                .Select(tileId => commander.TryGetAirControlAssessment(
+                        tileId,
+                        out var assessment)
+                    ? assessment
+                    : null)
+                .Where(assessment => assessment != null)
+                .OrderBy(assessment => assessment.HostileCombatPresence)
+                .ThenByDescending(assessment => assessment.AirControlAdvantage)
+                .ThenBy(assessment => assessment.TileId.x)
+                .ThenBy(assessment => assessment.TileId.y)
+                .ThenBy(assessment => assessment.TileId.z)
+                .Select(assessment => assessment.TileId)
+                .DefaultIfEmpty(missionArea.CenterTileId)
+                .First();
         }
 
         private static Vector3Int SelectOcaEntryTile(

@@ -591,7 +591,7 @@ A **committed sortie** is one aircraft's planned employment after that aircraft 
 
 An **active sortie** is one aircraft's employment after it has taken off. Takeoff locks its assigned mission intent and any already-assigned target: later air planning may neither cancel nor retask it.
 
-An active sortie may still end unsuccessfully because its aircraft are lost, package-integrity rules force an abort and return to base, or the assigned effect can no longer be achieved. Future fuel rules may add another execution-driven abort condition without changing this boundary.
+An active sortie may still end unsuccessfully because its aircraft are lost, package-integrity rules force an abort and return to base, fuel reaches a doctrine recovery threshold, or the assigned effect can no longer be achieved.
 
 _Avoid_: using an operational replan to change an airborne sortie's assigned mission or target.
 
@@ -605,13 +605,15 @@ _Avoid_: using an operational replan to change an airborne sortie's assigned mis
 
 **Deferred WVR boundary** — the close-combat range below which the initial BVR model does not attempt to resolve a turning fight or gun employment. Flights without valid forward missile geometry extend through the merge and may later recommit after separation. Detailed WVR combat is a later model.
 
-**Air-to-air engagement posture** — the active mission's rule for when a flight may spend air-to-air ordnance against hostile aircraft. Strike and other non-air-combat flights continue self-defense passes while a **hot threat** remains, then resume their primary mission when no hot threat remains or no suitable air-to-air ordnance is available. Defensive counter-air flights engage hostile aircraft inside their defended airspace. Offensive counter-air flights defend themselves during ingress, proactively hunt only while executing inside their assigned sweep corridor, and revert to self-defense during egress.
+**Air-to-air engagement posture** — the active mission's rule for when a flight may spend air-to-air ordnance against hostile aircraft. Strike and other non-air-combat flights continue self-defense passes while a **hot threat** remains, then resume their primary mission when no hot threat remains or no suitable air-to-air ordnance is available. Defensive counter-air flights engage hostile aircraft inside their defended airspace or on a current course predicted to enter it within twenty minutes, provided the contact remains inside a bounded two-tile response tether. Offensive counter-air flights defend themselves during ingress, proactively hunt only while executing inside their assigned sweep corridor, and revert to self-defense during egress.
 
 **Hot threat** — a hostile flight inside the evaluating flight's live air-to-air employment envelope and flying toward it within ±30 degrees. A hostile flight with a pending ordnance effect targeting the evaluating flight remains a threat regardless of its later range or aspect.
 
 **Air threat priority** — the relative danger of hot threats, ranked from their range and aspect: a closer and more directly nose-on hostile is more dangerous, while a farther or less directly approaching hostile is less dangerous. Cold hostile flights are not threats; a hostile with ordnance already pending against the evaluating flight takes priority over geometry-only threats.
 
 **OCA target priority** — the order in which an offensive counter-air flight selects eligible hostile flights during its hunting posture. Hostiles already attacking the flight take priority, followed by hot threats, a target already assigned by another flight in the same package, hostile counter-air flights, and then the nearest eligible hostile; the larger hostile flight breaks equal-range ties.
+
+**DCA threat allocation** — one deterministic allocation computed from the immutable tactical checkpoint before any flight chooses its command. Self-defense remains local and immediate. Other threats are ordered by predicted entry time, raid power, counter-air role, and stable identity; eligible patrols are assigned by retained engagement, proximity, fuel, and sufficient available air-combat power until doctrine's desired advantage is met. A patrol receives at most one proactive target per checkpoint, preventing independent flights from swarming the same contact while another raid is uncovered. A cold contact leaving the defended area loses authorization, so the patrol resumes its materialized station route rather than pursuing indefinitely.
 
 **OCA air-control frontier** — the friendly-facing edge of remembered hostile combat presence or hostile air activity that is not already under strong friendly air-control advantage. OCA request generation selects the nearest frontier layer reachable from a friendly fighter operating base, then concentrates on the most active and strongly opposed candidate in that layer. Quiet or unknown airspace does not create an OCA request by itself, and doctrine risk tolerance limits how deeply hostile-dominated a frontier may be before the alliance declines to sweep it.
 
@@ -663,7 +665,7 @@ In the initial air-execution model, airport damage and functional level do not a
 
 **Approach waypoint** — the final generated navigation waypoint before recovery, placed on the inbound line using the flight's cruise speed, descent rate, and current altitude so descent begins late enough to avoid ground-level transit and reaches the airport near zero altitude. Reaching the following airport landing waypoint ends the flight without runway, pattern, or ATC simulation.
 
-**Racetrack station route** — the shared station-keeping route pattern for sustained air missions: enter the station, fly between two track-end waypoints, follow the terminal endpoint's repeat instruction until its release time, then continue to the return legs. An automatically derived v1 DCA, AWACS, or tanker racetrack is centered on the mission-area center, aligned east-west at mission altitude, and sized from the campaign tile scale. OCA is not a racetrack: its discrete entry, non-repeating push endpoint, and exit follow the local air-control gradient from the safer friendly-side neighbor to the bounded hostile-side limit and back. Authored route waypoints override these placeholder geometries.
+**Racetrack station route** — the shared station-keeping route pattern for sustained air missions: enter the station, fly between two track-end waypoints, follow the terminal endpoint's repeat instruction until its release time, then continue to the return legs. An automatically derived DCA racetrack shifts to the friendly side of the strongest remembered pressure in its defended sector and lies perpendicular to that threat axis. Quiet-sector DCA and initial AWACS or tanker tracks remain centered on the mission-area center. Track size derives from the campaign tile scale. OCA is not a racetrack: its discrete entry, non-repeating push endpoint, and exit follow the local air-control gradient from the safer friendly-side neighbor to the bounded hostile-side limit and back. Authored route waypoints override these placeholder geometries.
 
 **Nominal cruise altitude** — the aircraft type's normal transit altitude in feet above mean sea level.
 
@@ -675,7 +677,7 @@ Generated v1 mission altitudes are 40,000 feet for DCA and OCA, 35,000 feet for 
 
 _Avoid_: treating low, medium, and high altitude bands as exact aircraft performance or route altitudes.
 
-In the initial air-execution model, a sustained flight repeats its station route until its already-assigned effect end, then follows its return and landing legs. Execution does not score late arrival or partial coverage, and fuel, range, and endurance do not constrain planning or movement; those aircraft characteristics remain available for a later fidelity pass.
+A sustained flight repeats its station route until its already-assigned effect end, then follows its return and landing legs. DCA route planning bounds that effect end by the least-enduring assigned aircraft's doctrine joker point, with a small timing margin, and rejects a sortie that cannot complete one station circuit. Tactical maneuvering may burn fuel faster and force an earlier recovery. AWACS and tanker coverage planning remains window-based rather than endurance-bounded in this pass; detailed range, reserve-to-alternate, and tanker-transfer planning remain later fidelity work.
 
 **Flight execution phase** — the mission-independent stage of a flight's physical journey: awaiting takeoff, outbound, executing, returning, landing, or ended. Execution phase is separate from lifecycle outcome; an aborted flight has stopped its assigned mission and may have a terminal planning outcome while remaining physically in the returning phase until its surviving aircraft land.
 
@@ -736,7 +738,7 @@ Rendezvous is a package coordination choice rather than a universal rule for eve
 
 When suitable aircraft are otherwise comparable, package building prefers flights from squadrons at the same airport to reduce coordination and transit cost. This is a preference rather than a requirement; one package may still combine flights from different operating bases.
 
-Initial generated routes keep ingress and egress distinct with simple laterally offset transit waypoints. DCA, AWACS, and tanker flights execute ordinary station loops. OCA executes one control-frontier pass whose entry and push endpoint are selected from neighboring air-control assessments and whose exit returns through the friendly-side entry. Multi-flight DCA and OCA packages insert their required rendezvous before the shared ingress leg. The initial geometry prevents routine outbound-route reuse but does not claim to minimize operational risk; detailed surface-threat avoidance, fuel-state routing, tanker placement, support timing, assembly patterns, and airspace constraints remain future route-planning improvements.
+Initial generated routes keep ingress and egress distinct with simple laterally offset transit waypoints. DCA executes a threat-facing station loop; AWACS and tanker flights execute ordinary centered station loops. OCA executes one control-frontier pass whose entry and push endpoint are selected from neighboring air-control assessments and whose exit returns through the friendly-side entry. Multi-flight DCA and OCA packages insert their required rendezvous before the shared ingress leg. The initial geometry prevents routine outbound-route reuse but does not claim to minimize operational risk; detailed surface-threat avoidance, reserve-to-alternate routing, tanker placement, support timing, assembly patterns, and airspace constraints remain future route-planning improvements.
 
 _Avoid_: creating independent strike, escort, and support flights without recording the operational effort that coordinates them.
 
@@ -834,7 +836,7 @@ _Avoid_: recalculating control when an AI asks for it, recording an unbounded ai
 
 ### Initial air-tasking mission requests
 
-**Defensive counter-air patrol** is a request to protect an area from hostile aircraft through planned fighter presence. An intercept may use an available defensive patrol as a tick-level execution response rather than requiring a new full-cadence mission request.
+**Defensive counter-air patrol** is a request to protect a prioritized fighter-operating sector from hostile aircraft through planned fighter presence. Nearby fighter bases share one sector instead of automatically receiving separate patrols. The highest-priority fighter sector receives baseline coverage; additional sectors require meaningful remembered hostile pressure or friendly package activity. Requested strength is the greater response implied by observed hostile combat power or airborne activity, bounded to two through eight aircraft. An intercept uses available airborne patrols as execution-level responses rather than creating QRA or deck-launch-interceptor sorties. Airborne-C2 coverage does not alter DCA awareness or allocation in this pass.
 
 **Offensive counter-air sweep** is a discrete request for fighter aircraft to contest one bounded, active hostile air-control frontier with a single entry-to-push-to-exit pass. V1 concentrates one sweep on the nearest eligible frontier per planning cycle rather than dispersing fighters across every remembered hostile area or rotating sustained coverage.
 
@@ -854,13 +856,13 @@ _Avoid_: pre-authoring fixed mission areas, or treating a single target point, a
 
 ### Coverage window
 
-A **coverage window** is the bounded interval during which an area-based mission request asks the alliance to maintain an air effect. In the initial model, one flight may cover its entire assigned window because fuel and endurance are ignored; future execution limits may require sequential rotations.
+A **coverage window** is the bounded interval during which an area-based mission request asks the alliance to maintain an air effect. A DCA window is fulfilled by sequential fuel-bounded rotations, with replacement station time planned to overlap the preceding patrol by ten minutes when preparation time permits. Other sustained mission types retain their existing window-based planning in this pass.
 
 Coverage planning uses a rolling handoff across air-planning cadences. A window may extend beyond the next cadence boundary long enough for the following planning cycle to prepare, launch, and position replacement coverage, preventing a gap while the new alliance air plan is being fulfilled.
 
 The following planning cycle reassesses the need. It may cancel no-longer-needed committed rotations before takeoff, but an active sortie continues its locked mission through its planned coverage.
 
-In v1, handoff does not calculate geometric equivalence between the previous and newly desired mission areas. Existing active coverage finishes in its originally planned area even when the new plan wants coverage elsewhere; the next packages and flights are planned against the new desired area.
+For DCA, projected coverage from an earlier request is credited across planning cycles when the old and new defended areas contain one another's centers; this avoids duplicating materially overlapping patrols while replacements are prepared. Existing active coverage still finishes in its originally planned area when the new plan moves elsewhere. Other mission types retain the existing request-scoped handoff behavior.
 
 _Avoid_: infinite coverage requests, ending coverage exactly at a planning-cadence boundary without allowing for replacement lead time, or adding spatial-overlap optimization to v1 handoff.
 

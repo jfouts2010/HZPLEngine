@@ -13,10 +13,12 @@ namespace Engine.Service
     {
         private const int DefaultMissionRadiusTiles = 2;
         private const int DefaultCombatFlightStrength = 4;
+        private const int MaximumDcaAircraftStrength = 8;
         private const int MaximumOcaAircraftStrength = 8;
         private const float StrongFriendlyAdvantage = 0.40f;
         private const float MeaningfulCombatPresence = 0.10f;
         private const float MeaningfulAirActivity = 0.10f;
+        private const float MeaningfulFriendlyOperations = 0.15f;
         private static readonly TimeSpan HandoffBuffer = TimeSpan.FromMinutes(30);
 
         private readonly AirMissionPriorityService priorityService;
@@ -37,32 +39,59 @@ namespace Engine.Service
                             + TimeSpan.FromHours(Math.Max(1, operationalCadenceHours))
                             + HandoffBuffer;
 
+            var dcaCandidates = BuildDcaSectorCandidates(
+                commander,
+                snapshot,
+                commander.Doctrine);
+            var baselineDcaCandidate = dcaCandidates
+                .OrderByDescending(candidate => candidate.PriorityScore)
+                .ThenBy(candidate => candidate.MissionArea.CenterTileId.x)
+                .ThenBy(candidate => candidate.MissionArea.CenterTileId.y)
+                .ThenBy(candidate => candidate.MissionArea.CenterTileId.z)
+                .FirstOrDefault();
+            var selectedDcaCandidates = dcaCandidates
+                .Where(candidate => candidate == baselineDcaCandidate
+                                    || candidate.HostilePressure >= MeaningfulCombatPresence
+                                    || candidate.FriendlyOperations >= MeaningfulFriendlyOperations)
+                .OrderByDescending(candidate => candidate.PriorityScore)
+                .ThenBy(candidate => candidate.MissionArea.CenterTileId.x)
+                .ThenBy(candidate => candidate.MissionArea.CenterTileId.y)
+                .ThenBy(candidate => candidate.MissionArea.CenterTileId.z)
+                .ToList();
+
+            foreach (var candidate in selectedDcaCandidates)
+            {
+                var dcaRequest = CreateRequest(
+                    commander,
+                    AirMissionRequestType.DefensiveCounterAirPatrol,
+                    AirMissionRequestFulfillmentPattern.Sustained,
+                    candidate.MissionArea.CenterTileId,
+                    effectStart,
+                    effectEnd,
+                    desiredAircraftStrength: candidate.DesiredAircraftStrength,
+                    rationale: candidate == baselineDcaCandidate
+                        ? "Maintain baseline defensive counter-air coverage over the alliance's highest-priority fighter sector"
+                        : "Reinforce a fighter sector exposed to hostile air pressure or friendly air operations",
+                    radiusTiles: candidate.MissionArea.RadiusTiles);
+                dcaRequest.PriorityComponents["desiredAircraftStrength"] =
+                    candidate.DesiredAircraftStrength;
+                dcaRequest.PriorityComponents["dcaFighterBaseCount"] =
+                    candidate.FighterBaseCount;
+                dcaRequest.PriorityComponents["dcaFriendlyAirCombatPower"] =
+                    candidate.FriendlyAirCombatPower;
+                dcaRequest.PriorityComponents["dcaHostileAirCombatPower"] =
+                    candidate.HostileAirCombatPower;
+                dcaRequest.PriorityComponents["dcaHostilePressure"] =
+                    candidate.HostilePressure;
+                dcaRequest.PriorityComponents["dcaFriendlyOperations"] =
+                    candidate.FriendlyOperations;
+                dcaRequest.PriorityComponents["dcaSectorPriority"] =
+                    candidate.PriorityScore;
+                generated.Add(dcaRequest);
+            }
+
             foreach (var airportTile in snapshot.FriendlyAirportTiles)
             {
-                var friendlyMissionArea = new AirMissionArea(
-                    airportTile,
-                    DefaultMissionRadiusTiles);
-                if (priorityService.CalculatePowerNear(
-                        snapshot.FriendlySquadrons,
-                        friendlyMissionArea) > 0f)
-                {
-                    var desiredStrength = CalculateDesiredCombatStrength(
-                        snapshot,
-                        commander.Doctrine,
-                        friendlyMissionArea);
-                    var dcaRequest = CreateRequest(
-                        commander,
-                        AirMissionRequestType.DefensiveCounterAirPatrol,
-                        AirMissionRequestFulfillmentPattern.Sustained,
-                        airportTile,
-                        effectStart,
-                        effectEnd,
-                        desiredAircraftStrength: desiredStrength,
-                        rationale: "Maintain defensive counter-air coverage over friendly air operations");
-                    dcaRequest.PriorityComponents["desiredAircraftStrength"] = desiredStrength;
-                    generated.Add(dcaRequest);
-                }
-
                 if (commander.Doctrine.BaselineAirborneC2Slots > 0)
                 {
                     generated.Add(CreateRequest(
@@ -192,14 +221,15 @@ namespace Engine.Service
             DateTime effectEnd,
             int desiredAircraftStrength = 0,
             int desiredSupportSlots = 0,
-            string rationale = "")
+            string rationale = "",
+            int radiusTiles = DefaultMissionRadiusTiles)
         {
             return new AirMissionRequest
             {
                 Alliance = commander.Alliance,
                 RequestType = requestType,
                 FulfillmentPattern = fulfillmentPattern,
-                MissionArea = new AirMissionArea(centerTile, DefaultMissionRadiusTiles),
+                MissionArea = new AirMissionArea(centerTile, radiusTiles),
                 CreatedAt = effectStart - AirPackage.PreparationDelay,
                 EffectStart = effectStart,
                 EffectEnd = effectEnd,
@@ -210,28 +240,148 @@ namespace Engine.Service
             };
         }
 
-        private int CalculateDesiredCombatStrength(
+        private int CalculateDesiredDcaStrength(
             AirPlanningSnapshot snapshot,
             AllianceAirDoctrine doctrine,
-            AirMissionArea missionArea)
+            float hostileAirCombatPower,
+            float hostileAirActivity)
         {
-            var friendlyPower = priorityService.CalculatePowerNear(
-                snapshot.FriendlySquadrons,
-                missionArea);
-            var hostilePower = priorityService.CalculatePowerNear(
-                snapshot.HostileSquadrons,
-                missionArea);
-            if (hostilePower <= 0f)
+            if (hostileAirCombatPower <= 0f && hostileAirActivity <= 0f)
                 return Math.Max(2, DefaultCombatFlightStrength / 2);
 
-            var desiredAdvantage = Math.Max(
-                0.1f,
-                doctrine.DesiredAirCombatAdvantage);
-            var pressureRatio = hostilePower * desiredAdvantage / Math.Max(0.1f, friendlyPower);
-            var strengthScale = Mathf.Clamp(pressureRatio, 0.5f, 2f);
-            return Math.Max(
-                2,
-                (int)Math.Ceiling(DefaultCombatFlightStrength * strengthScale));
+            var averageFriendlyAircraftPower = snapshot.FriendlySquadrons
+                .Where(squadron => squadron.ReadyAircraftCount > 0
+                                   && priorityService.CalculateAirCombatPower(squadron) > 0f)
+                .Select(squadron => priorityService.CalculateAirCombatPower(squadron)
+                                     / Math.Max(
+                                         1,
+                                         squadron.ReadyAircraftCount
+                                         + squadron.AssignedAircraftCount))
+                .DefaultIfEmpty(1f)
+                .Average();
+            var powerRequired = Mathf.CeilToInt(
+                hostileAirCombatPower
+                * Math.Max(0.1f, doctrine.DesiredAirCombatAdvantage)
+                / Math.Max(0.1f, averageFriendlyAircraftPower));
+            var activityRequired = Mathf.CeilToInt(
+                Mathf.Clamp01(hostileAirActivity)
+                * 8f
+                * Math.Max(0.1f, doctrine.DesiredAirCombatAdvantage));
+            var required = Math.Max(powerRequired, activityRequired);
+            return Mathf.Clamp(required, 2, MaximumDcaAircraftStrength);
+        }
+
+        private List<DcaSectorCandidate> BuildDcaSectorCandidates(
+            AllianceAirTaskingCommander commander,
+            AirPlanningSnapshot snapshot,
+            AllianceAirDoctrine doctrine)
+        {
+            var fighterSquadrons = snapshot.FriendlySquadrons
+                .Where(squadron => priorityService.CalculateAirCombatPower(squadron) > 0f)
+                .ToList();
+            var fighterAirportTiles = fighterSquadrons
+                .Select(squadron => squadron.AirportTileId)
+                .Distinct()
+                .ToList();
+            var totalFriendlyAirCombatPower = fighterSquadrons
+                .Sum(priorityService.CalculateAirCombatPower);
+            var totalFriendlyAircraft = Math.Max(
+                1,
+                fighterSquadrons.Sum(squadron =>
+                    squadron.ReadyAircraftCount + squadron.AssignedAircraftCount));
+            var candidates = new List<DcaSectorCandidate>();
+
+            foreach (var airportGroup in GroupNearbyAirportTiles(
+                         fighterAirportTiles))
+            {
+                var centerTile = SelectSectorCenter(airportGroup);
+                var radiusTiles = Math.Max(
+                    DefaultMissionRadiusTiles,
+                    airportGroup.Max(tile => AirMissionArea.HexDistance(
+                        centerTile,
+                        tile)));
+                var missionArea = new AirMissionArea(centerTile, radiusTiles);
+                var friendlyAirCombatPower = priorityService.CalculatePowerNear(
+                    snapshot.FriendlySquadrons,
+                    missionArea);
+                if (friendlyAirCombatPower <= 0f)
+                    continue;
+
+                var airControl = CalculateAreaAirControl(commander, missionArea);
+                var hostilePressure = Mathf.Max(
+                    airControl.HostilePresence,
+                    airControl.HostileActivity);
+                var friendlyOperationalAircraft = commander.Packages
+                    .Where(package => !package.IsTerminal)
+                    .SelectMany(package => package.Flights)
+                    .Where(flight => !flight.IsTerminal
+                                     && flight.MissionType
+                                     != AirMissionRequestType.DefensiveCounterAirPatrol
+                                     && (missionArea.Contains(
+                                             flight.MissionArea.CenterTileId)
+                                         || flight.MissionArea.Contains(centerTile)))
+                    .Sum(flight => flight.AircraftIds.Count);
+                var friendlyOperations = Mathf.Clamp01(
+                    friendlyOperationalAircraft / (float)totalFriendlyAircraft);
+                var strategicValue = Mathf.Clamp01(
+                    friendlyAirCombatPower
+                    / Math.Max(0.1f, totalFriendlyAirCombatPower));
+                var priorityScore = strategicValue
+                                    + hostilePressure * 1.5f
+                                    + friendlyOperations * 0.75f;
+                candidates.Add(new DcaSectorCandidate(
+                    missionArea,
+                    airportGroup.Count,
+                    friendlyAirCombatPower,
+                    airControl.HostilePower,
+                    hostilePressure,
+                    friendlyOperations,
+                    priorityScore,
+                    CalculateDesiredDcaStrength(
+                        snapshot,
+                        doctrine,
+                        airControl.HostilePower,
+                        airControl.HostileActivity)));
+            }
+
+            return candidates;
+        }
+
+        private static List<List<Vector3Int>> GroupNearbyAirportTiles(
+            IEnumerable<Vector3Int> airportTiles)
+        {
+            var remaining = airportTiles
+                .Distinct()
+                .OrderBy(tile => tile.x)
+                .ThenBy(tile => tile.y)
+                .ThenBy(tile => tile.z)
+                .ToList();
+            var groups = new List<List<Vector3Int>>();
+            while (remaining.Count > 0)
+            {
+                var seed = remaining[0];
+                var group = remaining
+                    .Where(tile => AirMissionArea.HexDistance(seed, tile)
+                                   <= DefaultMissionRadiusTiles * 2)
+                    .ToList();
+                groups.Add(group);
+                foreach (var tile in group)
+                    remaining.Remove(tile);
+            }
+
+            return groups;
+        }
+
+        private static Vector3Int SelectSectorCenter(
+            IReadOnlyCollection<Vector3Int> airportTiles)
+        {
+            return airportTiles
+                .OrderBy(candidate => airportTiles.Sum(tile =>
+                    AirMissionArea.HexDistance(candidate, tile)))
+                .ThenBy(candidate => candidate.x)
+                .ThenBy(candidate => candidate.y)
+                .ThenBy(candidate => candidate.z)
+                .First();
         }
 
         private List<OcaTargetCandidate> BuildOcaTargetCandidates(
@@ -424,6 +574,38 @@ namespace Engine.Service
                 AirControlAdvantage = Mathf.Clamp(airControlAdvantage, -1f, 1f);
                 HostileCombatPresence = Mathf.Clamp01(hostileCombatPresence);
                 HostileAirActivity = Mathf.Clamp01(hostileAirActivity);
+            }
+        }
+
+        private sealed class DcaSectorCandidate
+        {
+            public readonly AirMissionArea MissionArea;
+            public readonly int FighterBaseCount;
+            public readonly float FriendlyAirCombatPower;
+            public readonly float HostileAirCombatPower;
+            public readonly float HostilePressure;
+            public readonly float FriendlyOperations;
+            public readonly float PriorityScore;
+            public readonly int DesiredAircraftStrength;
+
+            public DcaSectorCandidate(
+                AirMissionArea missionArea,
+                int fighterBaseCount,
+                float friendlyAirCombatPower,
+                float hostileAirCombatPower,
+                float hostilePressure,
+                float friendlyOperations,
+                float priorityScore,
+                int desiredAircraftStrength)
+            {
+                MissionArea = missionArea;
+                FighterBaseCount = Math.Max(0, fighterBaseCount);
+                FriendlyAirCombatPower = Mathf.Max(0f, friendlyAirCombatPower);
+                HostileAirCombatPower = Mathf.Max(0f, hostileAirCombatPower);
+                HostilePressure = Mathf.Clamp01(hostilePressure);
+                FriendlyOperations = Mathf.Clamp01(friendlyOperations);
+                PriorityScore = Mathf.Max(0f, priorityScore);
+                DesiredAircraftStrength = Math.Max(2, desiredAircraftStrength);
             }
         }
 
