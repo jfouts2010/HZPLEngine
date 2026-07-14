@@ -36,7 +36,13 @@ namespace Engine.Models
             priorityService = new AirMissionPriorityService(module);
             airControlAssessmentService = new AirControlAssessmentService(
                 gameManager.CampaignTiles,
-                gameManager.SimulationSettings.TileDistanceKM);
+                gameManager.SimulationSettings.TileDistanceKM,
+                gameManager.Tiles
+                    .OfType<LandTileData>()
+                    .Where(tile => tile.Controller == Alliance.Neutral)
+                    .Select(tile => tile.TileId)
+                    .Distinct()
+                    .ToList());
             requestGenerator = new AirMissionRequestGenerator(priorityService);
             packageBuilder = new AirPackageBuilder(
                 gameManager,

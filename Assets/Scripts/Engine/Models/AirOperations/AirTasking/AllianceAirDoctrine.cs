@@ -69,7 +69,7 @@ namespace Models.Gameplay.Campaign
         {
             return new Dictionary<AirMissionRequestType, float>
             {
-                { AirMissionRequestType.DefensiveCounterAirPatrol, 1f },
+                { AirMissionRequestType.BarrierCombatAirPatrol, 1f },
                 { AirMissionRequestType.OffensiveCounterAirSweep, 0.85f },
                 { AirMissionRequestType.ProvideAirborneC2, 0.7f },
                 { AirMissionRequestType.ProvideAerialRefueling, 0.75f }

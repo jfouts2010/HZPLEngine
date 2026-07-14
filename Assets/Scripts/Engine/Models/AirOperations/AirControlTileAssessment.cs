@@ -7,6 +7,7 @@ namespace Models.Gameplay.Campaign
     public sealed class AirControlTileAssessment
     {
         private const float CombatPowerForHalfPresence = 2f;
+        private const float MaximumConvertiblePresence = 1f - 0.000001f;
         private const float ControlBaselinePower = 0.25f;
 
         public Vector3Int TileId;
@@ -16,9 +17,9 @@ namespace Models.Gameplay.Campaign
         [Range(0f, 1f)] public float FriendlyAirActivity;
         [Range(0f, 1f)] public float HostileAirActivity;
 
-        public float FriendlyCombatPresence => NormalizeCombatPresence(
+        public float FriendlyCombatPresence => CalculateCombatPresence(
             FriendlyCombatPower);
-        public float HostileCombatPresence => NormalizeCombatPresence(
+        public float HostileCombatPresence => CalculateCombatPresence(
             HostileCombatPower);
         [Range(-1f, 1f)] public float AirControlAdvantage
         {
@@ -47,12 +48,22 @@ namespace Models.Gameplay.Campaign
             TileId = tileId;
         }
 
-        private static float NormalizeCombatPresence(float combatPower)
+        internal static float CalculateCombatPresence(float combatPower)
         {
             return Mathf.Clamp01(
                 1f - Mathf.Pow(
                     0.5f,
                     Mathf.Max(0f, combatPower) / CombatPowerForHalfPresence));
+        }
+
+        internal static float CalculateCombatPower(float combatPresence)
+        {
+            var presence = Mathf.Clamp(
+                combatPresence,
+                0f,
+                MaximumConvertiblePresence);
+            return CombatPowerForHalfPresence
+                   * Mathf.Log(1f - presence, 0.5f);
         }
     }
 }

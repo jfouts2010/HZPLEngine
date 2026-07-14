@@ -48,8 +48,8 @@ namespace Engine.Service
 
     public sealed class AirMissionPriorityService
     {
-        private const float FullResponseMinutes = 10f;
-        private const float MaximumResponseMinutes = 20f;
+        private const float FullResponseMinutes = 5f;
+        private const float MaximumResponseMinutes = 10f;
         private const float KilometersPerNauticalMile = 1.852f;
 
         private readonly IReadOnlyDictionary<Guid, AircraftTypeDefinition> aircraftTypes;
@@ -78,15 +78,13 @@ namespace Engine.Service
                 snapshot.HostileSquadrons,
                 request.MissionArea);
             if (request.RequestType ==
-                    AirMissionRequestType.DefensiveCounterAirPatrol
+                    AirMissionRequestType.BarrierCombatAirPatrol
                 && request.PriorityComponents.TryGetValue(
-                    "dcaHostileAirCombatPower",
+                    "barcapHostileAirCombatPower",
                     out var observedHostilePower))
             {
                 hostilePower = Mathf.Max(0f, observedHostilePower);
             }
-            var localPowerTotal = Mathf.Max(0.1f, friendlyPower + hostilePower);
-            var hostilePressure = Mathf.Clamp01(hostilePower / localPowerTotal);
             var friendlyDeficit = Mathf.Clamp01(
                 (hostilePower * doctrine.DesiredAirCombatAdvantage - friendlyPower)
                 / Mathf.Max(0.1f, hostilePower * doctrine.DesiredAirCombatAdvantage));
@@ -99,18 +97,21 @@ namespace Engine.Service
             var observedHostilePressure = Mathf.Max(
                 hostilePresence,
                 hostileAirActivity * 0.25f);
-            var dcaSectorPriority = request.PriorityComponents.TryGetValue(
-                "dcaSectorPriority",
-                out var rawDcaSectorPriority)
-                ? Mathf.Clamp01(rawDcaSectorPriority / 3.25f)
+            var barcapHostilePressure = request.PriorityComponents.TryGetValue(
+                "barcapHostilePressure",
+                out var rawBarcapHostilePressure)
+                ? Mathf.Clamp01(rawBarcapHostilePressure)
+                : observedHostilePressure;
+            var barcapFrontPriority = request.PriorityComponents.TryGetValue(
+                "barcapFrontPriority",
+                out var rawBarcapFrontPriority)
+                ? Mathf.Clamp01(rawBarcapFrontPriority / 2.5f)
                 : 0f;
             var urgency = request.RequestType switch
             {
-                AirMissionRequestType.DefensiveCounterAirPatrol => Mathf.Max(
-                    dcaSectorPriority,
-                    Mathf.Max(
-                        hostilePressure,
-                        Mathf.Max(hostilePresence, controlDeficit * observedHostilePressure))),
+                AirMissionRequestType.BarrierCombatAirPatrol => Mathf.Max(
+                    barcapFrontPriority,
+                    barcapHostilePressure),
                 AirMissionRequestType.OffensiveCounterAirSweep => Mathf.Max(
                     friendlyDeficit,
                     observedHostilePressure),
@@ -163,7 +164,7 @@ namespace Engine.Service
         {
             if (flight == null
                 || squadron == null
-                || (flight.MissionType != AirMissionRequestType.DefensiveCounterAirPatrol
+                || (flight.MissionType != AirMissionRequestType.BarrierCombatAirPatrol
                     && flight.MissionType != AirMissionRequestType.OffensiveCounterAirSweep))
                 return Array.Empty<AirCombatProjection>();
 

@@ -10,10 +10,11 @@ namespace Engine.Service
     {
         public static readonly TimeSpan AssessmentInterval = TimeSpan.FromMinutes(30);
         public static readonly TimeSpan PresenceRiseHalfLife = TimeSpan.FromMinutes(30);
-        public static readonly TimeSpan PresenceDecayHalfLife = TimeSpan.FromHours(6);
+        public static readonly TimeSpan PresenceDecayHalfLife = TimeSpan.FromHours(3);
         public static readonly TimeSpan ActivityHalfLife = TimeSpan.FromHours(2);
 
         private const float HeavyActivityReference = 8f;
+        private const float MinimumRememberedCombatPower = 0.05f;
 
         private readonly HashSet<Vector3Int> tileIds;
         private readonly float tileDistanceKm;
@@ -32,12 +33,21 @@ namespace Engine.Service
 
         public AirControlAssessmentService(
             IReadOnlyList<Tile> campaignTiles,
-            float tileDistanceKm)
+            float tileDistanceKm,
+            IReadOnlyCollection<Vector3Int> neutralTerritoryTileIds)
         {
             var tiles = campaignTiles ?? Array.Empty<Tile>();
+            var neutralTerritory = neutralTerritoryTileIds == null
+                ? new HashSet<Vector3Int>()
+                : new HashSet<Vector3Int>(neutralTerritoryTileIds);
             this.tileDistanceKm = Mathf.Max(0.001f, tileDistanceKm);
-            tileIds = new HashSet<Vector3Int>(tiles.Select(tile => tile.Coordinates));
+            tileIds = new HashSet<Vector3Int>(tiles
+                .Where(tile => tile != null
+                               && !neutralTerritory.Contains(tile.Coordinates))
+                .Select(tile => tile.Coordinates));
             neighborTileIdsByTileId = tiles
+                .Where(tile => tile != null
+                               && tileIds.Contains(tile.Coordinates))
                 .GroupBy(tile => tile.Coordinates)
                 .Where(group => group.Count() == 1)
                 .Select(group => group.First())
@@ -313,13 +323,13 @@ namespace Engine.Service
                     IntervalObservation interval = null;
                     intervalByTileId?.TryGetValue(tileId, out interval);
 
-                    assessment.FriendlyCombatPower = UpdateMemory(
+                    assessment.FriendlyCombatPower = UpdateCombatPowerMemory(
                         assessment.FriendlyCombatPower,
                         interval?.FriendlyCombatPowerSeconds ?? 0f,
                         elapsedSeconds,
                         presenceRiseDecay,
                         presenceFallDecay);
-                    assessment.HostileCombatPower = UpdateMemory(
+                    assessment.HostileCombatPower = UpdateCombatPowerMemory(
                         assessment.HostileCombatPower,
                         interval?.HostileCombatPowerSeconds ?? 0f,
                         elapsedSeconds,
@@ -344,6 +354,33 @@ namespace Engine.Service
             }
 
             intervalObservationsByAlliance.Clear();
+        }
+
+        private static float UpdateCombatPowerMemory(
+            float previousPower,
+            float observedPowerSeconds,
+            double elapsedSeconds,
+            float riseDecay,
+            float fallDecay)
+        {
+            var previousPresence = AirControlTileAssessment.CalculateCombatPresence(
+                previousPower);
+            var observedPower = (float)(Math.Max(0f, observedPowerSeconds)
+                                        / elapsedSeconds);
+            var observedPresence = AirControlTileAssessment.CalculateCombatPresence(
+                observedPower);
+            var decay = observedPresence >= previousPresence
+                ? Mathf.Clamp01(riseDecay)
+                : Mathf.Clamp01(fallDecay);
+            var updatedPresence = Mathf.Max(
+                0f,
+                previousPresence * decay
+                + observedPresence * (1f - decay));
+            var updatedPower = AirControlTileAssessment.CalculateCombatPower(
+                updatedPresence);
+            return updatedPower < MinimumRememberedCombatPower
+                ? 0f
+                : updatedPower;
         }
 
         private static float UpdateMemory(

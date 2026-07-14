@@ -21,6 +21,7 @@ namespace Engine.Models
         public IReadOnlyList<AirPlanningSquadronSnapshot> HostileSquadrons { get; }
         public IReadOnlyList<Vector3Int> FriendlyAirportTiles { get; }
         public IReadOnlyList<Vector3Int> HostileAirportTiles { get; }
+        public IReadOnlyList<Vector3Int> FriendlyAirfieldTiles { get; }
 
         public AirPlanningSnapshot(
             Alliance alliance,
@@ -29,7 +30,8 @@ namespace Engine.Models
             IReadOnlyList<AirPlanningSquadronSnapshot> friendlySquadrons,
             IReadOnlyList<AirPlanningSquadronSnapshot> hostileSquadrons,
             IReadOnlyList<Vector3Int> friendlyAirportTiles,
-            IReadOnlyList<Vector3Int> hostileAirportTiles)
+            IReadOnlyList<Vector3Int> hostileAirportTiles,
+            IReadOnlyList<Vector3Int> friendlyAirfieldTiles)
         {
             Alliance = alliance;
             CurrentTime = currentTime;
@@ -38,6 +40,7 @@ namespace Engine.Models
             HostileSquadrons = hostileSquadrons;
             FriendlyAirportTiles = friendlyAirportTiles;
             HostileAirportTiles = hostileAirportTiles;
+            FriendlyAirfieldTiles = friendlyAirfieldTiles;
         }
     }
 
@@ -117,7 +120,30 @@ namespace Engine.Models
                 friendlySquadrons,
                 hostileSquadrons,
                 GetAirportTiles(alliance, friendly: true),
-                GetAirportTiles(alliance, friendly: false));
+                GetAirportTiles(alliance, friendly: false),
+                GetFriendlyAirfieldTiles(alliance));
+        }
+
+        private IReadOnlyList<Vector3Int> GetFriendlyAirfieldTiles(
+            Alliance alliance)
+        {
+            var controllersByTileId = gameManager.Tiles
+                .OfType<LandTileData>()
+                .GroupBy(tile => tile.TileId)
+                .ToDictionary(group => group.Key, group => group.First().Controller);
+            return gameManager.buildingSystem
+                .GetBuildings<Airport>()
+                .Where(airport => airport.FunctionalLevel > 0
+                                  && controllersByTileId.TryGetValue(
+                                      airport.TileId,
+                                      out var controller)
+                                  && controller == alliance)
+                .Select(airport => airport.TileId)
+                .Distinct()
+                .OrderBy(tile => tile.x)
+                .ThenBy(tile => tile.y)
+                .ThenBy(tile => tile.z)
+                .ToList();
         }
 
         private IReadOnlyList<Vector3Int> GetAirportTiles(Alliance alliance, bool friendly)

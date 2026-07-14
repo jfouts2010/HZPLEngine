@@ -3048,7 +3048,7 @@ namespace Engine.Monobehaviours.Managers
         {
             return mission switch
             {
-                AirMissionRequestType.DefensiveCounterAirPatrol => "DCA Patrol",
+                AirMissionRequestType.BarrierCombatAirPatrol => "BARCAP",
                 AirMissionRequestType.OffensiveCounterAirSweep => "OCA Sweep",
                 AirMissionRequestType.ProvideAirborneC2 => "Airborne C2",
                 AirMissionRequestType.ProvideAerialRefueling => "Aerial Refueling",
@@ -3902,7 +3902,7 @@ namespace Engine.Monobehaviours.Managers
                     CreateAirSweepPattern(flight, center, radius, color);
                     break;
 
-                case AirMissionRequestType.DefensiveCounterAirPatrol:
+                case AirMissionRequestType.BarrierCombatAirPatrol:
                     CreateAirPatrolPattern(flight, center, radius, color);
                     break;
 
@@ -4377,7 +4377,7 @@ namespace Engine.Monobehaviours.Managers
             return mission switch
             {
                 AirMissionRequestType.OffensiveCounterAirSweep => new Color(1f, 0.48f, 0.18f),
-                AirMissionRequestType.DefensiveCounterAirPatrol => Color.Lerp(
+                AirMissionRequestType.BarrierCombatAirPatrol => Color.Lerp(
                     GetAirAllianceColor(alliance),
                     new Color(0.20f, 1f, 0.72f),
                     0.35f),
@@ -4392,7 +4392,7 @@ namespace Engine.Monobehaviours.Managers
             return mission switch
             {
                 AirMissionRequestType.OffensiveCounterAirSweep => "SWEEP",
-                AirMissionRequestType.DefensiveCounterAirPatrol => "CAP",
+                AirMissionRequestType.BarrierCombatAirPatrol => "BARCAP",
                 AirMissionRequestType.ProvideAirborneC2 => "C2",
                 AirMissionRequestType.ProvideAerialRefueling => "TANKER",
                 _ => "AIR"

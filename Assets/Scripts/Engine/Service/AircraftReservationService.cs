@@ -191,7 +191,7 @@ namespace Engine.Service
 
         private static bool IsTimeBasedAirCombatMission(AirMissionRequestType missionType)
         {
-            return missionType == AirMissionRequestType.DefensiveCounterAirPatrol
+            return missionType == AirMissionRequestType.BarrierCombatAirPatrol
                    || missionType == AirMissionRequestType.OffensiveCounterAirSweep;
         }
 

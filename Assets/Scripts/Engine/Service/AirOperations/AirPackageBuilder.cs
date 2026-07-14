@@ -19,15 +19,15 @@ namespace Engine.Service
 
     public sealed class AirPackageBuilder
     {
-        private const float DcaAndOcaAltitudeFeet = 40000f;
+        private const float BarcapAndOcaAltitudeFeet = 40000f;
         private const float AwacsAltitudeFeet = 35000f;
         private const float TankerAltitudeFeet = 25000f;
         private const float DefaultStationTrackHalfLengthTiles = 0.5f;
         private const float MaximumSupportStationHostilePresence = 0.10f;
         private const float MeaningfulOcaPresence = 0.10f;
-        private const float MeaningfulDcaPressure = 0.10f;
-        private const float DcaFuelPlanningMarginSeconds = 60f;
-        private static readonly TimeSpan DcaHandoffOverlap = TimeSpan.FromMinutes(10);
+        private const float MeaningfulBarcapPressure = 0.10f;
+        private const float BarcapFuelPlanningMarginSeconds = 60f;
+        private static readonly TimeSpan BarcapHandoffOverlap = TimeSpan.FromMinutes(10);
 
         private readonly GameManager gameManager;
         private readonly ProjectedAirEffectService projectedEffects;
@@ -190,14 +190,14 @@ namespace Engine.Service
                     reason = "Desired combat coverage is already projected.";
                     return AirPackageBuildOutcome.AlreadySatisfied;
                 }
-                if (request.RequestType == AirMissionRequestType.DefensiveCounterAirPatrol
+                if (request.RequestType == AirMissionRequestType.BarrierCombatAirPatrol
                     && effectStart > request.EffectStart)
                 {
                     var earliestHandoff = planningStart > request.EffectStart
                         ? planningStart
                         : request.EffectStart;
-                    effectStart = effectStart - DcaHandoffOverlap > earliestHandoff
-                        ? effectStart - DcaHandoffOverlap
+                    effectStart = effectStart - BarcapHandoffOverlap > earliestHandoff
+                        ? effectStart - BarcapHandoffOverlap
                         : earliestHandoff;
                 }
             }
@@ -239,7 +239,7 @@ namespace Engine.Service
             var selectedCandidates = SelectCombatAircraft(
                 squadronCandidates,
                 desiredStrength,
-                request.RequestType == AirMissionRequestType.DefensiveCounterAirPatrol);
+                request.RequestType == AirMissionRequestType.BarrierCombatAirPatrol);
             if (selectedCandidates.Sum(candidate => candidate.Aircraft.Count) < desiredStrength)
             {
                 reason = $"Only {selectedCandidates.Sum(candidate => candidate.Aircraft.Count)}"
@@ -471,9 +471,24 @@ namespace Engine.Service
                 missionCenterOverride ?? request.MissionArea.CenterTileId,
                 gameManager.SimulationSettings.TileDistanceKM,
                 missionAltitude);
+            var allowsBalancedBarcapAirspace = request.PriorityComponents.TryGetValue(
+                "barcapAirfieldBootstrap",
+                out var airfieldBootstrap)
+                && airfieldBootstrap > 0.5f;
+            if (request.RequestType == AirMissionRequestType.BarrierCombatAirPatrol
+                && (!commander.TryGetAirControlAssessment(
+                        request.MissionArea.CenterTileId,
+                        out var stationAssessment)
+                    || (allowsBalancedBarcapAirspace
+                        ? stationAssessment.AirControlAdvantage < 0f
+                        : stationAssessment.AirControlAdvantage <= 0f)))
+            {
+                reason = "The planned BARCAP station is no longer in friendly-favored airspace.";
+                return false;
+            }
             var tileDistanceFeet = gameManager.SimulationSettings.TileDistanceKM
                                    * AirspaceGeometry.FeetPerKilometer;
-            var combat = request.RequestType == AirMissionRequestType.DefensiveCounterAirPatrol
+            var combat = request.RequestType == AirMissionRequestType.BarrierCombatAirPatrol
                          || request.RequestType == AirMissionRequestType.OffensiveCounterAirSweep;
             var hasRendezvous = combat && plans.Count > 1;
             var rendezvousPosition = Vector3.zero;
@@ -496,7 +511,8 @@ namespace Engine.Service
                     request,
                     missionOrigin,
                     missionCenter,
-                    tileDistanceFeet);
+                    tileDistanceFeet,
+                    allowsBalancedBarcapAirspace);
                 plan.RouteGeometry = routeGeometryPlanner.Plan(new AirRouteGeometryPlanningContext(
                     missionOrigin,
                     plan.MissionEntryPosition,
@@ -511,13 +527,13 @@ namespace Engine.Service
             if (hasRendezvous)
             {
                 rendezvousTime -= TimeSpan.FromSeconds(
-                    TravelSecondsAlong(
+                    plans.Max(plan => TravelSecondsAlong(
                         rendezvousPosition,
-                        plans[0].RouteGeometry.IngressWaypoints,
-                        plans[0].MissionEntryPosition,
+                        plan.RouteGeometry.IngressWaypoints,
+                        plan.MissionEntryPosition,
                         coordinatedSpeed,
-                        plans.Min(plan => plan.AircraftType.ClimbRateFeetPerMinute),
-                        plans.Min(plan => plan.AircraftType.DescentRateFeetPerMinute)));
+                        plan.AircraftType.ClimbRateFeetPerMinute,
+                        plan.AircraftType.DescentRateFeetPerMinute)));
             }
 
             var requiredShift = TimeSpan.Zero;
@@ -553,14 +569,14 @@ namespace Engine.Service
             }
 
             var plannedEffectEnd = proposedEffectEnd;
-            if (request.RequestType == AirMissionRequestType.DefensiveCounterAirPatrol)
+            if (request.RequestType == AirMissionRequestType.BarrierCombatAirPatrol)
             {
                 foreach (var plan in plans)
                 {
                     var usableFuelSeconds = plan.AircraftType.EnduranceHours
                                             * 3600f
                                             * (1f - commander.Doctrine.JokerFuelFraction)
-                                            - DcaFuelPlanningMarginSeconds;
+                                            - BarcapFuelPlanningMarginSeconds;
                     var fuelLimitedEnd = plan.PlannedTakeoff
                                          + TimeSpan.FromSeconds(Math.Max(0f, usableFuelSeconds));
                     if (fuelLimitedEnd < plannedEffectEnd)
@@ -570,13 +586,13 @@ namespace Engine.Service
 
             if (plannedEffectStart >= plannedEffectEnd)
             {
-                reason = request.RequestType == AirMissionRequestType.DefensiveCounterAirPatrol
+                reason = request.RequestType == AirMissionRequestType.BarrierCombatAirPatrol
                     ? "Preparation and transit leave no usable fuel-bounded patrol time."
                     : "Preparation and transit leave no time for the requested effect.";
                 return false;
             }
 
-            if (request.RequestType == AirMissionRequestType.DefensiveCounterAirPatrol)
+            if (request.FulfillmentPattern == AirMissionRequestFulfillmentPattern.Sustained)
             {
                 var firstTrackEnd = plans.Max(plan =>
                     plannedEffectStart + TimeSpan.FromSeconds(
@@ -588,7 +604,9 @@ namespace Engine.Service
                             plan.AircraftType.DescentRateFeetPerMinute)));
                 if (firstTrackEnd > plannedEffectEnd)
                 {
-                    reason = "The fuel-bounded patrol window is shorter than one station circuit.";
+                    reason = request.RequestType == AirMissionRequestType.BarrierCombatAirPatrol
+                        ? "The fuel-bounded patrol window is shorter than one station circuit."
+                        : "The remaining effect window is shorter than one station circuit.";
                     return false;
                 }
             }
@@ -615,7 +633,8 @@ namespace Engine.Service
             AirMissionRequest request,
             Vector3 missionOrigin,
             Vector3 missionCenter,
-            float tileDistanceFeet)
+            float tileDistanceFeet,
+            bool allowsBalancedBarcapAirspace)
         {
             if (request.RequestType == AirMissionRequestType.OffensiveCounterAirSweep)
             {
@@ -644,17 +663,13 @@ namespace Engine.Service
                 return;
             }
 
-            if (request.RequestType == AirMissionRequestType.DefensiveCounterAirPatrol)
+            if (request.RequestType == AirMissionRequestType.BarrierCombatAirPatrol)
             {
                 var tileDistanceKm = tileDistanceFeet / AirspaceGeometry.FeetPerKilometer;
-                var originTileId = AirspaceGeometry.TileCoordinateFromPositionFeet(
-                    missionOrigin,
-                    tileDistanceKm);
-                var stationTileId = SelectDcaStationTile(
+                var stationTileId = request.MissionArea.CenterTileId;
+                var threatTileId = SelectBarcapThreatTile(
                     commander,
-                    request.MissionArea,
-                    originTileId,
-                    out var threatTileId);
+                    request.MissionArea);
                 var stationCenter = AirspaceGeometry.TileCenterFeet(
                     stationTileId,
                     tileDistanceKm,
@@ -677,12 +692,16 @@ namespace Engine.Service
                     -threatDirection.z,
                     0f,
                     threatDirection.x);
-                var dcaTrackOffset = trackDirection
-                                     * tileDistanceFeet
-                                     * DefaultStationTrackHalfLengthTiles;
-                plan.MissionEntryPosition = stationCenter - dcaTrackOffset;
-                plan.MissionPushPosition = stationCenter + dcaTrackOffset;
-                plan.MissionExitPosition = stationCenter + dcaTrackOffset;
+                var barcapTrackOffset = BuildDefensiveBarcapTrackOffset(
+                    commander,
+                    stationCenter,
+                    trackDirection,
+                    tileDistanceFeet,
+                    tileDistanceKm,
+                    allowsBalancedBarcapAirspace);
+                plan.MissionEntryPosition = stationCenter - barcapTrackOffset;
+                plan.MissionPushPosition = stationCenter + barcapTrackOffset;
+                plan.MissionExitPosition = stationCenter + barcapTrackOffset;
                 return;
             }
 
@@ -702,11 +721,9 @@ namespace Engine.Service
             plan.MissionExitPosition = missionCenter + trackOffset;
         }
 
-        private static Vector3Int SelectDcaStationTile(
+        private static Vector3Int SelectBarcapThreatTile(
             AllianceAirTaskingCommander commander,
-            AirMissionArea missionArea,
-            Vector3Int originTileId,
-            out Vector3Int threatTileId)
+            AirMissionArea missionArea)
         {
             var threat = commander.AirControlAssessments
                 .Where(assessment => missionArea.Contains(assessment.TileId))
@@ -720,32 +737,59 @@ namespace Engine.Service
                 .FirstOrDefault();
             if (threat == null
                 || Math.Max(threat.HostileAirActivity, threat.HostileCombatPresence)
-                < MeaningfulDcaPressure)
-            {
-                threatTileId = missionArea.CenterTileId;
+                < MeaningfulBarcapPressure)
                 return missionArea.CenterTileId;
+
+            return threat.TileId;
+        }
+
+        private static Vector3 BuildDefensiveBarcapTrackOffset(
+            AllianceAirTaskingCommander commander,
+            Vector3 stationCenter,
+            Vector3 trackDirection,
+            float tileDistanceFeet,
+            float tileDistanceKm,
+            bool allowsBalancedAirspace)
+        {
+            var halfLengthTiles = DefaultStationTrackHalfLengthTiles;
+            while (halfLengthTiles >= 0.125f)
+            {
+                var offset = trackDirection
+                             * tileDistanceFeet
+                             * halfLengthTiles;
+                if (IsFriendlyFavoredPosition(
+                        commander,
+                        stationCenter - offset,
+                        tileDistanceKm,
+                        allowsBalancedAirspace)
+                    && IsFriendlyFavoredPosition(
+                        commander,
+                        stationCenter + offset,
+                        tileDistanceKm,
+                        allowsBalancedAirspace))
+                    return offset;
+
+                halfLengthTiles *= 0.5f;
             }
 
-            threatTileId = threat.TileId;
-            var threatDistance = AirMissionArea.HexDistance(originTileId, threatTileId);
-            return AirspaceGeometry.NeighborTiles(threatTileId)
-                .Where(missionArea.Contains)
-                .Where(tileId => AirMissionArea.HexDistance(originTileId, tileId)
-                                 < threatDistance)
-                .Select(tileId => commander.TryGetAirControlAssessment(
-                        tileId,
-                        out var assessment)
-                    ? assessment
-                    : null)
-                .Where(assessment => assessment != null)
-                .OrderBy(assessment => assessment.HostileCombatPresence)
-                .ThenByDescending(assessment => assessment.AirControlAdvantage)
-                .ThenBy(assessment => assessment.TileId.x)
-                .ThenBy(assessment => assessment.TileId.y)
-                .ThenBy(assessment => assessment.TileId.z)
-                .Select(assessment => assessment.TileId)
-                .DefaultIfEmpty(missionArea.CenterTileId)
-                .First();
+            return Vector3.zero;
+        }
+
+        private static bool IsFriendlyFavoredPosition(
+            AllianceAirTaskingCommander commander,
+            Vector3 positionFeet,
+            float tileDistanceKm,
+            bool allowsBalancedAirspace)
+        {
+            var tileId = AirspaceGeometry.TileCoordinateFromPositionFeet(
+                positionFeet,
+                tileDistanceKm);
+            if (!commander.TryGetAirControlAssessment(tileId, out var assessment))
+                return false;
+
+            return allowsBalancedAirspace
+                ? assessment.AirControlAdvantage >= 0f
+                : assessment.AirControlAdvantage > 0f;
         }
 
         private static Vector3Int SelectOcaEntryTile(
@@ -1026,7 +1070,7 @@ namespace Engine.Service
             {
                 AirMissionRequestType.ProvideAirborneC2 => AwacsAltitudeFeet,
                 AirMissionRequestType.ProvideAerialRefueling => TankerAltitudeFeet,
-                _ => DcaAndOcaAltitudeFeet
+                _ => BarcapAndOcaAltitudeFeet
             };
         }
 

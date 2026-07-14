@@ -145,7 +145,7 @@ After the player flies an **exported scenario**:
 - Realistic autonomous air-and-ground war on the Standalone Module
 - Campaign template authoring and campaign save/load
 - Air-primary simulation depth (IADS, tasking, execution, effects)
-- Initial air-tasking backbone for defensive counter-air patrols, offensive counter-air sweeps, airborne C2, and aerial refueling; DEAD follows as the first target-attack capability
+- Initial air-tasking backbone for barrier combat air patrols, offensive counter-air sweeps, airborne C2, and aerial refueling; DEAD follows as the first target-attack capability
 - Operational ground layer supporting the air war
 - Alliance-scoped air-planning intelligence, using perfect campaign knowledge in v1 behind a boundary intended for later fog-of-war and intelligence rules
 

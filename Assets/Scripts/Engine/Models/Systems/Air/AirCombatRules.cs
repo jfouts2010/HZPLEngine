@@ -26,7 +26,7 @@ namespace Engine.Models
         public IReadOnlyDictionary<Alliance, AllianceAirTaskingCommander> AirCommanders;
         public IReadOnlyList<ActiveOrdnanceEmploymentPass> ActivePasses;
         public IReadOnlyList<PendingOrdnanceEffect> PendingEffects;
-        public IReadOnlyDictionary<Guid, Guid> DefensiveTargetByFlightId;
+        public IReadOnlyDictionary<Guid, Guid> BarcapTargetByFlightId;
     }
 
     internal static class AirCombatRules
@@ -37,8 +37,8 @@ namespace Engine.Models
         private const float CrankOffsetDegrees = 55f;
         private const float TerminalDefenseSeconds = 45f;
         private const float HotThreatAspectDegrees = 30f;
-        private const float DcaThreatLookaheadMinutes = 20f;
-        private const float DcaResponsePaddingTiles = 2f;
+        private const float BarcapThreatLookaheadMinutes = 20f;
+        private const float BarcapResponsePaddingTiles = 2f;
 
         public static AirCombatCommand Decide(
             AirCombatFlightView source,
@@ -405,7 +405,7 @@ namespace Engine.Models
             return new Vector3(Mathf.Sin(radians), 0f, Mathf.Cos(radians));
         }
 
-        public static IReadOnlyDictionary<Guid, Guid> BuildDefensiveAssignments(
+        public static IReadOnlyDictionary<Guid, Guid> BuildBarcapAssignments(
             AirCombatFrame frame,
             IReadOnlyDictionary<Guid, OrdnanceTypeDefinition> ordnanceTypes,
             Func<Alliance, AllianceAirDoctrine> doctrineForAlliance)
@@ -413,7 +413,7 @@ namespace Engine.Models
             var assignments = new Dictionary<Guid, Guid>();
             var defenders = frame.Flights.Values
                 .Where(view => view.Flight.MissionType
-                               == AirMissionRequestType.DefensiveCounterAirPatrol
+                               == AirMissionRequestType.BarrierCombatAirPatrol
                                && view.Flight.LifecycleState == AirTaskingLifecycleState.Active
                                && view.Flight.ExecutionPhase == FlightExecutionPhase.Executing
                                && !view.Flight.MissionAchieved
@@ -436,7 +436,7 @@ namespace Engine.Models
                         .Select(defender => new
                         {
                             Defender = defender,
-                            Authorized = TryGetDcaThreatMinutes(
+                            Authorized = TryGetBarcapThreatMinutes(
                                 defender,
                                 target,
                                 frame,
@@ -506,7 +506,7 @@ namespace Engine.Models
             AllianceAirDoctrine doctrine)
         {
             if (source.Flight.MissionType
-                == AirMissionRequestType.DefensiveCounterAirPatrol)
+                == AirMissionRequestType.BarrierCombatAirPatrol)
             {
                 var selfDefenseTarget = frame.Flights.Values
                     .Where(candidate => AreHostile(source.Alliance, candidate.Alliance)
@@ -523,8 +523,8 @@ namespace Engine.Models
                 if (selfDefenseTarget != null)
                     return selfDefenseTarget;
 
-                if (frame.DefensiveTargetByFlightId != null
-                    && frame.DefensiveTargetByFlightId.TryGetValue(
+                if (frame.BarcapTargetByFlightId != null
+                    && frame.BarcapTargetByFlightId.TryGetValue(
                         source.Flight.FlightId,
                         out var assignedTargetId)
                     && frame.Flights.TryGetValue(assignedTargetId, out var assignedTarget)
@@ -625,15 +625,15 @@ namespace Engine.Models
                 || frame.Time >= source.Flight.EffectEnd)
                 return false;
 
-            if (source.Flight.MissionType == AirMissionRequestType.DefensiveCounterAirPatrol)
+            if (source.Flight.MissionType == AirMissionRequestType.BarrierCombatAirPatrol)
             {
                 return source.Flight.ExecutionPhase == FlightExecutionPhase.Executing
-                       && frame.DefensiveTargetByFlightId != null
-                       && frame.DefensiveTargetByFlightId.TryGetValue(
+                       && frame.BarcapTargetByFlightId != null
+                       && frame.BarcapTargetByFlightId.TryGetValue(
                            source.Flight.FlightId,
                            out var assignedTargetId)
                        && assignedTargetId == target.Flight.FlightId
-                       && TryGetDcaThreatMinutes(
+                       && TryGetBarcapThreatMinutes(
                            source,
                            target,
                            frame,
@@ -655,7 +655,7 @@ namespace Engine.Models
             return false;
         }
 
-        private static bool TryGetDcaThreatMinutes(
+        private static bool TryGetBarcapThreatMinutes(
             AirCombatFlightView source,
             AirCombatFlightView target,
             AirCombatFrame frame,
@@ -681,7 +681,7 @@ namespace Engine.Models
             }
 
             var responseRadiusFeet = (area.RadiusTiles
-                                      + DcaResponsePaddingTiles
+                                      + BarcapResponsePaddingTiles
                                       + 0.55f)
                                      * frame.TileDistanceKm
                                      * AirspaceGeometry.FeetPerKilometer;
@@ -703,7 +703,7 @@ namespace Engine.Models
                 return false;
             var secondsToEntry = (-b - Mathf.Sqrt(discriminant)) / (2f * a);
             if (secondsToEntry < 0f
-                || secondsToEntry > DcaThreatLookaheadMinutes * 60f)
+                || secondsToEntry > BarcapThreatLookaheadMinutes * 60f)
                 return false;
 
             minutesToEntry = secondsToEntry / 60f;
@@ -908,7 +908,7 @@ namespace Engine.Models
 
         private static bool IsCounterAirMission(AirMissionRequestType missionType)
         {
-            return missionType == AirMissionRequestType.DefensiveCounterAirPatrol
+            return missionType == AirMissionRequestType.BarrierCombatAirPatrol
                    || missionType == AirMissionRequestType.OffensiveCounterAirSweep;
         }
 

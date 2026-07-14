@@ -2,7 +2,7 @@ namespace Models.Gameplay.Campaign
 {
     public enum AirMissionRequestType
     {
-        DefensiveCounterAirPatrol = 0,
+        BarrierCombatAirPatrol = 0,
         OffensiveCounterAirSweep = 1,
         ProvideAirborneC2 = 2,
         ProvideAerialRefueling = 3

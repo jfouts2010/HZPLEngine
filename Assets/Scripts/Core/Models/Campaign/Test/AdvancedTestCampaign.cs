@@ -203,7 +203,7 @@ namespace Models.Gameplay.Campaign
                 BaselineAerialRefuelingSlots = 4,
                 PriorityWeights = new Dictionary<AirMissionRequestType, float>
                 {
-                    { AirMissionRequestType.DefensiveCounterAirPatrol, 1.15f },
+                    { AirMissionRequestType.BarrierCombatAirPatrol, 1.15f },
                     { AirMissionRequestType.OffensiveCounterAirSweep, 1f },
                     { AirMissionRequestType.ProvideAirborneC2, 0.9f },
                     { AirMissionRequestType.ProvideAerialRefueling, 0.9f }

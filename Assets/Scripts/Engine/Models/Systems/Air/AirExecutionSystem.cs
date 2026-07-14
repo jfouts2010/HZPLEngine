@@ -235,9 +235,9 @@ namespace Engine.Models
                 },
                 ActivePasses = ordnanceEmploymentSystem.ActivePasses.ToList(),
                 PendingEffects = ordnanceEmploymentSystem.PendingEffects.ToList(),
-                DefensiveTargetByFlightId = new Dictionary<Guid, Guid>()
+                BarcapTargetByFlightId = new Dictionary<Guid, Guid>()
             };
-            frame.DefensiveTargetByFlightId = AirCombatRules.BuildDefensiveAssignments(
+            frame.BarcapTargetByFlightId = AirCombatRules.BuildBarcapAssignments(
                 frame,
                 ordnanceTypes,
                 GetDoctrine);
@@ -656,7 +656,7 @@ namespace Engine.Models
 
         private static bool IsTimeBasedAirCombatMission(AirMissionRequestType missionType)
         {
-            return missionType == AirMissionRequestType.DefensiveCounterAirPatrol
+            return missionType == AirMissionRequestType.BarrierCombatAirPatrol
                    || missionType == AirMissionRequestType.OffensiveCounterAirSweep;
         }
 
