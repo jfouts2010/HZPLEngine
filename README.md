@@ -3,9 +3,10 @@
 HZPL Engine is a Unity-based dynamic campaign engine focused on modern air
 warfare. It runs an autonomous conflict across an operational hex map, combining
 air tasking, flight execution, integrated air defenses, ground operations, and
-logistics in one evolving simulation.
+logistics in one simulation environment.
 
-![HZPL Engine campaign overview](Images/Unity_lOcHkZPTWd.png)
+![HZPL Engine campaign overview](Images/Unity_TbvWmucH6K.gif)
+
 
 > [!IMPORTANT]
 > HZPL Engine is under active development. The current version is a standalone
@@ -50,10 +51,6 @@ translation layers without rewriting the campaign simulation itself.
 - Supply networks, hubs, capitals, and infrastructure-aware strategic value
 - An interactive campaign workbench for inspecting tiles, units, flights,
   packages, combat, ordnance, and diagnostics
-
-## Simulation in motion
-
-![HZPL Engine autonomous campaign simulation](Images/Unity_TbvWmucH6K.gif)
 
 The current player role is an **autonomous observer**: both factions run through
 the same campaign systems while the workbench exposes their plans, execution,
@@ -133,24 +130,6 @@ map alongside routes and air-defense coverage.
 The simulation aims to remain deterministic and explainable. Significant rules
 and irreversible technical choices are recorded as architecture decision records
 under [`docs/adr`](docs/adr).
-
-## Repository layout
-
-```text
-HZPLEngine/
-|-- Assets/
-|   |-- Resources/UI/       Campaign workbench UI
-|   |-- Scenes/             Unity scenes, including PlayScene
-|   `-- Scripts/
-|       |-- Core/           Shared models, module definitions, and infrastructure
-|       `-- Engine/         Air, ground, supply, IADS, and execution systems
-|-- docs/adr/               Architecture decision records
-|-- Images/                 README screenshots and animation
-|-- Packages/               Unity package manifest and lock file
-|-- ProjectSettings/        Unity project configuration
-|-- CONTEXT.md              Canonical domain vocabulary
-`-- VISION.md               Product direction and scope
-```
 
 ## Project direction
 
