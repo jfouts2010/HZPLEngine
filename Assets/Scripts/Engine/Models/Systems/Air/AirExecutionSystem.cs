@@ -233,6 +233,11 @@ namespace Engine.Models
                     { Alliance.Bluefor, airTaskingSystem.GetCommander(Alliance.Bluefor) },
                     { Alliance.Redfor, airTaskingSystem.GetCommander(Alliance.Redfor) }
                 },
+                CurrentTracksByAlliance = new Dictionary<Alliance, IReadOnlyDictionary<Guid, IADSTrack>>
+                {
+                    { Alliance.Bluefor, GetCurrentTracks(Alliance.Bluefor) },
+                    { Alliance.Redfor, GetCurrentTracks(Alliance.Redfor) }
+                },
                 ActivePasses = ordnanceEmploymentSystem.ActivePasses.ToList(),
                 PendingEffects = ordnanceEmploymentSystem.PendingEffects.ToList(),
                 BarcapTargetByFlightId = new Dictionary<Guid, Guid>()
@@ -242,6 +247,20 @@ namespace Engine.Models
                 ordnanceTypes,
                 GetDoctrine);
             return frame;
+        }
+
+        private IReadOnlyDictionary<Guid, IADSTrack> GetCurrentTracks(Alliance alliance)
+        {
+            var iads = gameManager.GetAllianceIADS(alliance);
+            if (iads == null)
+                return new Dictionary<Guid, IADSTrack>();
+
+            return iads.CurrentTracks
+                .Where(track => track != null
+                                && !track.IsStale
+                                && track.FlightId != Guid.Empty)
+                .GroupBy(track => track.FlightId)
+                .ToDictionary(group => group.Key, group => group.First());
         }
 
         private DateTime NextTacticalBoundary(DateTime cursor, DateTime tickEnd)

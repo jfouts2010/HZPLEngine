@@ -341,7 +341,9 @@ namespace Engine.Monobehaviours.Managers
             CurrentTime = stepEnd < _nextGameTurnAt ? stepEnd : _nextGameTurnAt;
 
             _airExecutionSystem.GameTurn(previousTime, CurrentTime);
-            _IADSSystem.TacticalTurn();
+            _IADSSystem.TacticalTurn(
+                (float)(CurrentTime - previousTime).TotalSeconds,
+                CurrentTime);
             _airTaskingSystem.AdvanceAirControl(CurrentTime);
             _ordnanceEmploymentSystem.RefreshTacticalState(CurrentTime);
             if (notifyTacticalStep)

@@ -74,17 +74,15 @@ namespace Engine.Service
             var friendlyPower = CalculatePowerNear(
                 snapshot.FriendlySquadrons,
                 request.MissionArea);
-            var hostilePower = CalculatePowerNear(
-                snapshot.HostileSquadrons,
-                request.MissionArea);
-            if (request.RequestType ==
-                    AirMissionRequestType.BarrierCombatAirPatrol
-                && request.PriorityComponents.TryGetValue(
-                    "barcapHostileAirCombatPower",
-                    out var observedHostilePower))
-            {
-                hostilePower = Mathf.Max(0f, observedHostilePower);
-            }
+            var hostilePower = request.PriorityComponents.TryGetValue(
+                "barcapHostileAirCombatPower",
+                out var barcapHostilePower)
+                ? Mathf.Max(0f, barcapHostilePower)
+                : request.PriorityComponents.TryGetValue(
+                    "ocaHostileAirCombatPower",
+                    out var ocaHostilePower)
+                    ? Mathf.Max(0f, ocaHostilePower)
+                    : 0f;
             var friendlyDeficit = Mathf.Clamp01(
                 (hostilePower * doctrine.DesiredAirCombatAdvantage - friendlyPower)
                 / Mathf.Max(0.1f, hostilePower * doctrine.DesiredAirCombatAdvantage));
@@ -199,6 +197,43 @@ namespace Engine.Service
             }
 
             return projections;
+        }
+
+        public IReadOnlyList<AirCombatProjection> CalculateTrackedAirCombatProjections(
+            IADSTrack track)
+        {
+            if (track == null
+                || track.EstimatedAirCombatPower <= 0f)
+                return Array.Empty<AirCombatProjection>();
+
+            var responseSpeedKnots = track.EstimatedSpeedKnots;
+            var detectionFactor = 1f;
+            if (track.HasIdentifiedAircraftType
+                && aircraftTypes.TryGetValue(
+                    track.IdentifiedAircraftTypeDefinitionId,
+                    out var aircraftType))
+            {
+                responseSpeedKnots = aircraftType.CombatSpeedKnots;
+                detectionFactor = Mathf.Lerp(
+                    0.5f,
+                    1f,
+                    Mathf.Clamp01(aircraftType.RadarQuality));
+            }
+
+            if (responseSpeedKnots <= 0f)
+                return Array.Empty<AirCombatProjection>();
+
+            var responseSpeedKmPerHour = responseSpeedKnots
+                                         * KilometersPerNauticalMile;
+            return new[]
+            {
+                new AirCombatProjection(
+                    track.EstimatedAirCombatPower,
+                    responseSpeedKmPerHour * FullResponseMinutes / 60f
+                    * detectionFactor,
+                    responseSpeedKmPerHour * MaximumResponseMinutes / 60f
+                    * detectionFactor)
+            };
         }
 
         public bool CanPerformAirCombat(AircraftTypeDefinition aircraftType)

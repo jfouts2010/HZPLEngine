@@ -138,6 +138,8 @@ namespace Engine.Service
                     selectedOcaCandidate.HostileCombatPresence;
                 ocaRequest.PriorityComponents["ocaHostileAirActivity"] =
                     selectedOcaCandidate.HostileAirActivity;
+                ocaRequest.PriorityComponents["ocaHostileAirCombatPower"] =
+                    selectedOcaCandidate.HostileAirCombatPower;
                 generated.Add(ocaRequest);
             }
 
@@ -517,7 +519,8 @@ namespace Engine.Service
                             assessment.TileId),
                         airControl.Advantage,
                         airControl.HostilePresence,
-                        airControl.HostileActivity);
+                        airControl.HostileActivity,
+                        airControl.HostilePower);
                 })
                 .Where(candidate => candidate != null)
                 .OrderBy(candidate => candidate.PenetrationDepthTiles)
@@ -645,6 +648,7 @@ namespace Engine.Service
             public readonly float AirControlAdvantage;
             public readonly float HostileCombatPresence;
             public readonly float HostileAirActivity;
+            public readonly float HostileAirCombatPower;
 
             public OcaTargetCandidate(
                 Vector3Int frontierTileId,
@@ -652,7 +656,8 @@ namespace Engine.Service
                 int penetrationDepthTiles,
                 float airControlAdvantage,
                 float hostileCombatPresence,
-                float hostileAirActivity)
+                float hostileAirActivity,
+                float hostileAirCombatPower)
             {
                 FrontierTileId = frontierTileId;
                 DesiredAircraftStrength = Math.Max(0, desiredAircraftStrength);
@@ -660,6 +665,7 @@ namespace Engine.Service
                 AirControlAdvantage = Mathf.Clamp(airControlAdvantage, -1f, 1f);
                 HostileCombatPresence = Mathf.Clamp01(hostileCombatPresence);
                 HostileAirActivity = Mathf.Clamp01(hostileAirActivity);
+                HostileAirCombatPower = Mathf.Max(0f, hostileAirCombatPower);
             }
         }
 

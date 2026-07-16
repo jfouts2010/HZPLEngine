@@ -40,8 +40,12 @@ namespace Models.Module
         public static readonly Guid OsaRadarComponentId = Guid.Parse("9daab0e8-3d79-49f3-91b5-feb343f09fac");
         public static readonly Guid OsaLauncherComponentId = Guid.Parse("f7f2f3d3-0e2b-4f6f-9b7e-617b1ec23cb3");
         public static readonly Guid OsaCommandComponentId = Guid.Parse("1ad7d010-b81c-48af-9844-854a864385e6");
+        public static readonly Guid OmniscientTestRadarComponentId =
+            Guid.Parse("c84d4b34-0287-49dd-8437-f2da98dcda80");
         public static readonly Guid Sa2SiteTemplateId = Guid.Parse("9a408a92-9a60-4fb6-bd38-18cb6f2771a5");
         public static readonly Guid OsaSiteTemplateId = Guid.Parse("710226da-3875-4312-81ea-29606aca76c6");
+        public static readonly Guid OmniscientTestRadarSiteTemplateId =
+            Guid.Parse("a7c3f3e8-595a-4266-a2ea-bbadde9f2a16");
 
         public static readonly Guid BlueArmoredDivisionTemplateId = Guid.Parse("4153b384-6e76-42df-a1e5-d54582022bee");
         public static readonly Guid RedTankDivisionTemplateId = Guid.Parse("2d4ecc7e-8285-4b8b-9281-00cccbf5d2e8");
@@ -432,7 +436,16 @@ namespace Models.Module
                     OsaCommandComponentId,
                     "SA-8 Osa command component",
                     OrdnanceTargetCategory.Vehicle,
-                    targetToughness: 2)
+                    targetToughness: 2),
+                new RadarAirDefenseComponentDefinition(
+                    OmniscientTestRadarComponentId,
+                    "Advanced-campaign omniscient test radar",
+                    OrdnanceTargetCategory.Radar,
+                    targetToughness: 2,
+                    detectionRangeKm: 100000f,
+                    maxAltitudeMeters: 100000f,
+                    trackQuality: 1f,
+                    providesWeaponQualityTrack: false)
             };
         }
 
@@ -459,6 +472,14 @@ namespace Models.Module
                         new SamSiteTemplateComponent(OsaRadarComponentId, 1),
                         new SamSiteTemplateComponent(OsaLauncherComponentId, 1),
                         new SamSiteTemplateComponent(OsaCommandComponentId, 1)
+                    }),
+                new SamSiteTemplate(
+                    OmniscientTestRadarSiteTemplateId,
+                    "Advanced-campaign omniscient test radar site",
+                    SamSiteHostConstraint.StaticOnly,
+                    new List<SamSiteTemplateComponent>
+                    {
+                        new SamSiteTemplateComponent(OmniscientTestRadarComponentId, 1)
                     })
             };
         }

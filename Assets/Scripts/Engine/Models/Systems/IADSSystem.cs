@@ -39,7 +39,7 @@ namespace Engine.Models
             };
         }
 
-        public void TacticalTurn()
+        public void TacticalTurn(float elapsedSeconds, DateTime observedAt)
         {
             var activeModule = ModuleSingleton.Instance.ActiveModule;
             var aircraftTypeDefinitions = activeModule.AircraftTypeDefinitions
@@ -60,7 +60,9 @@ namespace Engine.Models
                 gameManager.airDefenseSiteSystem,
                 radarDefinitionLookup,
                 aircraftTypeDefinitions,
-                tileDistanceKm);
+                tileDistanceKm,
+                elapsedSeconds,
+                observedAt);
             redforIads.RefreshTracks(
                 activeFlights,
                 flightContexts.AllianceByFlightId,
@@ -70,7 +72,9 @@ namespace Engine.Models
                 gameManager.airDefenseSiteSystem,
                 radarDefinitionLookup,
                 aircraftTypeDefinitions,
-                tileDistanceKm);
+                tileDistanceKm,
+                elapsedSeconds,
+                observedAt);
         }
 
         private FlightContexts BuildFlightContexts(IEnumerable<AirFlight> flights)

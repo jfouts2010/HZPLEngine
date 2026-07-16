@@ -31,7 +31,7 @@ namespace Engine.Models
         {
             this.gameManager = gameManager;
             this.planningIntelligence = planningIntelligence
-                                        ?? new PerfectAirPlanningIntelligence(gameManager);
+                                        ?? new FriendlyAirPlanningIntelligence(gameManager);
             var projectedEffects = new ProjectedAirEffectService();
             priorityService = new AirMissionPriorityService(module);
             airControlAssessmentService = new AirControlAssessmentService(
@@ -107,7 +107,7 @@ namespace Engine.Models
                 currentTime,
                 blueforCommander,
                 redforCommander);
-            RecordPerfectAirControlObservations(currentTime);
+            RecordAirControlObservations(currentTime);
         }
 
         public void GameTurn(bool crossedOperationalCadenceBoundary)
@@ -148,7 +148,7 @@ namespace Engine.Models
             commander.AddMissionRequests(generatedRequests, gameManager.CurrentTime);
         }
 
-        private void RecordPerfectAirControlObservations(DateTime currentTime)
+        private void RecordAirControlObservations(DateTime currentTime)
         {
             var observedContactIdsByAlliance = GetCommanders()
                 .ToDictionary(
@@ -165,44 +165,75 @@ namespace Engine.Models
                     if (flight == null
                         || !flight.IsAirborne
                         || flight.HasPhysicallyEnded
-                        || !flight.HasPosition
-                        || !gameManager.squadronSystem.TryGetSquadron(
-                            flight.SquadronId,
-                            out var squadron))
+                        || !flight.HasPosition)
                         continue;
 
-                    var airborneAircraftCount = squadron.Aircraft.Count(aircraft =>
-                        aircraft.AssignedFlightId == flight.FlightId
-                        && aircraft.Status != CampaignAircraftStatus.Lost);
-                    if (airborneAircraftCount <= 0)
-                        continue;
-
-                    var tileId = AirspaceGeometry.TileCoordinateFromPositionFeet(
-                        flight.PositionFeet,
-                        gameManager.SimulationSettings.TileDistanceKM);
-                    if (!airControlAssessmentService.ContainsTile(tileId))
-                        continue;
-
-                    var combatProjections = priorityService
-                        .CalculateAirborneAirCombatProjections(
-                            flight,
-                            squadron);
-                    var combatPower = combatProjections.Sum(
-                        projection => projection.Power);
                     foreach (var commander in GetCommanders())
                     {
+                        Guid contactId;
+                        Vector3 observedPosition;
+                        int estimatedAircraftCount;
+                        float combatPower;
+                        IReadOnlyList<AirCombatProjection> combatProjections;
+                        float observationQuality;
+                        if (commander.Alliance == package.Alliance)
+                        {
+                            if (!gameManager.squadronSystem.TryGetSquadron(
+                                    flight.SquadronId,
+                                    out var squadron))
+                                continue;
+
+                            var airborneAircraftCount = squadron.Aircraft.Count(aircraft =>
+                                aircraft.AssignedFlightId == flight.FlightId
+                                && aircraft.Status != CampaignAircraftStatus.Lost);
+                            if (airborneAircraftCount <= 0)
+                                continue;
+
+                            contactId = flight.FlightId;
+                            observedPosition = flight.PositionFeet;
+                            estimatedAircraftCount = airborneAircraftCount;
+                            combatProjections = priorityService
+                                .CalculateAirborneAirCombatProjections(
+                                    flight,
+                                    squadron);
+                            combatPower = combatProjections.Sum(
+                                projection => projection.Power);
+                            observationQuality = 1f;
+                        }
+                        else
+                        {
+                            var track = gameManager.GetAllianceIADS(commander.Alliance)?
+                                .GetTrackForFlight(flight.FlightId);
+                            if (track == null || track.IsStale)
+                                continue;
+
+                            contactId = track.TrackId;
+                            observedPosition = track.LastKnownPositionFeet;
+                            estimatedAircraftCount = track.EstimatedAircraftCount;
+                            combatPower = track.EstimatedAirCombatPower;
+                            combatProjections = priorityService
+                                .CalculateTrackedAirCombatProjections(track);
+                            observationQuality = track.Quality;
+                        }
+
+                        var tileId = AirspaceGeometry.TileCoordinateFromPositionFeet(
+                            observedPosition,
+                            gameManager.SimulationSettings.TileDistanceKM);
+                        if (!airControlAssessmentService.ContainsTile(tileId))
+                            continue;
+
                         airControlAssessmentService.RecordContact(
                             commander.Alliance,
                             package.Alliance,
-                            flight.FlightId,
+                            contactId,
                             tileId,
-                            airborneAircraftCount,
+                            estimatedAircraftCount,
                             combatPower,
                             combatProjections,
-                            1f,
+                            observationQuality,
                             currentTime);
                         observedContactIdsByAlliance[commander.Alliance].Add(
-                            flight.FlightId);
+                            contactId);
                     }
                 }
             }

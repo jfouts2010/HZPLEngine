@@ -24,9 +24,27 @@ namespace Engine.Models
         public float TileDistanceKm;
         public IReadOnlyDictionary<Guid, AirCombatFlightView> Flights;
         public IReadOnlyDictionary<Alliance, AllianceAirTaskingCommander> AirCommanders;
+        public IReadOnlyDictionary<Alliance, IReadOnlyDictionary<Guid, IADSTrack>>
+            CurrentTracksByAlliance;
         public IReadOnlyList<ActiveOrdnanceEmploymentPass> ActivePasses;
         public IReadOnlyList<PendingOrdnanceEffect> PendingEffects;
         public IReadOnlyDictionary<Guid, Guid> BarcapTargetByFlightId;
+
+        public bool TryGetCurrentTrack(
+            Alliance observingAlliance,
+            Guid hostileFlightId,
+            out IADSTrack track)
+        {
+            track = null;
+            return CurrentTracksByAlliance != null
+                   && CurrentTracksByAlliance.TryGetValue(
+                       observingAlliance,
+                       out var tracks)
+                   && tracks != null
+                   && tracks.TryGetValue(hostileFlightId, out track)
+                   && track != null
+                   && !track.IsStale;
+        }
     }
 
     internal static class AirCombatRules
@@ -446,15 +464,26 @@ namespace Engine.Models
                     Target = target,
                     Eligible = defenders
                         .Where(defender => AreHostile(defender.Alliance, target.Alliance))
-                        .Select(defender => new
+                        .Select(defender =>
                         {
-                            Defender = defender,
-                            Authorized = TryGetBarcapThreatMinutes(
-                                defender,
-                                target,
-                                frame,
-                                out var minutes),
-                            Minutes = minutes
+                            var minutes = float.MaxValue;
+                            var authorized = frame.TryGetCurrentTrack(
+                                                 defender.Alliance,
+                                                 target.Flight.FlightId,
+                                                 out var track)
+                                             && TryGetBarcapThreatMinutes(
+                                                 defender,
+                                                 target,
+                                                 track,
+                                                 frame,
+                                                 out minutes);
+                            return new
+                            {
+                                Defender = defender,
+                                Track = track,
+                                Authorized = authorized,
+                                Minutes = authorized ? minutes : float.MaxValue
+                            };
                         })
                         .Where(candidate => candidate.Authorized)
                         .ToList()
@@ -465,12 +494,10 @@ namespace Engine.Models
                     candidate.Target,
                     candidate.Eligible,
                     Minutes = candidate.Eligible.Min(eligible => eligible.Minutes),
-                    Power = CalculateThreatPower(candidate.Target),
-                    CounterAir = IsCounterAirMission(candidate.Target.Flight.MissionType)
+                    Power = CalculateThreatPower(candidate.Eligible[0].Track)
                 })
                 .OrderBy(candidate => candidate.Minutes)
                 .ThenByDescending(candidate => candidate.Power)
-                .ThenByDescending(candidate => candidate.CounterAir)
                 .ThenBy(candidate => candidate.Target.Flight.FlightId)
                 .ToList();
 
@@ -490,7 +517,7 @@ namespace Engine.Models
                                  == threat.Target.Flight.FlightId)
                              .ThenBy(candidate => DistanceKm(
                                  candidate.Defender.Flight.PositionFeet,
-                                 threat.Target.Flight.PositionFeet))
+                                 candidate.Track.LastKnownPositionFeet))
                              .ThenByDescending(candidate =>
                                  candidate.Defender.Flight.TacticalState.FuelFraction)
                              .ThenBy(candidate => CalculateFlightAirCombatPower(
@@ -584,20 +611,48 @@ namespace Engine.Models
                         source,
                         candidate,
                         ordnanceTypes),
-                    CounterAir = IsCounterAirMission(candidate.Flight.MissionType),
                     Distance = DistanceKm(
                         source.Flight.PositionFeet,
-                        candidate.Flight.PositionFeet)
+                        GetObservedTargetPosition(source, candidate, frame)),
+                    EstimatedAircraftCount = GetObservedAircraftCount(
+                        source,
+                        candidate,
+                        frame)
                 })
                 .OrderByDescending(candidate => candidate.PendingPackageAttack)
                 .ThenByDescending(candidate => candidate.HotThreat)
                 .ThenByDescending(candidate => candidate.AssignedByPackage)
-                .ThenByDescending(candidate => candidate.CounterAir)
                 .ThenBy(candidate => candidate.Distance)
-                .ThenByDescending(candidate => candidate.Flight.LiveAircraft.Count)
+                .ThenByDescending(candidate => candidate.EstimatedAircraftCount)
                 .ThenBy(candidate => candidate.Flight.Flight.FlightId)
                 .Select(candidate => candidate.Flight)
                 .FirstOrDefault();
+        }
+
+        private static Vector3 GetObservedTargetPosition(
+            AirCombatFlightView source,
+            AirCombatFlightView target,
+            AirCombatFrame frame)
+        {
+            return frame.TryGetCurrentTrack(
+                source.Alliance,
+                target.Flight.FlightId,
+                out var track)
+                ? track.LastKnownPositionFeet
+                : target.Flight.PositionFeet;
+        }
+
+        private static int GetObservedAircraftCount(
+            AirCombatFlightView source,
+            AirCombatFlightView target,
+            AirCombatFrame frame)
+        {
+            return frame.TryGetCurrentTrack(
+                source.Alliance,
+                target.Flight.FlightId,
+                out var track)
+                ? Math.Max(0, track.EstimatedAircraftCount)
+                : target.LiveAircraft.Count;
         }
 
         private static bool IsEligibleTarget(
@@ -633,6 +688,12 @@ namespace Engine.Models
                     ordnanceTypes);
             }
 
+            if (!frame.TryGetCurrentTrack(
+                    source.Alliance,
+                    target.Flight.FlightId,
+                    out var track))
+                return false;
+
             if (source.Flight.LifecycleState != AirTaskingLifecycleState.Active
                 || source.Flight.MissionAchieved
                 || frame.Time >= source.Flight.EffectEnd)
@@ -649,6 +710,7 @@ namespace Engine.Models
                        && TryGetBarcapThreatMinutes(
                            source,
                            target,
+                           track,
                            frame,
                            out _);
             }
@@ -671,18 +733,22 @@ namespace Engine.Models
         private static bool TryGetBarcapThreatMinutes(
             AirCombatFlightView source,
             AirCombatFlightView target,
+            IADSTrack track,
             AirCombatFrame frame,
             out float minutesToEntry)
         {
             minutesToEntry = float.MaxValue;
+            if (track == null || track.IsStale)
+                return false;
+
             var area = source.Flight.MissionArea;
             var centerFeet = AirspaceGeometry.TileCenterFeet(
                 area.CenterTileId,
                 frame.TileDistanceKm);
             var center = new Vector2(centerFeet.x, centerFeet.z);
             var position = new Vector2(
-                target.Flight.PositionFeet.x,
-                target.Flight.PositionFeet.z);
+                track.LastKnownPositionFeet.x,
+                track.LastKnownPositionFeet.z);
             var radiusFeet = (area.RadiusTiles + 0.55f)
                               * frame.TileDistanceKm
                               * AirspaceGeometry.FeetPerKilometer;
@@ -701,8 +767,8 @@ namespace Engine.Models
             if (distance > responseRadiusFeet)
                 return false;
 
-            var velocity3 = Direction(target.Flight.HeadingDegrees)
-                            * Math.Max(0f, target.Flight.SpeedKnots)
+            var velocity3 = Direction(track.EstimatedHeadingDegrees)
+                            * Math.Max(0f, track.EstimatedSpeedKnots)
                             * 1.68781f;
             var velocity = new Vector2(velocity3.x, velocity3.z);
             var relative = position - center;
@@ -741,10 +807,9 @@ namespace Engine.Models
             return view.LiveAircraft.Count * view.AircraftType.AirControlCapability;
         }
 
-        private static float CalculateThreatPower(AirCombatFlightView view)
+        private static float CalculateThreatPower(IADSTrack track)
         {
-            return view.LiveAircraft.Count
-                   * Math.Max(1f, view.AircraftType.AirControlCapability);
+            return Mathf.Max(0f, track?.EstimatedAirCombatPower ?? 0f);
         }
 
         private static bool IsSelfDefenseTarget(
@@ -772,7 +837,17 @@ namespace Engine.Models
             IReadOnlyDictionary<Guid, OrdnanceTypeDefinition> ordnanceTypes,
             out string reason)
         {
-            if (!IsInsideSweepCorridor(source.Flight, target.Flight.PositionFeet, frame))
+            if (!frame.TryGetCurrentTrack(
+                    source.Alliance,
+                    target.Flight.FlightId,
+                    out var track))
+            {
+                reason = "IADS contact was lost; extending toward the sweep route.";
+                return false;
+            }
+
+            var observedTargetPosition = track.LastKnownPositionFeet;
+            if (!IsInsideSweepCorridor(source.Flight, observedTargetPosition, frame))
             {
                 reason = "Target left the assigned sweep corridor; extending toward the sweep route.";
                 return false;
@@ -781,15 +856,17 @@ namespace Engine.Models
             var friendlyPower = CalculateLocalAirCombatPower(
                 frame,
                 source.Alliance,
+                source.Alliance,
                 source.Package.PackageId,
                 ordnanceTypes,
-                target.Flight.PositionFeet);
+                observedTargetPosition);
             var hostilePower = CalculateLocalAirCombatPower(
                 frame,
+                source.Alliance,
                 target.Alliance,
                 Guid.Empty,
                 ordnanceTypes,
-                target.Flight.PositionFeet);
+                observedTargetPosition);
             var liveRatio = friendlyPower / Math.Max(0.1f, hostilePower);
             var requiredRatio = Mathf.Lerp(
                 Math.Max(1f, doctrine.DesiredAirCombatAdvantage),
@@ -802,7 +879,7 @@ namespace Engine.Models
             }
 
             var targetTileId = AirspaceGeometry.TileCoordinateFromPositionFeet(
-                target.Flight.PositionFeet,
+                observedTargetPosition,
                 frame.TileDistanceKm);
             if (frame.AirCommanders != null
                 && frame.AirCommanders.TryGetValue(source.Alliance, out var commander)
@@ -826,30 +903,58 @@ namespace Engine.Models
 
         private static float CalculateLocalAirCombatPower(
             AirCombatFrame frame,
+            Alliance observingAlliance,
             Alliance alliance,
             Guid packageId,
             IReadOnlyDictionary<Guid, OrdnanceTypeDefinition> ordnanceTypes,
             Vector3 centerFeet)
         {
             var radiusKm = Math.Max(1f, frame.TileDistanceKm * 2f);
-            return frame.Flights.Values
-                .Where(view => view.Alliance == alliance
-                               && (packageId == Guid.Empty
-                                   || view.Package.PackageId == packageId)
-                               && view.Flight.IsAirborne
-                               && view.LiveAircraft.Count > 0
-                               && view.AircraftType.AirControlCapability > 0f
-                               && view.LiveAircraft.Any(aircraft => aircraft.Loadout.Any(item =>
-                                   item.Count > 0
-                                   && ordnanceTypes.TryGetValue(
-                                       item.OrdnanceTypeDefinitionId,
-                                       out var ordnance)
-                                   && IsAirToAir(ordnance)))
-                               && DistanceKm(
-                                   view.Flight.PositionFeet,
-                                   centerFeet) <= radiusKm)
-                .Sum(view => view.LiveAircraft.Count
-                             * view.AircraftType.AirControlCapability);
+            var totalPower = 0f;
+            foreach (var view in frame.Flights.Values)
+            {
+                if (view.Alliance != alliance
+                    || packageId != Guid.Empty && view.Package.PackageId != packageId)
+                    continue;
+
+                Vector3 position;
+                float combatPower;
+                if (view.Alliance == observingAlliance)
+                {
+                    if (!view.Flight.IsAirborne
+                        || view.LiveAircraft.Count == 0
+                        || view.AircraftType.AirControlCapability <= 0f
+                        || !view.LiveAircraft.Any(aircraft => aircraft.Loadout.Any(item =>
+                            item.Count > 0
+                            && ordnanceTypes.TryGetValue(
+                                item.OrdnanceTypeDefinitionId,
+                                out var ordnance)
+                            && IsAirToAir(ordnance))))
+                        continue;
+
+                    position = view.Flight.PositionFeet;
+                    combatPower = view.LiveAircraft.Count
+                                  * view.AircraftType.AirControlCapability;
+                }
+                else
+                {
+                    if (!frame.TryGetCurrentTrack(
+                            observingAlliance,
+                            view.Flight.FlightId,
+                            out var track))
+                        continue;
+
+                    position = track.LastKnownPositionFeet;
+                    combatPower = track.EstimatedAirCombatPower;
+                }
+
+                if (combatPower <= 0f || DistanceKm(position, centerFeet) > radiusKm)
+                    continue;
+
+                totalPower += combatPower;
+            }
+
+            return totalPower;
         }
 
         private static bool IsInsideSweepCorridor(

@@ -10,10 +10,11 @@ namespace Models.Gameplay.Campaign
     [Serializable]
     public sealed class AllianceIADS
     {
-        private const int DefaultStaleExpiryTurns = 3;
-        private const float DefaultStaleQualityDecayPerTurn = 0.15f;
-        private const float BaseTrackBuildRatePerTurn = 0.20f;
+        private const float DefaultStaleExpirySeconds = 15f * 60f;
+        private const float DefaultStaleQualityDecayPerSecond = 0.03f / 60f;
+        private const float BaseTrackBuildRatePerSecond = 0.04f;
         private const float AdditionalRadarDiminishingFactor = 0.5f;
+        private const float UnknownContactAirControlCapabilityPerAircraft = 1f;
 
         [SerializeReference] public List<IADSTrack> Tracks = new List<IADSTrack>();
         [SerializeReference] public List<IADSEngagementAssignment> EngagementAssignments =
@@ -22,8 +23,8 @@ namespace Models.Gameplay.Campaign
         private Dictionary<Guid, IADSTrack> tracksByFlightId;
 
         public Alliance Alliance;
-        public int StaleExpiryTurns = DefaultStaleExpiryTurns;
-        public float StaleQualityDecayPerTurn = DefaultStaleQualityDecayPerTurn;
+        public float StaleExpirySeconds = DefaultStaleExpirySeconds;
+        public float StaleQualityDecayPerSecond = DefaultStaleQualityDecayPerSecond;
 
         public AllianceIADS()
         {
@@ -53,7 +54,9 @@ namespace Models.Gameplay.Campaign
             AirDefenseSiteSystem siteQuery,
             IReadOnlyDictionary<Guid, RadarAirDefenseComponentDefinition> radarDefinitionLookup,
             IReadOnlyDictionary<Guid, AircraftTypeDefinition> aircraftTypeDefinitions,
-            float tileDistanceKm)
+            float tileDistanceKm,
+            float elapsedSeconds,
+            DateTime observedAt)
         {
             EnsureIndex();
 
@@ -93,7 +96,8 @@ namespace Models.Gameplay.Campaign
                         availableSites,
                         siteQuery,
                         radarDefinitionLookup,
-                        tileDistanceKm)
+                        tileDistanceKm,
+                        elapsedSeconds)
                     .OrderByDescending(contribution => contribution.QualityIncrease)
                     .ToList();
 
@@ -110,13 +114,31 @@ namespace Models.Gameplay.Campaign
                                     && aircraftCountByFlightId.TryGetValue(flight.FlightId, out var count)
                     ? count
                     : flight.AircraftIds.Count;
+                var aircraftTypeIsIdentified = existingTrack?.HasIdentifiedAircraftType == true
+                                               || newQuality
+                                               >= IADSTrack
+                                                   .AircraftTypeIdentificationQualityThreshold;
+                var estimatedCapabilityPerAircraft = aircraftTypeIsIdentified
+                    ? aircraftTypeDefinition.AirControlCapability
+                    : UnknownContactAirControlCapabilityPerAircraft;
+                var estimatedAirCombatPower = Math.Max(0, aircraftCount)
+                                              * estimatedCapabilityPerAircraft;
 
                 if (existingTrack != null)
                 {
                     existingTrack.Refresh(
                         flight.PositionFeet,
                         aircraftCount,
-                        newQuality);
+                        estimatedAirCombatPower,
+                        flight.HeadingDegrees,
+                        flight.SpeedKnots,
+                        newQuality,
+                        observedAt);
+                    if (newQuality
+                        >= IADSTrack.AircraftTypeIdentificationQualityThreshold)
+                    {
+                        existingTrack.IdentifyAircraftType(aircraftTypeId);
+                    }
                     refreshedFlightIds.Add(flight.FlightId);
                     continue;
                 }
@@ -126,17 +148,22 @@ namespace Models.Gameplay.Campaign
 
                 var track = new IADSTrack(
                     flight.FlightId,
-                    aircraftTypeId,
                     flight.PositionFeet,
                     aircraftCount,
-                    newQuality);
+                    estimatedAirCombatPower,
+                    flight.HeadingDegrees,
+                    flight.SpeedKnots,
+                    newQuality,
+                    observedAt);
+                if (newQuality >= IADSTrack.AircraftTypeIdentificationQualityThreshold)
+                    track.IdentifyAircraftType(aircraftTypeId);
 
                 Tracks.Add(track);
                 tracksByFlightId[track.FlightId] = track;
                 refreshedFlightIds.Add(flight.FlightId);
             }
 
-            MarkUnrefreshedTracksStale(refreshedFlightIds);
+            MarkUnrefreshedTracksStale(refreshedFlightIds, elapsedSeconds);
             RemoveExpiredStaleTracks();
         }
 
@@ -167,7 +194,8 @@ namespace Models.Gameplay.Campaign
             IEnumerable<SamSite> airDefenseSites,
             AirDefenseSiteSystem siteQuery,
             IReadOnlyDictionary<Guid, RadarAirDefenseComponentDefinition> radarDefinitionLookup,
-            float tileDistanceKm)
+            float tileDistanceKm,
+            float elapsedSeconds)
         {
             if (siteQuery == null)
                 yield break;
@@ -194,7 +222,11 @@ namespace Models.Gameplay.Campaign
                                          sitePositionFeet,
                                          flight.PositionFeet)
                                      / AirspaceGeometry.FeetPerKilometer;
-                    if (distanceKm > definition.DetectionRangeKm)
+                    var maximumAltitudeFeet = definition.MaxAltitudeMeters
+                                              * AirspaceGeometry.FeetPerKilometer
+                                              / 1000f;
+                    if (distanceKm > definition.DetectionRangeKm
+                        || flight.PositionFeet.y > maximumAltitudeFeet)
                         continue;
 
                     var rangeFactor = definition.CalculateRangeFactor(distanceKm);
@@ -202,8 +234,12 @@ namespace Models.Gameplay.Campaign
                     var qualityCap = definition.CalculateTrackQualityCap(
                         detectabilityFactor,
                         distanceKm);
-                    var qualityIncrease = Mathf.Clamp01(BaseTrackBuildRatePerTurn * definition.TrackQuality *
-                                                        detectabilityFactor * rangeFactor);
+                    var qualityIncrease = Mathf.Clamp01(
+                        BaseTrackBuildRatePerSecond
+                        * Mathf.Max(0f, elapsedSeconds)
+                        * definition.TrackQuality
+                        * detectabilityFactor
+                        * rangeFactor);
 
                     if (qualityCap <= 0f || qualityIncrease <= 0f)
                         continue;
@@ -234,20 +270,24 @@ namespace Models.Gameplay.Campaign
             RebuildIndex();
         }
 
-        private void MarkUnrefreshedTracksStale(ISet<Guid> refreshedFlightIds)
+        private void MarkUnrefreshedTracksStale(
+            ISet<Guid> refreshedFlightIds,
+            float elapsedSeconds)
         {
             foreach (var track in Tracks)
             {
                 if (track == null || refreshedFlightIds.Contains(track.FlightId))
                     continue;
 
-                track.MarkStale(StaleQualityDecayPerTurn);
+                track.MarkStale(elapsedSeconds, StaleQualityDecayPerSecond);
             }
         }
 
         private void RemoveExpiredStaleTracks()
         {
-            Tracks.RemoveAll(track => track == null || track.IsStale && track.StaleTurns >= StaleExpiryTurns);
+            Tracks.RemoveAll(track => track == null
+                                      || track.IsStale
+                                      && track.StaleSeconds >= StaleExpirySeconds);
             RebuildIndex();
         }
 

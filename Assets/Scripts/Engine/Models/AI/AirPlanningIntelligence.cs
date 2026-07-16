@@ -18,9 +18,7 @@ namespace Engine.Models
         public DateTime CurrentTime { get; }
         public int TileDistanceKm { get; }
         public IReadOnlyList<AirPlanningSquadronSnapshot> FriendlySquadrons { get; }
-        public IReadOnlyList<AirPlanningSquadronSnapshot> HostileSquadrons { get; }
         public IReadOnlyList<Vector3Int> FriendlyAirportTiles { get; }
-        public IReadOnlyList<Vector3Int> HostileAirportTiles { get; }
         public IReadOnlyList<Vector3Int> FriendlyAirfieldTiles { get; }
 
         public AirPlanningSnapshot(
@@ -28,18 +26,14 @@ namespace Engine.Models
             DateTime currentTime,
             int tileDistanceKm,
             IReadOnlyList<AirPlanningSquadronSnapshot> friendlySquadrons,
-            IReadOnlyList<AirPlanningSquadronSnapshot> hostileSquadrons,
             IReadOnlyList<Vector3Int> friendlyAirportTiles,
-            IReadOnlyList<Vector3Int> hostileAirportTiles,
             IReadOnlyList<Vector3Int> friendlyAirfieldTiles)
         {
             Alliance = alliance;
             CurrentTime = currentTime;
             TileDistanceKm = Math.Max(1, tileDistanceKm);
             FriendlySquadrons = friendlySquadrons;
-            HostileSquadrons = hostileSquadrons;
             FriendlyAirportTiles = friendlyAirportTiles;
-            HostileAirportTiles = hostileAirportTiles;
             FriendlyAirfieldTiles = friendlyAirfieldTiles;
         }
     }
@@ -73,11 +67,11 @@ namespace Engine.Models
         }
     }
 
-    public sealed class PerfectAirPlanningIntelligence : IAirPlanningIntelligence
+    public sealed class FriendlyAirPlanningIntelligence : IAirPlanningIntelligence
     {
         private readonly GameManager gameManager;
 
-        public PerfectAirPlanningIntelligence(GameManager gameManager)
+        public FriendlyAirPlanningIntelligence(GameManager gameManager)
         {
             this.gameManager = gameManager;
         }
@@ -85,11 +79,14 @@ namespace Engine.Models
         public AirPlanningSnapshot CreateSnapshot(Alliance alliance)
         {
             var friendlySquadrons = new List<AirPlanningSquadronSnapshot>();
-            var hostileSquadrons = new List<AirPlanningSquadronSnapshot>();
 
             foreach (var squadron in gameManager.squadronSystem.Squadrons
                          .OrderBy(candidate => candidate.SquadronId))
             {
+                var squadronAlliance = gameManager.GetCountryAlliance(squadron.CountryId);
+                if (squadronAlliance != alliance)
+                    continue;
+
                 if (!gameManager.buildingSystem.TryGetBuilding(
                         squadron.AirportBuildingId,
                         out var airportBuilding)
@@ -97,7 +94,6 @@ namespace Engine.Models
                     || airportBuilding.FunctionalLevel <= 0)
                     continue;
 
-                var squadronAlliance = gameManager.GetCountryAlliance(squadron.CountryId);
                 var snapshot = new AirPlanningSquadronSnapshot(
                     squadron.SquadronId,
                     squadronAlliance,
@@ -107,10 +103,7 @@ namespace Engine.Models
                     squadron.ReadyAircraft,
                     squadron.AssignedAircraft);
 
-                if (squadronAlliance == alliance)
-                    friendlySquadrons.Add(snapshot);
-                else if (AreHostile(alliance, squadronAlliance))
-                    hostileSquadrons.Add(snapshot);
+                friendlySquadrons.Add(snapshot);
             }
 
             return new AirPlanningSnapshot(
@@ -118,9 +111,7 @@ namespace Engine.Models
                 gameManager.CurrentTime,
                 gameManager.SimulationSettings.TileDistanceKM,
                 friendlySquadrons,
-                hostileSquadrons,
-                GetAirportTiles(alliance, friendly: true),
-                GetAirportTiles(alliance, friendly: false),
+                GetAirportTiles(alliance),
                 GetFriendlyAirfieldTiles(alliance));
         }
 
@@ -146,16 +137,13 @@ namespace Engine.Models
                 .ToList();
         }
 
-        private IReadOnlyList<Vector3Int> GetAirportTiles(Alliance alliance, bool friendly)
+        private IReadOnlyList<Vector3Int> GetAirportTiles(Alliance alliance)
         {
             var airportTiles = new HashSet<Vector3Int>();
             foreach (var squadron in gameManager.squadronSystem.Squadrons)
             {
                 var squadronAlliance = gameManager.GetCountryAlliance(squadron.CountryId);
-                var include = friendly
-                    ? squadronAlliance == alliance
-                    : AreHostile(alliance, squadronAlliance);
-                if (!include
+                if (squadronAlliance != alliance
                     || !gameManager.buildingSystem.TryGetBuilding(squadron.AirportBuildingId, out var building)
                     || building is not Airport
                     || building.FunctionalLevel <= 0)
@@ -171,10 +159,5 @@ namespace Engine.Models
                 .ToList();
         }
 
-        private static bool AreHostile(Alliance first, Alliance second)
-        {
-            return (first == Alliance.Bluefor && second == Alliance.Redfor)
-                   || (first == Alliance.Redfor && second == Alliance.Bluefor);
-        }
     }
 }
