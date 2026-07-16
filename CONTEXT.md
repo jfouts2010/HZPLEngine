@@ -186,6 +186,10 @@ _Avoid_: using a projected incoming defender to justify pulling the last physica
 
 Aircraft type capability data includes flight performance, range and endurance, sensors and defensive qualities, ordnance capacity and compatibility, and explicit support capabilities where applicable. Required point-mass performance consists of cruise and combat speed in knots, climb and descent rate in feet per minute, turn rate in degrees per second, and nominal cruise altitude and service ceiling in feet; these values are authored per aircraft type rather than inferred from mission role. The third-party ID remains an opaque export mapping rather than a source of campaign capability.
 
+**Aircraft radar quality** is the normalized quality of an aircraft type's own radar and contributes only when that aircraft is sensing, tracking, or supporting weapon employment against another target.
+
+**Aircraft radar detectability** is the normalized ease with which hostile radar can detect and build track quality against that aircraft type. Higher values are easier to detect. Radar detectability is distinct from the aircraft's own radar quality and from ECM quality; changing onboard radar performance must not change how visible the aircraft is to enemy sensors.
+
 _Avoid_: using "airframe" for the Module catalog concept; in this project, airframe can sound like a physical aircraft body, a flight-model implementation, or an individual tail.
 
 **Squadron** — the campaign air formation that owns aircraft inventory for one aircraft type and is based at a starting airport building instance. Squadrons do not require third-party IDs; their aircraft type and airport references provide the mappable simulator entities when sorties are exported.

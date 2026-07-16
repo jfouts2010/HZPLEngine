@@ -111,6 +111,7 @@
                 <ui:Toggle name="overlay-combats-toggle" text="Combat bubbles" value="true" class="overlay-toggle" />
                 <ui:Toggle name="overlay-movement-toggle" text="Ground movement" value="true" class="overlay-toggle" />
                 <ui:Toggle name="overlay-routes-toggle" text="Flight routes" value="true" class="overlay-toggle" />
+                <ui:Toggle name="overlay-sam-toggle" text="SAM sites &amp; ranges" value="true" class="overlay-toggle" />
                 <ui:Toggle name="overlay-ordnance-toggle" text="Ordnance markers" value="true" class="overlay-toggle" />
                 <ui:Toggle name="overlay-rail-toggle" text="Railways" value="true" class="overlay-toggle" />
                 <ui:Toggle name="overlay-air-control-toggle" text="Airspace control" class="overlay-toggle" />

@@ -132,15 +132,17 @@ namespace Models.Gameplay.Campaign
                     SimulationTickMinutes = 5,
                     OperationalCadenceHours = 6
                 },
-                ContentHash = "advanced-mechanics-test-campaign-v9",
+                ContentHash = "advanced-mechanics-test-campaign-v10",
                 CountryAllianceAssignments = CreateCountryAllianceAssignments(),
                 OrdnanceAllowances = CreateOrdnanceAllowances(),
+                SamSiteTemplateAllowances = CreateSamSiteTemplateAllowances(),
                 AirDoctrineByAlliance = CreateAirDoctrineByAlliance(),
                 Tiles = CreateTiles(),
                 StartingTileData = CreateStartingTileData(),
                 SupplyCapitals = CreateSupplyCapitals(),
                 BuildingStartingConditions = CreateBuildingStartingConditions(),
                 DivisionStartingConditions = CreateDivisionStartingConditions(),
+                MobileSamSiteStartingConditions = CreateMobileSamSiteStartingConditions(),
                 SquadronStartingConditions = CreateSquadronStartingConditions()
             };
 
@@ -181,6 +183,20 @@ namespace Models.Gameplay.Campaign
                         TestModule.R73OrdnanceTypeId
                     }
                 }
+            };
+        }
+
+        private static Dictionary<Alliance, List<Guid>> CreateSamSiteTemplateAllowances()
+        {
+            var permittedTemplates = new List<Guid>
+            {
+                TestModule.Sa2SiteTemplateId,
+                TestModule.OsaSiteTemplateId
+            };
+            return new Dictionary<Alliance, List<Guid>>
+            {
+                { Alliance.Bluefor, new List<Guid>(permittedTemplates) },
+                { Alliance.Redfor, new List<Guid>(permittedTemplates) }
             };
         }
 
@@ -317,6 +333,11 @@ namespace Models.Gameplay.Campaign
                 CreateBuilding("1be9955d-4d8b-4b7c-8f03-29b8f6d9aabd", BlueFrontTileIds[2], BuildingType.Railroad, 3),
                 CreateBuilding("f4d2c7b5-1a6e-4f4a-d923-5b0ec407f63b", NeutralHubTileId, BuildingType.SupplyHub, 5),
                 CreateBuilding("a5e3d8c6-2b7f-405b-e034-6c1fd518074c", BlueFrontTileIds[1], BuildingType.Fort, 3),
+                CreateStaticSamBuilding("921dda97-8caf-4e7a-9803-af07ef13d2d8", BlueDefensiveAirbaseTileId, BlueCountryId),
+                CreateStaticSamBuilding("c9c22074-fea8-497c-9691-c0a23ed1f5db", BlueCapitalTileId, BlueCountryId),
+                CreateStaticSamBuilding("d352b464-f4b1-4ece-866f-eac4d2c31f88", BlueVulnerableAirbaseTileId, BlueCountryId),
+                CreateStaticSamBuilding("4ce0420b-3559-41a2-96ee-933220a83a81", new Vector3Int(-1, 2, -1), BlueCountryId),
+                CreateStaticSamBuilding("4f146295-ea92-4de1-90cd-0da593c14fa7", new Vector3Int(-1, 5, -4), BlueCountryId),
                 CreateBuilding("b6f4e9d7-3c8a-416c-f145-7d2ae629185d", RedCapitalTileId, BuildingType.PowerPlant, 4),
                 CreateBuilding(RedCapitalAirportBuildingId.ToString(), RedCapitalTileId, BuildingType.Airport, 5),
                 CreateBuilding(RedDefensiveAirportBuildingId.ToString(), RedDefensiveAirbaseTileId, BuildingType.Airport, 7),
@@ -329,7 +350,12 @@ namespace Models.Gameplay.Campaign
                 CreateBuilding("a963e4f6-96f8-413c-b092-1d6f435f1fc0", RedFrontTileIds[0], BuildingType.Railroad, 4),
                 CreateBuilding("d8b6a1f9-5e0c-438e-1367-9f4c084b3a7f", RedFrontTileIds[1], BuildingType.Railroad, 4),
                 CreateBuilding("b8056bb0-5fb5-4d09-b9d4-a4585c43f0f7", RedFrontTileIds[1], BuildingType.SupplyHub, 4),
-                CreateBuilding("2f40d216-7eb7-4362-8f31-d519a6a2d585", RedFrontTileIds[2], BuildingType.Railroad, 3)
+                CreateBuilding("2f40d216-7eb7-4362-8f31-d519a6a2d585", RedFrontTileIds[2], BuildingType.Railroad, 3),
+                CreateStaticSamBuilding("e765cf9b-4220-49d6-a4ce-001ac06f0fae", RedDefensiveAirbaseTileId, RedCountryId),
+                CreateStaticSamBuilding("ee341816-d3e7-4ea1-966a-e32301cfa70f", RedCapitalTileId, RedCountryId),
+                CreateStaticSamBuilding("b21c3065-1ab4-49d6-befc-7e8a5d232608", RedVulnerableAirbaseTileId, RedCountryId),
+                CreateStaticSamBuilding("4e854b37-5479-4473-9daf-338cc7b01b69", new Vector3Int(2, 0, -2), RedCountryId),
+                CreateStaticSamBuilding("7c526362-4d00-466d-aa43-63535843ae99", new Vector3Int(2, 4, -6), RedCountryId)
             };
         }
 
@@ -477,6 +503,41 @@ namespace Models.Gameplay.Campaign
             return divisions;
         }
 
+        private static List<MobileSamSiteStartingCondition> CreateMobileSamSiteStartingConditions()
+        {
+            return new List<MobileSamSiteStartingCondition>
+            {
+                new MobileSamSiteStartingCondition
+                {
+                    MobileSamSiteId = Guid.Parse("fce6b590-8b95-4687-bbbe-e85868319572"),
+                    SamSiteTemplateId = TestModule.OsaSiteTemplateId,
+                    HostDivisionId = BlueFrontDivisionIds[2],
+                    Alliance = Alliance.Bluefor
+                },
+                new MobileSamSiteStartingCondition
+                {
+                    MobileSamSiteId = Guid.Parse("74857b0e-956d-48a2-a3cc-26f99cdcc006"),
+                    SamSiteTemplateId = TestModule.OsaSiteTemplateId,
+                    HostDivisionId = BlueFrontDivisionIds[6],
+                    Alliance = Alliance.Bluefor
+                },
+                new MobileSamSiteStartingCondition
+                {
+                    MobileSamSiteId = Guid.Parse("07f07acf-78f5-4afd-9c8c-663d3120b82a"),
+                    SamSiteTemplateId = TestModule.OsaSiteTemplateId,
+                    HostDivisionId = RedFrontDivisionIds[2],
+                    Alliance = Alliance.Redfor
+                },
+                new MobileSamSiteStartingCondition
+                {
+                    MobileSamSiteId = Guid.Parse("9b2e7f58-f5a0-4b01-9b9c-162596203e07"),
+                    SamSiteTemplateId = TestModule.OsaSiteTemplateId,
+                    HostDivisionId = RedFrontDivisionIds[6],
+                    Alliance = Alliance.Redfor
+                }
+            };
+        }
+
         // Two interior front tiles retain a defender while contributing two divisions to assaults.
         // Both alliances use the same distribution: 1, 3, 1, 3, 1, 1, 1 (11 divisions each).
         private static int GetFrontTileDivisionCount(int frontTileIndex)
@@ -615,6 +676,22 @@ namespace Models.Gameplay.Campaign
                 TileId = tileId,
                 Type = type,
                 Level = new BuildingLevel(level, damage),
+            };
+        }
+
+        private static BuildingStartingCondition CreateStaticSamBuilding(
+            string buildingId,
+            Vector3Int tileId,
+            Guid countryId)
+        {
+            return new BuildingStartingCondition
+            {
+                BuildingId = Guid.Parse(buildingId),
+                TileId = tileId,
+                Type = BuildingType.AirDefense,
+                Level = new BuildingLevel(1),
+                CountryId = countryId,
+                SamSiteTemplateId = TestModule.Sa2SiteTemplateId
             };
         }
     }

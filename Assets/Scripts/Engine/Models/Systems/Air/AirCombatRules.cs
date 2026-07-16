@@ -59,14 +59,12 @@ namespace Engine.Models
             }
 
             var incoming = frame.PendingEffects
-                .Where(effect => effect.SourceKind == OrdnanceEmploymentSourceKind.AircraftFlight
-                                 && effect.TargetFlightId == flight.FlightId
+                .Where(effect => effect.TargetFlightId == flight.FlightId
                                  && effect.ResolveAt > frame.Time)
                 .OrderBy(effect => effect.ResolveAt)
                 .ThenBy(effect => effect.PendingEffectId)
                 .FirstOrDefault();
-            if (incoming != null
-                && frame.Flights.TryGetValue(incoming.SourceFlightId, out var attacker))
+            if (incoming != null)
             {
                 var secondsToImpact = Math.Max(
                     0d,
@@ -74,7 +72,22 @@ namespace Engine.Models
                 if (IsCounterAirMission(flight.MissionType)
                     || secondsToImpact <= TerminalDefenseSeconds)
                 {
-                    return DefensiveCommand(source, attacker, incoming, frame.Time);
+                    var threatFlightId = Guid.Empty;
+                    var threatPosition = incoming.SourcePositionFeet;
+                    if (incoming.SourceKind == OrdnanceEmploymentSourceKind.AircraftFlight
+                        && frame.Flights.TryGetValue(
+                            incoming.SourceFlightId,
+                            out var attacker))
+                    {
+                        threatFlightId = attacker.Flight.FlightId;
+                        threatPosition = attacker.Flight.PositionFeet;
+                    }
+                    return DefensiveCommand(
+                        source,
+                        threatPosition,
+                        threatFlightId,
+                        incoming,
+                        frame.Time);
                 }
             }
 
@@ -971,28 +984,38 @@ namespace Engine.Models
 
         private static AirCombatCommand DefensiveCommand(
             AirCombatFlightView source,
-            AirCombatFlightView attacker,
+            Vector3 threatPositionFeet,
+            Guid threatFlightId,
             PendingOrdnanceEffect effect,
             DateTime currentTime)
         {
             var secondsToImpact = Math.Max(0d, (effect.ResolveAt - currentTime).TotalSeconds);
             if (secondsToImpact > TerminalDefenseSeconds)
             {
-                return AimAtTargetCommand(
+                var direction = source.Flight.PositionFeet - threatPositionFeet;
+                direction.y = 0f;
+                if (direction.sqrMagnitude <= 1f)
+                    direction = Direction(source.Flight.HeadingDegrees + 180f);
+                var dragAim = source.Flight.PositionFeet
+                              + direction.normalized * TacticalAimDistanceKm
+                              * AirspaceGeometry.FeetPerKilometer;
+                dragAim.y = source.Flight.PositionFeet.y;
+                return Command(
                     source,
-                    attacker,
                     AirCombatIntent.Defend,
                     AirCombatManeuver.Drag,
+                    threatFlightId,
+                    Guid.Empty,
                     currentTime,
                     currentTime.AddSeconds(20),
-                    attacker.Flight.FlightId,
-                    Guid.Empty,
-                    $"Dragging an incoming missile with {secondsToImpact:0} seconds to impact.",
-                    awayFromTarget: true);
+                    AirCombatManeuverSide.None,
+                    dragAim,
+                    Math.Max(1f, source.AircraftType.CombatSpeedKnots),
+                    $"Dragging an incoming missile with {secondsToImpact:0} seconds to impact.");
             }
 
             var side = StableSide(source.Flight.FlightId, effect.PendingEffectId);
-            var threatBearing = HeadingTo(source.Flight.PositionFeet, attacker.Flight.PositionFeet);
+            var threatBearing = HeadingTo(source.Flight.PositionFeet, threatPositionFeet);
             var heading = threatBearing + (side == AirCombatManeuverSide.Left ? -90f : 90f);
             var aim = source.Flight.PositionFeet
                       + Direction(heading) * TacticalAimDistanceKm
@@ -1004,7 +1027,7 @@ namespace Engine.Models
                 side == AirCombatManeuverSide.Left
                     ? AirCombatManeuver.BeamLeft
                     : AirCombatManeuver.BeamRight,
-                attacker.Flight.FlightId,
+                threatFlightId,
                 Guid.Empty,
                 currentTime,
                 effect.ResolveAt,

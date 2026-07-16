@@ -25,6 +25,7 @@ namespace Models.Module
         public float RangeKm { get; }
         public float EnduranceHours { get; }
         public float RadarQuality { get; }
+        public float RadarDetectability { get; }
         public float EcmQuality { get; }
         public float Survivability { get; }
         public float AirControlCapability { get; }
@@ -48,6 +49,7 @@ namespace Models.Module
             float rangeKm,
             float enduranceHours,
             float radarQuality,
+            float radarDetectability,
             float ecmQuality,
             float survivability,
             float ordnanceCapacity = 0f,
@@ -75,9 +77,10 @@ namespace Models.Module
             ServiceCeilingFeet = Math.Max(NominalCruiseAltitudeFeet, serviceCeilingFeet);
             RangeKm = rangeKm;
             EnduranceHours = enduranceHours;
-            RadarQuality = radarQuality;
-            EcmQuality = ecmQuality;
-            Survivability = survivability;
+            RadarQuality = Math.Max(0f, Math.Min(1f, radarQuality));
+            RadarDetectability = Math.Max(0f, Math.Min(1f, radarDetectability));
+            EcmQuality = Math.Max(0f, Math.Min(1f, ecmQuality));
+            Survivability = Math.Max(0f, Math.Min(1f, survivability));
             AirControlCapability = Math.Max(0f, airControlCapability);
             OrdnanceCapacity = Math.Max(0f, ordnanceCapacity);
             CompatibleOrdnanceTypeDefinitionIds = compatibleOrdnanceTypeDefinitionIds ?? new List<Guid>();

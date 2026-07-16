@@ -197,10 +197,11 @@ namespace Models.Gameplay.Campaign
                     if (distanceKm > definition.DetectionRangeKm)
                         continue;
 
-                    var rangeFactor = Mathf.Clamp01(1f - distanceKm / definition.DetectionRangeKm);
-                    var detectabilityFactor = Mathf.Clamp01(aircraftTypeDefinition.RadarQuality);
-                    var qualityCap =
-                        Mathf.Clamp01(definition.TrackQuality * detectabilityFactor * (0.5f + 0.5f * rangeFactor));
+                    var rangeFactor = definition.CalculateRangeFactor(distanceKm);
+                    var detectabilityFactor = aircraftTypeDefinition.RadarDetectability;
+                    var qualityCap = definition.CalculateTrackQualityCap(
+                        detectabilityFactor,
+                        distanceKm);
                     var qualityIncrease = Mathf.Clamp01(BaseTrackBuildRatePerTurn * definition.TrackQuality *
                                                         detectabilityFactor * rangeFactor);
 

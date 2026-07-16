@@ -86,6 +86,8 @@ namespace Models.Gameplay.Campaign
         public DateTime AutonomousAt;
         public bool SupportRequired;
         public Guid SupportSourceFlightId;
+        public Guid SupportSourceSiteId;
+        public Guid SupportSourceComponentId;
         public DateTime LastGuidanceUpdateAt;
         public float LaunchQuality = 1f;
         public float SupportSeconds;

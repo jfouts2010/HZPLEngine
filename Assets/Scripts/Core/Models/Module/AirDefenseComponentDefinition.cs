@@ -52,6 +52,26 @@ namespace Models.Module
             TrackQuality = Math.Max(0f, Math.Min(1f, trackQuality));
             ProvidesWeaponQualityTrack = providesWeaponQualityTrack;
         }
+
+        public float CalculateRangeFactor(float distanceKm)
+        {
+            if (DetectionRangeKm <= 0f || distanceKm < 0f || distanceKm > DetectionRangeKm)
+                return 0f;
+
+            return Math.Max(0f, Math.Min(1f, 1f - distanceKm / DetectionRangeKm));
+        }
+
+        public float CalculateTrackQualityCap(float radarDetectability, float distanceKm)
+        {
+            var detectability = Math.Max(0f, Math.Min(1f, radarDetectability));
+            var rangeFactor = CalculateRangeFactor(distanceKm);
+            if (rangeFactor <= 0f)
+                return 0f;
+
+            return Math.Max(
+                0f,
+                Math.Min(1f, TrackQuality * detectability * (0.5f + 0.5f * rangeFactor)));
+        }
     }
 
     public sealed class LauncherAirDefenseComponentDefinition : AirDefenseComponentDefinition

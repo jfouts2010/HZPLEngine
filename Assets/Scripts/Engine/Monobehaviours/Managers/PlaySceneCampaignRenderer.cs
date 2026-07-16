@@ -72,6 +72,8 @@ namespace Engine.Monobehaviours.Managers
         private const float AirIntentAreaLineWidth = 0.038f;
         private const float AirEngagementLineWidth = 0.060f;
         private const float AirMarkerRadius = 0.12f;
+        private const float SamCoverageLineWidth = 0.022f;
+        private const float SamIconRadius = 0.16f;
         private static readonly Color RailwayLineColor = new Color(0.38f, 0.32f, 0.24f);
         private static readonly Color SupplyHubMarkerColor = new Color(0.88f, 0.58f, 0.10f);
         private static readonly Color SupplyHubMarkerBorderColor = new Color(0.98f, 0.92f, 0.78f);
@@ -105,6 +107,7 @@ namespace Engine.Monobehaviours.Managers
         private Transform railwayRoot;
         private Transform airOverlayRoot;
         private Transform airInspectionRoot;
+        private Transform samOverlayRoot;
         private Transform ordnanceOverlayRoot;
         private Label titleLabel;
         private Label timeLabel;
@@ -174,6 +177,7 @@ namespace Engine.Monobehaviours.Managers
         private Toggle overlayCombatsToggle;
         private Toggle overlayMovementToggle;
         private Toggle overlayRoutesToggle;
+        private Toggle overlaySamToggle;
         private Toggle overlayOrdnanceToggle;
         private Toggle overlayRailToggle;
         private Toggle overlayAirControlToggle;
@@ -299,6 +303,17 @@ namespace Engine.Monobehaviours.Managers
                         label.gameObject.SetActive(size <= 14f);
                 }
             }
+            if (samOverlayRoot != null)
+            {
+                foreach (Transform child in samOverlayRoot)
+                {
+                    if (!child.name.StartsWith("SAM Icon ", StringComparison.Ordinal))
+                        continue;
+                    var label = child.Find("SAM Label");
+                    if (label != null)
+                        label.gameObject.SetActive(size <= 14f);
+                }
+            }
         }
 
         private void RefreshCampaignAfterGameTurn()
@@ -314,6 +329,7 @@ namespace Engine.Monobehaviours.Managers
         {
             RefreshAirControlOverlay();
             RefreshAirOverlaysForSelection();
+            RefreshSamCoverageOverlay();
             RefreshOrdnanceOverlay();
             RefreshFlightDetails();
             RefreshPinnedInspectors();
@@ -346,6 +362,7 @@ namespace Engine.Monobehaviours.Managers
             ClearRailwayLines();
             ClearAirOverlays();
             ClearAirInspection();
+            ClearSamCoverageOverlay();
             ClearOrdnanceOverlay();
             flightPickTargets.Clear();
             combatPickTargets.Clear();
@@ -376,6 +393,7 @@ namespace Engine.Monobehaviours.Managers
             CreateAirOverlays();
             ApplySelectedFlightMarker();
             CreateAirInspection();
+            RefreshSamCoverageOverlay();
             RefreshOrdnanceOverlay();
             RefreshAirControlOverlay();
             SetAirRouteVisibility(overlayRoutesToggle == null || overlayRoutesToggle.value);
@@ -475,6 +493,13 @@ namespace Engine.Monobehaviours.Managers
                 var inspectionObject = new GameObject("Campaign Air Route Inspection");
                 inspectionObject.transform.SetParent(grid.transform, false);
                 airInspectionRoot = inspectionObject.transform;
+            }
+
+            if (samOverlayRoot == null)
+            {
+                var samObject = new GameObject("Campaign SAM Coverage");
+                samObject.transform.SetParent(grid.transform, false);
+                samOverlayRoot = samObject.transform;
             }
 
             if (ordnanceOverlayRoot == null)
@@ -604,6 +629,7 @@ namespace Engine.Monobehaviours.Managers
             overlayCombatsToggle = root.Q<Toggle>("overlay-combats-toggle");
             overlayMovementToggle = root.Q<Toggle>("overlay-movement-toggle");
             overlayRoutesToggle = root.Q<Toggle>("overlay-routes-toggle");
+            overlaySamToggle = root.Q<Toggle>("overlay-sam-toggle");
             overlayOrdnanceToggle = root.Q<Toggle>("overlay-ordnance-toggle");
             overlayRailToggle = root.Q<Toggle>("overlay-rail-toggle");
             overlayAirControlToggle = root.Q<Toggle>("overlay-air-control-toggle");
@@ -928,6 +954,7 @@ namespace Engine.Monobehaviours.Managers
                     movementArrowRoot.gameObject.SetActive(value);
             });
             ConfigureOverlayToggle(overlayRoutesToggle, "Routes", true, SetAirRouteVisibility);
+            ConfigureOverlayToggle(overlaySamToggle, "SamCoverage", true, _ => RefreshSamCoverageOverlay());
             ConfigureOverlayToggle(overlayRailToggle, "Railways", true, value =>
             {
                 if (railwayRoot != null)
@@ -3315,9 +3342,12 @@ namespace Engine.Monobehaviours.Managers
 
         private string GetSourceLabel(OrdnanceEmploymentRecord record)
         {
-            return record.SourceKind == OrdnanceEmploymentSourceKind.SamLauncher
-                ? $"SAM {ShortId(record.SourceSiteId)}"
-                : GetFlightLabel(record.SourceFlightId);
+            if (record.SourceKind != OrdnanceEmploymentSourceKind.SamLauncher)
+                return GetFlightLabel(record.SourceFlightId);
+
+            return gameManager.airDefenseSiteSystem.TryGetSite(record.SourceSiteId, out var site)
+                ? $"{GetSamSiteDisplayName(site)} {ShortId(site.SiteId)}"
+                : $"SAM {ShortId(record.SourceSiteId)}";
         }
 
         private string GetLaunchSourceLabel(
@@ -4399,6 +4429,206 @@ namespace Engine.Monobehaviours.Managers
             };
         }
 
+        private void RefreshSamCoverageOverlay()
+        {
+            ClearSamCoverageOverlay();
+            if (samOverlayRoot == null
+                || overlaySamToggle == null
+                || !overlaySamToggle.value
+                || gameManager?.airDefenseSiteSystem == null)
+                return;
+
+            var activeModule = ModuleSingleton.Instance.ActiveModule;
+            if (activeModule == null)
+                return;
+
+            var componentDefinitions = activeModule.SamComponentDefinitions
+                .Where(definition => definition != null)
+                .GroupBy(definition => definition.SamComponentDefinitionId)
+                .ToDictionary(group => group.Key, group => group.First());
+            var ordnanceDefinitions = activeModule.OrdnanceTypeDefinitions
+                .Where(definition => definition != null)
+                .GroupBy(definition => definition.OrdnanceTypeDefinitionId)
+                .ToDictionary(group => group.Key, group => group.First());
+
+            foreach (var site in gameManager.airDefenseSiteSystem.Sites
+                         .Where(site => site != null)
+                         .OrderBy(site => site.SiteId))
+            {
+                if (!gameManager.airDefenseSiteSystem.TryGetTileId(site, out var tileId)
+                    || !hexCentersByCell.TryGetValue(GetCell(tileId), out var center))
+                    continue;
+
+                var alliance = gameManager.airDefenseSiteSystem.GetEffectiveAlliance(site);
+                var color = GetAirAllianceColor(alliance);
+                var operational = !site.IsDisabled && !site.IsDestroyed && !site.IsSuppressed;
+                var components = operational
+                    ? gameManager.airDefenseSiteSystem.GetAvailableComponents(site).ToList()
+                    : new List<AirDefenseComponent>();
+                var radarRangeKm = GetSamRadarRangeKm(components, componentDefinitions);
+                var engagementRangeKm = GetSamEngagementRangeKm(
+                    components,
+                    componentDefinitions,
+                    ordnanceDefinitions);
+
+                if (radarRangeKm > 0f)
+                {
+                    CreateAirIntentCircle(
+                        $"SAM Radar Range {ShortId(site.SiteId)}",
+                        samOverlayRoot,
+                        center,
+                        SamRangeKmToMapRadius(radarRangeKm),
+                        WithAlpha(color, 0.20f),
+                        SamCoverageLineWidth,
+                        -0.23f,
+                        17);
+                }
+                if (engagementRangeKm > 0f)
+                {
+                    CreateAirIntentCircle(
+                        $"SAM Engagement Range {ShortId(site.SiteId)}",
+                        samOverlayRoot,
+                        center,
+                        SamRangeKmToMapRadius(engagementRangeKm),
+                        WithAlpha(color, 0.72f),
+                        SamCoverageLineWidth * 1.6f,
+                        -0.24f,
+                        18);
+                }
+
+                CreateSamSiteIcon(site, center, color, operational, engagementRangeKm);
+            }
+        }
+
+        private static float GetSamRadarRangeKm(
+            IEnumerable<AirDefenseComponent> components,
+            IReadOnlyDictionary<Guid, AirDefenseComponentDefinition> componentDefinitions)
+        {
+            return components
+                .OfType<RadarAirDefenseComponent>()
+                .Where(component => !component.IsDamaged
+                                    && componentDefinitions.TryGetValue(
+                                        component.SamComponentDefinitionId,
+                                        out var definition)
+                                    && definition is RadarAirDefenseComponentDefinition)
+                .Select(component =>
+                    ((RadarAirDefenseComponentDefinition)componentDefinitions[
+                        component.SamComponentDefinitionId]).DetectionRangeKm)
+                .DefaultIfEmpty(0f)
+                .Max();
+        }
+
+        private static float GetSamEngagementRangeKm(
+            IEnumerable<AirDefenseComponent> components,
+            IReadOnlyDictionary<Guid, AirDefenseComponentDefinition> componentDefinitions,
+            IReadOnlyDictionary<Guid, OrdnanceTypeDefinition> ordnanceDefinitions)
+        {
+            var maximumRangeKm = 0f;
+            foreach (var launcher in components.OfType<LauncherAirDefenseComponent>()
+                         .Where(component => !component.IsDamaged))
+            {
+                if (!componentDefinitions.TryGetValue(
+                        launcher.SamComponentDefinitionId,
+                        out var componentDefinition)
+                    || componentDefinition is not LauncherAirDefenseComponentDefinition launcherDefinition
+                    || !ordnanceDefinitions.TryGetValue(
+                        launcherDefinition.SurfaceToAirOrdnanceTypeDefinitionId,
+                        out var ordnance)
+                    || ordnance.EmploymentCategory != OrdnanceEmploymentCategory.SurfaceToAir)
+                    continue;
+
+                maximumRangeKm = Mathf.Max(
+                    maximumRangeKm,
+                    Mathf.Min(launcherDefinition.MaxEngagementRangeKm, ordnance.MaximumRangeKm));
+            }
+            return maximumRangeKm;
+        }
+
+        private float SamRangeKmToMapRadius(float rangeKm)
+        {
+            var tileDistanceKm = Mathf.Max(
+                SimulationSettings.MinTileDistanceKM,
+                gameManager.SimulationSettings.TileDistanceKM);
+            return Mathf.Max(0.05f, rangeKm / tileDistanceKm * HexHeight);
+        }
+
+        private void CreateSamSiteIcon(
+            SamSite site,
+            Vector3 center,
+            Color allianceColor,
+            bool operational,
+            float engagementRangeKm)
+        {
+            var iconObject = new GameObject($"SAM Icon {ShortId(site.SiteId)}");
+            iconObject.transform.SetParent(samOverlayRoot, false);
+            iconObject.transform.localPosition = center + new Vector3(0f, 0.18f, -0.37f);
+            var iconColor = operational
+                ? allianceColor
+                : new Color(0.50f, 0.50f, 0.50f, 0.82f);
+
+            var iconLine = iconObject.AddComponent<LineRenderer>();
+            iconLine.useWorldSpace = false;
+            iconLine.loop = true;
+            iconLine.positionCount = 4;
+            iconLine.SetPositions(new[]
+            {
+                new Vector3(0f, SamIconRadius, 0f),
+                new Vector3(SamIconRadius, 0f, 0f),
+                new Vector3(0f, -SamIconRadius, 0f),
+                new Vector3(-SamIconRadius, 0f, 0f)
+            });
+            iconLine.startWidth = 0.045f;
+            iconLine.endWidth = 0.045f;
+            iconLine.material = GetMovementArrowMaterial();
+            iconLine.startColor = iconColor;
+            iconLine.endColor = iconColor;
+            iconLine.sortingOrder = 36;
+
+            var symbolObject = new GameObject("SAM Symbol");
+            symbolObject.transform.SetParent(iconObject.transform, false);
+            symbolObject.transform.localPosition = new Vector3(0f, -0.002f, -0.01f);
+            var symbol = symbolObject.AddComponent<TextMesh>();
+            symbol.anchor = TextAnchor.MiddleCenter;
+            symbol.alignment = TextAlignment.Center;
+            symbol.characterSize = 0.017f;
+            symbol.fontSize = 24;
+            symbol.color = iconColor;
+            symbol.text = "SAM";
+            symbolObject.GetComponent<MeshRenderer>().sortingOrder = 37;
+
+            var labelObject = new GameObject("SAM Label");
+            labelObject.transform.SetParent(iconObject.transform, false);
+            labelObject.transform.localPosition = new Vector3(0.20f, 0.04f, -0.02f);
+            var label = labelObject.AddComponent<TextMesh>();
+            label.anchor = TextAnchor.LowerLeft;
+            label.alignment = TextAlignment.Left;
+            label.characterSize = 0.013f;
+            label.fontSize = 21;
+            label.color = operational ? Color.white : new Color(0.72f, 0.72f, 0.72f);
+            var hostLabel = site.HostType == SamSiteHostType.MobileDivision ? "MOBILE" : "STATIC";
+            var statusLabel = operational ? $"{engagementRangeKm:0} km" : GetSamStatusLabel(site);
+            label.text = $"{GetSamSiteDisplayName(site)}\n{hostLabel} | {statusLabel}";
+            labelObject.GetComponent<MeshRenderer>().sortingOrder = 38;
+        }
+
+        private static string GetSamStatusLabel(SamSite site)
+        {
+            if (site.IsDestroyed)
+                return "DESTROYED";
+            if (site.IsDisabled)
+                return "DISABLED";
+            if (site.IsSuppressed)
+                return "SUPPRESSED";
+            return "NO COVERAGE";
+        }
+
+        private static string GetSamSiteDisplayName(SamSite site)
+        {
+            var template = ModuleSingleton.Instance.ActiveModule.SamSiteTemplates
+                .FirstOrDefault(candidate => candidate.SamSiteTemplateId == site.SamSiteTemplateId);
+            return template?.Name ?? $"SAM {ShortId(site.SiteId)}";
+        }
+
         private void RefreshOrdnanceOverlay()
         {
             ClearOrdnanceOverlay();
@@ -4482,7 +4712,8 @@ namespace Engine.Monobehaviours.Managers
                 $"Target {launch.Sequence}");
             CreateOrdnanceMapLabel(
                 Vector3.Lerp(source, target, 0.52f) + offset,
-                $"L{launch.Sequence} {ShortId(launch.SourceAircraftId)}→{ShortId(launch.TargetAircraftId)}",
+                $"L{launch.Sequence} {GetSourceLabel(record)}→" +
+                $"{GetFlightLabel(record.TargetFlightId)} {ShortId(launch.TargetAircraftId)}",
                 selected);
         }
 
@@ -6095,6 +6326,15 @@ namespace Engine.Monobehaviours.Managers
 
             for (var i = airInspectionRoot.childCount - 1; i >= 0; i--)
                 Destroy(airInspectionRoot.GetChild(i).gameObject);
+        }
+
+        private void ClearSamCoverageOverlay()
+        {
+            if (samOverlayRoot == null)
+                return;
+
+            for (var i = samOverlayRoot.childCount - 1; i >= 0; i--)
+                Destroy(samOverlayRoot.GetChild(i).gameObject);
         }
 
         private void AdvanceOnePlaybackIncrement()

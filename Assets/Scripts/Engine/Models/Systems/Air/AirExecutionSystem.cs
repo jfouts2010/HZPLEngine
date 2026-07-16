@@ -59,7 +59,7 @@ namespace Engine.Models
             var cursor = previousTime;
             while (cursor <= currentTime)
             {
-                ordnanceEmploymentSystem.UpdateAirToAirGuidance(cursor);
+                ordnanceEmploymentSystem.UpdateOrdnanceGuidance(cursor);
                 ordnanceEmploymentSystem.AdvanceScheduledEvents(cursor);
                 PrepareFlightsAt(cursor);
                 ReleaseReadyRendezvousFlights();
