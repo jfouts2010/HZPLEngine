@@ -15,7 +15,6 @@ namespace Engine.Service
         private const int DefaultCombatFlightStrength = 4;
         private const int MaximumBarcapAircraftStrength = 8;
         private const int MaximumOcaAircraftStrength = 8;
-        private const float StrongFriendlyAdvantage = 0.40f;
         private const float MeaningfulCombatPresence = 0.10f;
         private const float MeaningfulAirActivity = 0.10f;
         private static readonly TimeSpan HandoffBuffer = TimeSpan.FromMinutes(30);
@@ -56,7 +55,7 @@ namespace Engine.Service
                     desiredAircraftStrength: candidate.DesiredAircraftStrength,
                     rationale: candidate.UsesAirfieldBootstrap
                         ? "Establish initial BARCAP coverage over an operational airfield"
-                        : "Hold the friendly-facing air-control frontier",
+                        : "Hold the friendly-facing air-interference frontier",
                     radiusTiles: candidate.MissionArea.RadiusTiles);
                 barcapRequest.PriorityComponents["desiredAircraftStrength"] =
                     candidate.DesiredAircraftStrength;
@@ -64,14 +63,13 @@ namespace Engine.Service
                     candidate.HostileAirCombatPower;
                 barcapRequest.PriorityComponents["barcapHostilePressure"] =
                     candidate.HostilePressure;
-                barcapRequest.PriorityComponents["barcapAirControlAdvantage"] =
-                    candidate.AirControlAdvantage;
+                // TODO: Recalculate BARCAP-specific relative strength when BARCAP
+                // request generation is reworked. The legacy air-control advantage
+                // priority value is intentionally no longer produced.
                 barcapRequest.PriorityComponents["barcapFrontPriority"] =
                     candidate.PriorityScore;
                 barcapRequest.PriorityComponents["barcapFighterTransitDistanceTiles"] =
                     candidate.FighterTransitDistanceTiles;
-                barcapRequest.PriorityComponents["barcapAirfieldBootstrap"] =
-                    candidate.UsesAirfieldBootstrap ? 1f : 0f;
                 generated.Add(barcapRequest);
             }
 
@@ -95,9 +93,11 @@ namespace Engine.Service
                 commander,
                 snapshot,
                 commander.Doctrine)
+                // TODO: Recalculate OCA sweep eligibility when OCA request
+                // generation is reworked. The legacy relative air-control
+                // advantage filter is intentionally no longer applied.
                 .Where(candidate =>
-                    candidate.AirControlAdvantage < StrongFriendlyAdvantage
-                    && (candidate.HostileCombatPresence >= MeaningfulCombatPresence
+                    (candidate.HostileCombatPresence >= MeaningfulCombatPresence
                         || candidate.HostileAirActivity >= MeaningfulAirActivity)
                     && candidate.HostileCombatPresence <= Mathf.Lerp(
                         0.35f,
@@ -112,7 +112,6 @@ namespace Engine.Service
                 .Where(candidate => candidate.PenetrationDepthTiles == bestPenetrationLayer)
                 .OrderByDescending(candidate => candidate.HostileAirActivity)
                 .ThenByDescending(candidate => candidate.HostileCombatPresence)
-                .ThenBy(candidate => candidate.AirControlAdvantage)
                 .ThenBy(candidate => candidate.FrontierTileId.x)
                 .ThenBy(candidate => candidate.FrontierTileId.y)
                 .ThenBy(candidate => candidate.FrontierTileId.z)
@@ -127,13 +126,14 @@ namespace Engine.Service
                     effectStart,
                     effectEnd,
                     desiredAircraftStrength: selectedOcaCandidate.DesiredAircraftStrength,
-                    rationale: "Contest the nearest active hostile air-control frontier");
+                    rationale: "Contest the nearest active hostile air-interference frontier");
                 ocaRequest.PriorityComponents["desiredAircraftStrength"] =
                     selectedOcaCandidate.DesiredAircraftStrength;
                 ocaRequest.PriorityComponents["ocaPenetrationDepthTiles"] =
                     selectedOcaCandidate.PenetrationDepthTiles;
-                ocaRequest.PriorityComponents["ocaAirControlAdvantage"] =
-                    selectedOcaCandidate.AirControlAdvantage;
+                // TODO: Recalculate OCA-specific relative strength when OCA
+                // request generation is reworked. The legacy air-control
+                // advantage priority value is intentionally no longer produced.
                 ocaRequest.PriorityComponents["ocaHostileCombatPresence"] =
                     selectedOcaCandidate.HostileCombatPresence;
                 ocaRequest.PriorityComponents["ocaHostileAirActivity"] =
@@ -176,18 +176,17 @@ namespace Engine.Service
 
             foreach (var request in generated)
             {
-                var airControl = CalculateAreaAirControl(
+                var airInterference = CalculateAreaAirInterference(
                     commander,
                     request.MissionArea);
                 priorityService.Score(
                     request,
                     commander.Doctrine,
                     snapshot,
-                    airControl.FriendlyPresence,
-                    airControl.HostilePresence,
-                    airControl.Advantage,
-                    airControl.Activity,
-                    airControl.HostileActivity);
+                    airInterference.FriendlyPresence,
+                    airInterference.HostilePresence,
+                    airInterference.Activity,
+                    airInterference.HostileActivity);
             }
 
             return generated
@@ -272,11 +271,13 @@ namespace Engine.Service
             if (friendlyAirCombatOrigins.Count == 0)
                 return new List<BarcapFrontCandidate>();
 
-            var airControlCandidates = commander.AirControlAssessments
+            // TODO: Recalculate the BARCAP frontier when BARCAP request
+            // generation is reworked. Legacy relative air-control advantage
+            // filtering is intentionally omitted.
+            var airInterferenceCandidates = commander.AirControlAssessments
                 .Where(assessment =>
-                    assessment.AirControlAdvantage < 0f
-                    && (assessment.HostileCombatPresence >= MeaningfulCombatPresence
-                        || assessment.HostileAirActivity >= MeaningfulAirActivity))
+                    assessment.HostileCombatPresence >= MeaningfulCombatPresence
+                        || assessment.HostileAirActivity >= MeaningfulAirActivity)
                 .Select(assessment =>
                 {
                     var approachOrigin = SelectNearestFighterOrigin(
@@ -292,17 +293,15 @@ namespace Engine.Service
                     var missionArea = new AirMissionArea(
                         frontTileId,
                         DefaultMissionRadiusTiles);
-                    var airControl = CalculateAreaAirControl(
+                    var airInterference = CalculateAreaAirInterference(
                         commander,
                         missionArea);
                     var hostilePressure = Mathf.Max(
-                        airControl.HostilePresence,
-                        airControl.HostileActivity);
+                        airInterference.HostilePresence,
+                        airInterference.HostileActivity);
                     if (hostilePressure < MeaningfulCombatPresence)
                         return null;
 
-                    var controlDeficit = Mathf.Clamp01(
-                        (0.4f - airControl.Advantage) / 1.4f);
                     var fighterTransitDistanceTiles = AirMissionArea.HexDistance(
                         approachOrigin,
                         frontTileId);
@@ -310,21 +309,19 @@ namespace Engine.Service
                                           + 0.25f
                                           / (1f + fighterTransitDistanceTiles);
                     var priorityScore = hostilePressure
-                                        * (1f + controlDeficit)
                                         * proximityFactor;
                     return new BarcapFrontCandidate(
                         missionArea,
-                        airControl.HostilePower,
+                        airInterference.HostilePower,
                         hostilePressure,
-                        airControl.Advantage,
                         priorityScore,
                         fighterTransitDistanceTiles,
                         false,
                         CalculateDesiredBarcapStrength(
                             snapshot,
                             doctrine,
-                            airControl.HostilePower,
-                            airControl.HostileActivity));
+                            airInterference.HostilePower,
+                            airInterference.HostileActivity));
                 })
                 .Where(candidate => candidate != null)
                 .GroupBy(candidate => candidate.MissionArea.CenterTileId)
@@ -339,8 +336,8 @@ namespace Engine.Service
                 .ThenBy(candidate => candidate.MissionArea.CenterTileId.y)
                 .ThenBy(candidate => candidate.MissionArea.CenterTileId.z)
                 .ToList();
-            return airControlCandidates.Count > 0
-                ? airControlCandidates
+            return airInterferenceCandidates.Count > 0
+                ? airInterferenceCandidates
                 : BuildAirfieldBarcapCandidates(
                     snapshot,
                     doctrine,
@@ -364,18 +361,15 @@ namespace Engine.Service
                     var fighterTransitDistanceTiles = AirMissionArea.HexDistance(
                         approachOrigin,
                         airportTileId);
-                    var controlDeficit = Mathf.Clamp01(0.4f / 1.4f);
                     var proximityFactor = 1f
                                           + 0.25f
                                           / (1f + fighterTransitDistanceTiles);
                     var priorityScore = MeaningfulCombatPresence
-                                        * (1f + controlDeficit)
                                         * proximityFactor;
                     return new BarcapFrontCandidate(
                         missionArea,
                         0f,
                         MeaningfulCombatPresence,
-                        0f,
                         priorityScore,
                         fighterTransitDistanceTiles,
                         true,
@@ -419,6 +413,10 @@ namespace Engine.Service
             var hostileDistance = AirMissionArea.HexDistance(
                 approachOriginTileId,
                 hostileFrontier.TileId);
+            // TODO: Recalculate BARCAP station placement when BARCAP request
+            // generation is reworked. For now, move toward the fighter origin
+            // through the least-interfered neighboring tiles instead of using
+            // the removed relative air-control advantage.
             var friendlyBoundary = AirspaceGeometry.NeighborTiles(hostileFrontier.TileId)
                 .Where(neighbor => AirMissionArea.HexDistance(
                     approachOriginTileId,
@@ -428,10 +426,8 @@ namespace Engine.Service
                         out var assessment)
                     ? assessment
                     : null)
-                .Where(assessment => assessment != null
-                                     && assessment.AirControlAdvantage >= 0f)
-                .OrderBy(assessment => assessment.HostileCombatPresence)
-                .ThenByDescending(assessment => assessment.AirControlAdvantage)
+                .Where(assessment => assessment != null)
+                .OrderBy(assessment => assessment.HostileAirInterference)
                 .ThenBy(assessment => AirMissionArea.HexDistance(
                     approachOriginTileId,
                     assessment.TileId))
@@ -455,18 +451,12 @@ namespace Engine.Service
                         out var assessment)
                     ? assessment
                     : null)
-                .Where(assessment => assessment != null
-                                     && assessment.AirControlAdvantage > 0f)
-                .OrderBy(assessment => assessment.HostileCombatPresence)
-                .ThenByDescending(assessment => assessment.AirControlAdvantage)
+                .Where(assessment => assessment != null)
+                .OrderBy(assessment => assessment.HostileAirInterference)
                 .ThenBy(assessment => assessment.TileId.x)
                 .ThenBy(assessment => assessment.TileId.y)
                 .ThenBy(assessment => assessment.TileId.z)
                 .FirstOrDefault();
-
-            if (defensiveBuffer == null
-                && friendlyBoundary.AirControlAdvantage <= 0f)
-                return false;
 
             frontTileId = defensiveBuffer?.TileId ?? friendlyBoundary.TileId;
             return true;
@@ -487,23 +477,25 @@ namespace Engine.Service
             if (friendlyAirCombatOrigins.Count == 0)
                 return new List<OcaTargetCandidate>();
 
+            // TODO: Recalculate the OCA sweep frontier when OCA request
+            // generation is reworked. Legacy relative air-control advantage
+            // filtering is intentionally omitted.
             return commander.AirControlAssessments
                 .Where(assessment =>
-                    assessment.AirControlAdvantage < StrongFriendlyAdvantage
-                    && (assessment.HostileCombatPresence >= MeaningfulCombatPresence
-                        || assessment.HostileAirActivity >= MeaningfulAirActivity))
+                    assessment.HostileCombatPresence >= MeaningfulCombatPresence
+                        || assessment.HostileAirActivity >= MeaningfulAirActivity)
                 .Select(assessment =>
                 {
                     var approachOrigin = SelectNearestFighterOrigin(
                         friendlyAirCombatOrigins,
                         assessment.TileId);
-                    if (!IsFriendlyFacingControlFrontier(
+                    if (!IsFriendlyFacingInterferenceFrontier(
                             commander,
                             approachOrigin,
                             assessment))
                         return null;
 
-                    var airControl = CalculateAreaAirControl(
+                    var airInterference = CalculateAreaAirInterference(
                         commander,
                         new AirMissionArea(
                             assessment.TileId,
@@ -513,14 +505,13 @@ namespace Engine.Service
                         CalculateOcaDesiredStrength(
                             snapshot,
                             doctrine,
-                            airControl.HostilePower),
+                            airInterference.HostilePower),
                         CalculatePenetrationDepthTiles(
                             friendlyAirCombatOrigins,
                             assessment.TileId),
-                        airControl.Advantage,
-                        airControl.HostilePresence,
-                        airControl.HostileActivity,
-                        airControl.HostilePower);
+                        airInterference.HostilePresence,
+                        airInterference.HostileActivity,
+                        airInterference.HostilePower);
                 })
                 .Where(candidate => candidate != null)
                 .OrderBy(candidate => candidate.PenetrationDepthTiles)
@@ -554,10 +545,9 @@ namespace Engine.Service
         private static (
             float FriendlyPresence,
             float HostilePresence,
-            float Advantage,
             float Activity,
             float HostileActivity,
-            float HostilePower) CalculateAreaAirControl(
+            float HostilePower) CalculateAreaAirInterference(
             AllianceAirTaskingCommander commander,
             AirMissionArea missionArea)
         {
@@ -565,15 +555,13 @@ namespace Engine.Service
                 .Where(assessment => missionArea.Contains(assessment.TileId))
                 .ToList();
             if (assessments.Count == 0)
-                return (0f, 0f, 0f, 0f, 0f, 0f);
+                return (0f, 0f, 0f, 0f, 0f);
 
             return (
                 Mathf.Clamp01(assessments.Average(
                     assessment => assessment.FriendlyCombatPresence)),
                 Mathf.Clamp01(assessments.Average(
                     assessment => assessment.HostileCombatPresence)),
-                Mathf.Clamp(assessments.Average(
-                    assessment => assessment.AirControlAdvantage), -1f, 1f),
                 Mathf.Clamp01(assessments.Average(assessment => assessment.AirActivity)),
                 Mathf.Clamp01(assessments.Average(
                     assessment => assessment.HostileAirActivity)),
@@ -595,7 +583,7 @@ namespace Engine.Service
                 .FirstOrDefault();
         }
 
-        private static bool IsFriendlyFacingControlFrontier(
+        private static bool IsFriendlyFacingInterferenceFrontier(
             AllianceAirTaskingCommander commander,
             Vector3Int approachOriginTileId,
             AirControlTileAssessment assessment)
@@ -609,10 +597,8 @@ namespace Engine.Service
                     neighbor) < currentDistance)
                 .Any(neighbor =>
                     commander.TryGetAirControlAssessment(neighbor, out var neighborAssessment)
-                    && (neighborAssessment.HostileCombatPresence
-                        < assessment.HostileCombatPresence
-                        || neighborAssessment.AirControlAdvantage
-                        > assessment.AirControlAdvantage));
+                    && neighborAssessment.HostileAirInterference
+                    < assessment.HostileAirInterference);
         }
 
         private static int CalculatePenetrationDepthTiles(
@@ -645,7 +631,6 @@ namespace Engine.Service
             public readonly Vector3Int FrontierTileId;
             public readonly int DesiredAircraftStrength;
             public readonly int PenetrationDepthTiles;
-            public readonly float AirControlAdvantage;
             public readonly float HostileCombatPresence;
             public readonly float HostileAirActivity;
             public readonly float HostileAirCombatPower;
@@ -654,7 +639,6 @@ namespace Engine.Service
                 Vector3Int frontierTileId,
                 int desiredAircraftStrength,
                 int penetrationDepthTiles,
-                float airControlAdvantage,
                 float hostileCombatPresence,
                 float hostileAirActivity,
                 float hostileAirCombatPower)
@@ -662,7 +646,6 @@ namespace Engine.Service
                 FrontierTileId = frontierTileId;
                 DesiredAircraftStrength = Math.Max(0, desiredAircraftStrength);
                 PenetrationDepthTiles = Math.Max(0, penetrationDepthTiles);
-                AirControlAdvantage = Mathf.Clamp(airControlAdvantage, -1f, 1f);
                 HostileCombatPresence = Mathf.Clamp01(hostileCombatPresence);
                 HostileAirActivity = Mathf.Clamp01(hostileAirActivity);
                 HostileAirCombatPower = Mathf.Max(0f, hostileAirCombatPower);
@@ -674,7 +657,6 @@ namespace Engine.Service
             public readonly AirMissionArea MissionArea;
             public readonly float HostileAirCombatPower;
             public readonly float HostilePressure;
-            public readonly float AirControlAdvantage;
             public readonly float PriorityScore;
             public readonly int FighterTransitDistanceTiles;
             public readonly bool UsesAirfieldBootstrap;
@@ -684,7 +666,6 @@ namespace Engine.Service
                 AirMissionArea missionArea,
                 float hostileAirCombatPower,
                 float hostilePressure,
-                float airControlAdvantage,
                 float priorityScore,
                 int fighterTransitDistanceTiles,
                 bool usesAirfieldBootstrap,
@@ -693,7 +674,6 @@ namespace Engine.Service
                 MissionArea = missionArea;
                 HostileAirCombatPower = Mathf.Max(0f, hostileAirCombatPower);
                 HostilePressure = Mathf.Clamp01(hostilePressure);
-                AirControlAdvantage = Mathf.Clamp(airControlAdvantage, -1f, 1f);
                 PriorityScore = Mathf.Max(0f, priorityScore);
                 FighterTransitDistanceTiles = Math.Max(0, fighterTransitDistanceTiles);
                 UsesAirfieldBootstrap = usesAirfieldBootstrap;

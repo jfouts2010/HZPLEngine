@@ -107,7 +107,7 @@ namespace Models.Module
                         Agm65OrdnanceTypeId
                     },
                     canReceiveAerialRefueling: true,
-                    airControlCapability: 1f),
+                    airInterferenceCapability: 1f),
                 new AircraftTypeDefinition(
                     Mig29AircraftTypeId,
                     "MiG-29 Fulcrum",
@@ -131,7 +131,7 @@ namespace Models.Module
                         R73OrdnanceTypeId
                     },
                     canReceiveAerialRefueling: true,
-                    airControlCapability: 0.95f),
+                    airInterferenceCapability: 0.95f),
                 new AircraftTypeDefinition(
                     E3AircraftTypeId,
                     "E-3 Sentry",

@@ -14,7 +14,7 @@ namespace Models.Gameplay.Campaign
         private const float DefaultStaleQualityDecayPerSecond = 0.03f / 60f;
         private const float BaseTrackBuildRatePerSecond = 0.04f;
         private const float AdditionalRadarDiminishingFactor = 0.5f;
-        private const float UnknownContactAirControlCapabilityPerAircraft = 1f;
+        private const float UnknownContactAirInterferenceCapabilityPerAircraft = 1f;
 
         [SerializeReference] public List<IADSTrack> Tracks = new List<IADSTrack>();
         [SerializeReference] public List<IADSEngagementAssignment> EngagementAssignments =
@@ -119,8 +119,8 @@ namespace Models.Gameplay.Campaign
                                                >= IADSTrack
                                                    .AircraftTypeIdentificationQualityThreshold;
                 var estimatedCapabilityPerAircraft = aircraftTypeIsIdentified
-                    ? aircraftTypeDefinition.AirControlCapability
-                    : UnknownContactAirControlCapabilityPerAircraft;
+                    ? aircraftTypeDefinition.AirInterferenceCapability
+                    : UnknownContactAirInterferenceCapabilityPerAircraft;
                 var estimatedAirCombatPower = Math.Max(0, aircraftCount)
                                               * estimatedCapabilityPerAircraft;
 

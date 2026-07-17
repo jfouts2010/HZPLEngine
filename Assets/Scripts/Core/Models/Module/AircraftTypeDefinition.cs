@@ -28,7 +28,7 @@ namespace Models.Module
         public float RadarDetectability { get; }
         public float EcmQuality { get; }
         public float Survivability { get; }
-        public float AirControlCapability { get; }
+        public float AirInterferenceCapability { get; }
         public float OrdnanceCapacity { get; }
         public List<Guid> CompatibleOrdnanceTypeDefinitionIds { get; }
         public AirSupportCapability SupportCapability { get; }
@@ -59,7 +59,7 @@ namespace Models.Module
             int supportSlotCapacity = 0,
             bool canReceiveAerialRefueling = false,
             float ordnanceEmploymentEfficiency = 1f,
-            float airControlCapability = 0f)
+            float airInterferenceCapability = 0f)
         {
             if (aircraftTypeDefinitionId == Guid.Empty)
                 throw new ArgumentException("Aircraft type definition id is required.",
@@ -81,7 +81,7 @@ namespace Models.Module
             RadarDetectability = Math.Max(0f, Math.Min(1f, radarDetectability));
             EcmQuality = Math.Max(0f, Math.Min(1f, ecmQuality));
             Survivability = Math.Max(0f, Math.Min(1f, survivability));
-            AirControlCapability = Math.Max(0f, airControlCapability);
+            AirInterferenceCapability = Math.Max(0f, airInterferenceCapability);
             OrdnanceCapacity = Math.Max(0f, ordnanceCapacity);
             CompatibleOrdnanceTypeDefinitionIds = compatibleOrdnanceTypeDefinitionIds ?? new List<Guid>();
             SupportCapability = supportCapability;

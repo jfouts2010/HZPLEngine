@@ -795,7 +795,7 @@ namespace Engine.Models
         {
             if (view == null
                 || view.LiveAircraft.Count == 0
-                || view.AircraftType.AirControlCapability <= 0f
+                || view.AircraftType.AirInterferenceCapability <= 0f
                 || !view.LiveAircraft.Any(aircraft => aircraft.Loadout.Any(item =>
                     item.Count > 0
                     && ordnanceTypes.TryGetValue(
@@ -804,7 +804,7 @@ namespace Engine.Models
                     && IsAirToAir(ordnance))))
                 return 0f;
 
-            return view.LiveAircraft.Count * view.AircraftType.AirControlCapability;
+            return view.LiveAircraft.Count * view.AircraftType.AirInterferenceCapability;
         }
 
         private static float CalculateThreatPower(IADSTrack track)
@@ -878,24 +878,10 @@ namespace Engine.Models
                 return false;
             }
 
-            var targetTileId = AirspaceGeometry.TileCoordinateFromPositionFeet(
-                observedTargetPosition,
-                frame.TileDistanceKm);
-            if (frame.AirCommanders != null
-                && frame.AirCommanders.TryGetValue(source.Alliance, out var commander)
-                && commander.TryGetAirControlAssessment(targetTileId, out var assessment))
-            {
-                var maximumHostilePresence = Mathf.Lerp(
-                    0.35f,
-                    0.85f,
-                    Mathf.Clamp01(doctrine.RiskTolerance));
-                if (assessment.HostileCombatPresence > maximumHostilePresence
-                    && assessment.AirControlAdvantage < 0f)
-                {
-                    reason = "Target is withdrawing into airspace with excessive remembered hostile combat presence.";
-                    return false;
-                }
-            }
+            // TODO: Recalculate OCA background-interference risk when OCA
+            // tactical behavior is reworked. The legacy relative air-control
+            // gate is intentionally removed; live local combat odds above
+            // remain authoritative for now.
 
             reason = string.Empty;
             return true;
@@ -923,7 +909,7 @@ namespace Engine.Models
                 {
                     if (!view.Flight.IsAirborne
                         || view.LiveAircraft.Count == 0
-                        || view.AircraftType.AirControlCapability <= 0f
+                        || view.AircraftType.AirInterferenceCapability <= 0f
                         || !view.LiveAircraft.Any(aircraft => aircraft.Loadout.Any(item =>
                             item.Count > 0
                             && ordnanceTypes.TryGetValue(
@@ -934,7 +920,7 @@ namespace Engine.Models
 
                     position = view.Flight.PositionFeet;
                     combatPower = view.LiveAircraft.Count
-                                  * view.AircraftType.AirControlCapability;
+                                  * view.AircraftType.AirInterferenceCapability;
                 }
                 else
                 {

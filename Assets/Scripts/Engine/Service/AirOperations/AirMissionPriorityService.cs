@@ -66,7 +66,6 @@ namespace Engine.Service
             AirPlanningSnapshot snapshot,
             float assessedFriendlyPresence,
             float assessedHostilePresence,
-            float assessedAirControlAdvantage,
             float assessedAirActivity,
             float assessedHostileAirActivity)
         {
@@ -88,10 +87,8 @@ namespace Engine.Service
                 / Mathf.Max(0.1f, hostilePower * doctrine.DesiredAirCombatAdvantage));
             var friendlyPresence = Mathf.Clamp01(assessedFriendlyPresence);
             var hostilePresence = Mathf.Clamp01(assessedHostilePresence);
-            var airControlAdvantage = Mathf.Clamp(assessedAirControlAdvantage, -1f, 1f);
             var airActivity = Mathf.Clamp01(assessedAirActivity);
             var hostileAirActivity = Mathf.Clamp01(assessedHostileAirActivity);
-            var controlDeficit = Mathf.Clamp01((0.4f - airControlAdvantage) / 1.4f);
             var observedHostilePressure = Mathf.Max(
                 hostilePresence,
                 hostileAirActivity * 0.25f);
@@ -128,10 +125,8 @@ namespace Engine.Service
             components["hostileAirCombatPower"] = hostilePower;
             components["friendlyCombatPresence"] = friendlyPresence;
             components["hostileCombatPresence"] = hostilePresence;
-            components["airControlAdvantage"] = airControlAdvantage;
             components["airActivity"] = airActivity;
             components["hostileAirActivity"] = hostileAirActivity;
-            components["airControlDeficit"] = controlDeficit;
             components["urgency"] = urgency;
             components["riskTolerance"] = riskAcceptance;
             request.PriorityComponents = components;
@@ -141,7 +136,7 @@ namespace Engine.Service
         public float CalculateAirCombatPower(AirPlanningSquadronSnapshot squadron)
         {
             var aircraftType = aircraftTypes[squadron.AircraftTypeDefinitionId];
-            return aircraftType.AirControlCapability
+            return aircraftType.AirInterferenceCapability
                    * Math.Max(
                        0,
                        squadron.ReadyAircraftCount + squadron.AssignedAircraftCount);
@@ -175,7 +170,7 @@ namespace Engine.Service
                 if (!aircraftTypes.TryGetValue(
                         aircraft.AircraftTypeDefinitionId,
                         out var aircraftType)
-                    || aircraftType.AirControlCapability <= 0f)
+                    || aircraftType.AirInterferenceCapability <= 0f)
                     continue;
 
                 var organicDetectionFactor = Mathf.Lerp(
@@ -191,7 +186,7 @@ namespace Engine.Service
                                            * MaximumResponseMinutes / 60f
                                            * organicDetectionFactor;
                 projections.Add(new AirCombatProjection(
-                    aircraftType.AirControlCapability,
+                    aircraftType.AirInterferenceCapability,
                     fullResponseRange,
                     maximumResponseRange));
             }
@@ -240,7 +235,7 @@ namespace Engine.Service
         {
             return aircraftType != null
                    && aircraftType.SupportCapability == AirSupportCapability.None
-                   && aircraftType.AirControlCapability > 0f;
+                   && aircraftType.AirInterferenceCapability > 0f;
         }
 
         public float CalculatePowerNear(

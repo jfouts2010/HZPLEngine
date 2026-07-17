@@ -8,7 +8,6 @@ namespace Models.Gameplay.Campaign
     {
         private const float CombatPowerForHalfPresence = 2f;
         private const float MaximumConvertiblePresence = 1f - 0.000001f;
-        private const float ControlBaselinePower = 0.25f;
 
         public Vector3Int TileId;
 
@@ -21,21 +20,10 @@ namespace Models.Gameplay.Campaign
             FriendlyCombatPower);
         public float HostileCombatPresence => CalculateCombatPresence(
             HostileCombatPower);
-        [Range(-1f, 1f)] public float AirControlAdvantage
-        {
-            get
-            {
-                var friendlyPower = Mathf.Max(0f, FriendlyCombatPower);
-                var hostilePower = Mathf.Max(0f, HostileCombatPower);
-                return Mathf.Clamp(
-                    (friendlyPower - hostilePower)
-                    / (friendlyPower + hostilePower + 2f * ControlBaselinePower),
-                    -1f,
-                    1f);
-            }
-        }
-        [Range(0f, 1f)] public float AirControl =>
-            Mathf.Clamp01(AirControlAdvantage * 0.5f + 0.5f);
+        public float FriendlyAirInterference => Mathf.Clamp01(
+            Mathf.Max(FriendlyCombatPresence, FriendlyAirActivity));
+        public float HostileAirInterference => Mathf.Clamp01(
+            Mathf.Max(HostileCombatPresence, HostileAirActivity));
         public float AirActivity => Mathf.Clamp01(
             Mathf.Max(0f, FriendlyAirActivity) + Mathf.Max(0f, HostileAirActivity));
 

@@ -85,13 +85,6 @@ namespace Models.Gameplay.Campaign
             return airControlAssessmentsByTileId.TryGetValue(tileId, out assessment);
         }
 
-        public float GetAirControl(Vector3Int tileId)
-        {
-            return TryGetAirControlAssessment(tileId, out var assessment)
-                ? Mathf.Clamp01(assessment.AirControl)
-                : 0.5f;
-        }
-
         public float GetAirActivity(Vector3Int tileId)
         {
             return TryGetAirControlAssessment(tileId, out var assessment)

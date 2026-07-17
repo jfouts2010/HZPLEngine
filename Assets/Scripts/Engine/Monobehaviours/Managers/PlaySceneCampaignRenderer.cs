@@ -439,7 +439,7 @@ namespace Engine.Monobehaviours.Managers
 
             if (airControlTilemap == null)
             {
-                var overlayObject = new GameObject("Campaign Airspace Control");
+                var overlayObject = new GameObject("Campaign Air Interference");
                 overlayObject.transform.SetParent(grid.transform, false);
                 airControlTilemap = overlayObject.AddComponent<Tilemap>();
                 var overlayRenderer = overlayObject.AddComponent<TilemapRenderer>();
@@ -1026,67 +1026,69 @@ namespace Engine.Monobehaviours.Managers
             var redCommander = gameManager?.GetAllianceAirTaskingCommander(Alliance.Redfor);
             foreach (var campaignTile in tilesById.Values)
             {
-                var hasBlueEstimate = TryGetAirControlPicture(
+                var hasBlueEstimate = TryGetAirInterferencePicture(
                     blueCommander,
                     campaignTile.Coordinates,
-                    out var blueAdvantage,
-                    out var bluePresence);
-                var hasRedEstimate = TryGetAirControlPicture(
+                    out var blueBalance,
+                    out var blueInterference);
+                var hasRedEstimate = TryGetAirInterferencePicture(
                     redCommander,
                     campaignTile.Coordinates,
-                    out var redAdvantage,
-                    out var redPresence);
+                    out var redBalance,
+                    out var redInterference);
                 var estimateCount = (hasBlueEstimate ? 1 : 0) + (hasRedEstimate ? 1 : 0);
-                var combinedBlueAdvantage = estimateCount > 0
-                    ? ((hasBlueEstimate ? blueAdvantage : 0f)
-                       + (hasRedEstimate ? -redAdvantage : 0f)) / estimateCount
+                var combinedBlueBalance = estimateCount > 0
+                    ? ((hasBlueEstimate ? blueBalance : 0f)
+                       + (hasRedEstimate ? -redBalance : 0f)) / estimateCount
                     : 0f;
-                var combinedPresence = estimateCount > 0
-                    ? ((hasBlueEstimate ? bluePresence : 0f)
-                       + (hasRedEstimate ? redPresence : 0f)) / estimateCount
+                var combinedInterference = estimateCount > 0
+                    ? ((hasBlueEstimate ? blueInterference : 0f)
+                       + (hasRedEstimate ? redInterference : 0f)) / estimateCount
                     : 0f;
                 airControlTilemap.SetColor(
                     GetCell(campaignTile.Coordinates),
-                    GetAirControlOverlayColor(
-                        combinedBlueAdvantage,
-                        combinedPresence));
+                    GetAirInterferenceOverlayColor(
+                        combinedBlueBalance,
+                        combinedInterference));
             }
 
             // SetColor is immediate. RefreshAllTiles would reapply the shared tile's
             // opaque white default and erase these per-cell translucent tints.
         }
 
-        private static bool TryGetAirControlPicture(
+        private static bool TryGetAirInterferencePicture(
             AllianceAirTaskingCommander commander,
             Vector3Int tileId,
-            out float airControlAdvantage,
-            out float combatPresence)
+            out float interferenceBalance,
+            out float interferenceStrength)
         {
-            airControlAdvantage = 0f;
-            combatPresence = 0f;
+            interferenceBalance = 0f;
+            interferenceStrength = 0f;
             if (commander == null
                 || !commander.TryGetAirControlAssessment(tileId, out var assessment))
                 return false;
 
-            airControlAdvantage = Mathf.Clamp(
-                assessment.AirControlAdvantage,
-                -1f,
-                1f);
-            combatPresence = Mathf.Max(
-                assessment.FriendlyCombatPresence,
-                assessment.HostileCombatPresence);
+            var friendlyInterference = assessment.FriendlyAirInterference;
+            var hostileInterference = assessment.HostileAirInterference;
+            var totalInterference = friendlyInterference + hostileInterference;
+            interferenceBalance = totalInterference > 0f
+                ? (friendlyInterference - hostileInterference) / totalInterference
+                : 0f;
+            interferenceStrength = Mathf.Max(
+                friendlyInterference,
+                hostileInterference);
             return true;
         }
 
-        private static Color GetAirControlOverlayColor(
-            float blueAdvantage,
-            float combatPresence)
+        private static Color GetAirInterferenceOverlayColor(
+            float blueBalance,
+            float interferenceStrength)
         {
-            var advantage = Mathf.Clamp(blueAdvantage, -1f, 1f);
-            var color = advantage >= 0f
-                ? Color.Lerp(ContestedAirControlColor, BlueAirControlColor, advantage)
-                : Color.Lerp(ContestedAirControlColor, RedAirControlColor, -advantage);
-            color.a = Mathf.Clamp01(combatPresence) * MaximumAirControlOverlayAlpha;
+            var balance = Mathf.Clamp(blueBalance, -1f, 1f);
+            var color = balance >= 0f
+                ? Color.Lerp(ContestedAirControlColor, BlueAirControlColor, balance)
+                : Color.Lerp(ContestedAirControlColor, RedAirControlColor, -balance);
+            color.a = Mathf.Clamp01(interferenceStrength) * MaximumAirControlOverlayAlpha;
             return color;
         }
 
@@ -1901,7 +1903,7 @@ namespace Engine.Monobehaviours.Managers
                     .Where(squadron => gameManager.GetCountryAlliance(squadron.CountryId) == alliance)
                     .ToList();
                 var allAircraft = squadrons.SelectMany(squadron => squadron.Aircraft).ToList();
-                var coverage = CalculateAirControlCoverage(alliance);
+                var coverage = CalculateAirInterferenceCoverage(alliance);
                 var commander = gameManager.GetAllianceAirTaskingCommander(alliance);
                 var openRequests = commander?.MissionRequests.Count(request => !request.IsTerminal) ?? 0;
                 var unmetRequests = commander?.MissionRequests.Count(request =>
@@ -1919,14 +1921,14 @@ namespace Engine.Monobehaviours.Managers
                     $"Aircraft {allAircraft.Count}  •  Ready {squadrons.Sum(item => item.ReadyAircraft)}  •  Assigned {squadrons.Sum(item => item.AssignedAircraft)}  •  Damaged {squadrons.Sum(item => item.DamagedAircraft)}  •  Lost {squadrons.Sum(item => item.LostAircraft)}");
                 AddCompactLine(
                     panel,
-                    $"Own airspace: favorable {coverage.FriendlyCovered}/{coverage.TotalLand}  •  hostile {coverage.HostileCovered}/{coverage.TotalLand}  •  contested {coverage.Contested}  •  quiet {coverage.Quiet}");
+                    $"Own airspace interference: friendly only {coverage.FriendlyOnly}/{coverage.TotalLand}  •  hostile only {coverage.HostileOnly}/{coverage.TotalLand}  •  both {coverage.Both}  •  clear {coverage.Clear}");
                 AddCompactLine(panel, $"Requests {openRequests}  •  unmet/deferred {unmetRequests}");
                 airOverviewGrid.Add(panel);
             }
         }
 
-        private (int TotalLand, int FriendlyCovered, int HostileCovered, int Contested, int Quiet)
-            CalculateAirControlCoverage(Alliance territoryOwner)
+        private (int TotalLand, int FriendlyOnly, int HostileOnly, int Both, int Clear)
+            CalculateAirInterferenceCoverage(Alliance territoryOwner)
         {
             var landTiles = tileDataById.Values
                 .OfType<LandTileData>()
@@ -1948,15 +1950,15 @@ namespace Engine.Monobehaviours.Managers
                     continue;
                 }
 
-                const float meaningfulPresence = 0.25f;
-                var friendlyPresence = assessment.FriendlyCombatPresence;
-                var hostilePresence = assessment.HostileCombatPresence;
-                if (friendlyPresence >= meaningfulPresence
-                    && hostilePresence >= meaningfulPresence)
+                const float meaningfulInterference = 0.25f;
+                var friendlyInterference = assessment.FriendlyAirInterference;
+                var hostileInterference = assessment.HostileAirInterference;
+                if (friendlyInterference >= meaningfulInterference
+                    && hostileInterference >= meaningfulInterference)
                     contested++;
-                else if (friendlyPresence >= meaningfulPresence)
+                else if (friendlyInterference >= meaningfulInterference)
                     friendly++;
-                else if (hostilePresence >= meaningfulPresence)
+                else if (hostileInterference >= meaningfulInterference)
                     hostile++;
                 else
                     quiet++;
@@ -2054,11 +2056,11 @@ namespace Engine.Monobehaviours.Managers
                 var squadrons = gameManager.squadronSystem.Squadrons
                     .Where(squadron => gameManager.GetCountryAlliance(squadron.CountryId) == alliance)
                     .ToList();
-                var coverage = CalculateAirControlCoverage(alliance);
+                var coverage = CalculateAirInterferenceCoverage(alliance);
                 lines.Add($"{alliance}");
                 lines.Add(
                     $"Aircraft {squadrons.Sum(item => item.Aircraft.Count)}  •  Ready {squadrons.Sum(item => item.ReadyAircraft)}  •  Assigned {squadrons.Sum(item => item.AssignedAircraft)}  •  Damaged {squadrons.Sum(item => item.DamagedAircraft)}  •  Lost {squadrons.Sum(item => item.LostAircraft)}");
-                lines.Add($"Air control on own land: favorable {coverage.FriendlyCovered}/{coverage.TotalLand}, hostile {coverage.HostileCovered}/{coverage.TotalLand}, contested {coverage.Contested}, quiet {coverage.Quiet}");
+                lines.Add($"Air interference on own land: friendly only {coverage.FriendlyOnly}/{coverage.TotalLand}, hostile only {coverage.HostileOnly}/{coverage.TotalLand}, both {coverage.Both}, clear {coverage.Clear}");
             }
             return lines;
         }

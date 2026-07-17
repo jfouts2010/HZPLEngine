@@ -23,7 +23,7 @@ namespace Engine.Service
         private const float AwacsAltitudeFeet = 35000f;
         private const float TankerAltitudeFeet = 25000f;
         private const float DefaultStationTrackHalfLengthTiles = 0.5f;
-        private const float MaximumSupportStationHostilePresence = 0.10f;
+        private const float MaximumSupportStationHostileInterference = 0.10f;
         private const float MeaningfulOcaPresence = 0.10f;
         private const float MeaningfulBarcapPressure = 0.10f;
         private const float BarcapFuelPlanningMarginSeconds = 60f;
@@ -404,28 +404,25 @@ namespace Engine.Service
             reason = string.Empty;
             var candidates = commander.AirControlAssessments
                 .Where(assessment => request.MissionArea.Contains(assessment.TileId))
-                .Select(assessment => new
-                {
-                    Assessment = assessment,
-                    Safety = 1f - assessment.HostileCombatPresence
-                             + assessment.FriendlyCombatPresence * 0.25f
-                })
-                .OrderByDescending(candidate => candidate.Safety)
-                .ThenBy(candidate => AirMissionArea.HexDistance(
+                .OrderBy(assessment => assessment.HostileAirInterference)
+                .ThenBy(assessment => AirMissionArea.HexDistance(
                     request.MissionArea.CenterTileId,
-                    candidate.Assessment.TileId))
-                .ThenBy(candidate => candidate.Assessment.TileId.x)
-                .ThenBy(candidate => candidate.Assessment.TileId.y)
-                .ThenBy(candidate => candidate.Assessment.TileId.z)
+                    assessment.TileId))
+                .ThenBy(assessment => assessment.TileId.x)
+                .ThenBy(assessment => assessment.TileId.y)
+                .ThenBy(assessment => assessment.TileId.z)
                 .ToList();
             if (candidates.Count == 0)
-                return true;
-
-            var selected = candidates[0].Assessment;
-            if (selected.HostileCombatPresence
-                >= MaximumSupportStationHostilePresence)
             {
-                reason = "No support station in the requested area is outside meaningful hostile combat presence.";
+                reason = "No assessed support station exists in the requested area.";
+                return false;
+            }
+
+            var selected = candidates[0];
+            if (selected.HostileAirInterference
+                >= MaximumSupportStationHostileInterference)
+            {
+                reason = "No support station in the requested area is outside meaningful hostile air interference.";
                 return false;
             }
 
@@ -471,21 +468,9 @@ namespace Engine.Service
                 missionCenterOverride ?? request.MissionArea.CenterTileId,
                 gameManager.SimulationSettings.TileDistanceKM,
                 missionAltitude);
-            var allowsBalancedBarcapAirspace = request.PriorityComponents.TryGetValue(
-                "barcapAirfieldBootstrap",
-                out var airfieldBootstrap)
-                && airfieldBootstrap > 0.5f;
-            if (request.RequestType == AirMissionRequestType.BarrierCombatAirPatrol
-                && (!commander.TryGetAirControlAssessment(
-                        request.MissionArea.CenterTileId,
-                        out var stationAssessment)
-                    || (allowsBalancedBarcapAirspace
-                        ? stationAssessment.AirControlAdvantage < 0f
-                        : stationAssessment.AirControlAdvantage <= 0f)))
-            {
-                reason = "The planned BARCAP station is no longer in friendly-favored airspace.";
-                return false;
-            }
+            // TODO: Recalculate BARCAP station eligibility when BARCAP planning
+            // is reworked. The legacy relative air-control validation that
+            // rejected non-friendly-favored stations is intentionally removed.
             var tileDistanceFeet = gameManager.SimulationSettings.TileDistanceKM
                                    * AirspaceGeometry.FeetPerKilometer;
             var combat = request.RequestType == AirMissionRequestType.BarrierCombatAirPatrol
@@ -511,8 +496,7 @@ namespace Engine.Service
                     request,
                     missionOrigin,
                     missionCenter,
-                    tileDistanceFeet,
-                    allowsBalancedBarcapAirspace);
+                    tileDistanceFeet);
                 plan.RouteGeometry = routeGeometryPlanner.Plan(new AirRouteGeometryPlanningContext(
                     missionOrigin,
                     plan.MissionEntryPosition,
@@ -633,8 +617,7 @@ namespace Engine.Service
             AirMissionRequest request,
             Vector3 missionOrigin,
             Vector3 missionCenter,
-            float tileDistanceFeet,
-            bool allowsBalancedBarcapAirspace)
+            float tileDistanceFeet)
         {
             if (request.RequestType == AirMissionRequestType.OffensiveCounterAirSweep)
             {
@@ -693,12 +676,8 @@ namespace Engine.Service
                     0f,
                     threatDirection.x);
                 var barcapTrackOffset = BuildDefensiveBarcapTrackOffset(
-                    commander,
-                    stationCenter,
                     trackDirection,
-                    tileDistanceFeet,
-                    tileDistanceKm,
-                    allowsBalancedBarcapAirspace);
+                    tileDistanceFeet);
                 plan.MissionEntryPosition = stationCenter - barcapTrackOffset;
                 plan.MissionPushPosition = stationCenter + barcapTrackOffset;
                 plan.MissionExitPosition = stationCenter + barcapTrackOffset;
@@ -744,52 +723,15 @@ namespace Engine.Service
         }
 
         private static Vector3 BuildDefensiveBarcapTrackOffset(
-            AllianceAirTaskingCommander commander,
-            Vector3 stationCenter,
             Vector3 trackDirection,
-            float tileDistanceFeet,
-            float tileDistanceKm,
-            bool allowsBalancedAirspace)
+            float tileDistanceFeet)
         {
-            var halfLengthTiles = DefaultStationTrackHalfLengthTiles;
-            while (halfLengthTiles >= 0.125f)
-            {
-                var offset = trackDirection
-                             * tileDistanceFeet
-                             * halfLengthTiles;
-                if (IsFriendlyFavoredPosition(
-                        commander,
-                        stationCenter - offset,
-                        tileDistanceKm,
-                        allowsBalancedAirspace)
-                    && IsFriendlyFavoredPosition(
-                        commander,
-                        stationCenter + offset,
-                        tileDistanceKm,
-                        allowsBalancedAirspace))
-                    return offset;
-
-                halfLengthTiles *= 0.5f;
-            }
-
-            return Vector3.zero;
-        }
-
-        private static bool IsFriendlyFavoredPosition(
-            AllianceAirTaskingCommander commander,
-            Vector3 positionFeet,
-            float tileDistanceKm,
-            bool allowsBalancedAirspace)
-        {
-            var tileId = AirspaceGeometry.TileCoordinateFromPositionFeet(
-                positionFeet,
-                tileDistanceKm);
-            if (!commander.TryGetAirControlAssessment(tileId, out var assessment))
-                return false;
-
-            return allowsBalancedAirspace
-                ? assessment.AirControlAdvantage >= 0f
-                : assessment.AirControlAdvantage > 0f;
+            // TODO: Recalculate BARCAP track bounds when BARCAP planning is
+            // reworked. The legacy air-control checks that shortened the track
+            // are intentionally removed.
+            return trackDirection
+                   * tileDistanceFeet
+                   * DefaultStationTrackHalfLengthTiles;
         }
 
         private static Vector3Int SelectOcaEntryTile(
@@ -807,8 +749,7 @@ namespace Engine.Service
                     ? assessment
                     : null)
                 .Where(assessment => assessment != null)
-                .OrderBy(assessment => assessment.HostileCombatPresence)
-                .ThenByDescending(assessment => assessment.AirControlAdvantage)
+                .OrderBy(assessment => assessment.HostileAirInterference)
                 .ThenBy(assessment => assessment.TileId.x)
                 .ThenBy(assessment => assessment.TileId.y)
                 .ThenBy(assessment => assessment.TileId.z)

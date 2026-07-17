@@ -46,7 +46,7 @@ translation layers without rewriting the campaign simulation itself.
   effects
 - Integrated air-defense networks with radar tracking, engagement assignment,
   remote cueing, and SAM execution
-- Tile-based air-control assessment
+- Tile-based air-interference assessment
 - Operational ground tasking, movement, combat, retreat, and territory capture
 - Supply networks, hubs, capitals, and infrastructure-aware strategic value
 - An interactive campaign workbench for inspecting tiles, units, flights,
@@ -95,7 +95,7 @@ No third-party flight simulator is required for the current Standalone Module.
 | Select playback speed | **5 SEC** or **5 MIN** |
 | Advance while paused | **Next +5s** or **Next +5m**, depending on the selected increment |
 | Inspect the campaign | Use the **Tile**, **Ground**, **Air**, **Last Turn**, and **Diagnostics** tabs |
-| Toggle map information | Use the overlay palette for units, combat, movement, routes, SAM coverage, ordnance, railways, and airspace control |
+| Toggle map information | Use the overlay palette for units, combat, movement, routes, SAM coverage, ordnance, railways, and air interference |
 | Pan the map | <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>, arrow keys, middle-mouse drag, or right-mouse drag |
 | Zoom the map | Mouse wheel while the pointer is over the map |
 | Restore the interface | **Reset Layout** |
