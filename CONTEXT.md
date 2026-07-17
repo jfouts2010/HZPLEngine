@@ -776,9 +776,11 @@ _Avoid_: implementing separate Bluefor and Redfor air-planning algorithms.
 
 **Air-planning intelligence** is the alliance-scoped view of friendly readiness, enemy threats, and potential targets available to an alliance AI when it creates and evaluates mission requests.
 
-In v1, air-planning intelligence provides exact friendly squadron readiness and airfield state. Hostile airborne strength and activity come from the alliance's remembered air-control assessment, which is populated only by current IADS tracks. Grounded hostile squadrons and hostile airfield inventories are not exposed to air planning; future strategic intelligence and fog-of-war rules may provide those products without changing the air planner's mission-request, package, and flight concepts.
+In v1, air-planning intelligence provides exact friendly squadron readiness and airfield state. It also provides perfect current observations of hostile airports through deliberately limited, airport-level reports: the airport's broad damage condition and aircraft counts grouped by observed aircraft type. A report distinguishes aircraft observed on the ground from aircraft that appear available, but it does not expose hostile squadron identity, individual aircraft status, assignment, mission, package, route, or loadout.
 
-_Avoid_: reading hostile squadron readiness or airborne flight truth directly when generating or scoring alliance air plans.
+Hostile airborne strength and activity remain separate from airport intelligence. They come from the alliance's remembered air-control assessment, which is populated only by current IADS tracks; airborne aircraft are excluded from hostile airport reports.
+
+_Avoid_: allowing air-planning consumers to read hostile squadron or aircraft truth directly instead of using the constrained enemy-airport reports and remembered air-control assessment.
 
 ### Alliance air plan
 

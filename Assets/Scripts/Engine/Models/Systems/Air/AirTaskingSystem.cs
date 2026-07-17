@@ -14,7 +14,7 @@ namespace Engine.Models
         public const int MaximumRequestEvaluationsPerAlliancePerTick = 8;
         public const int MaximumPackageCreationsPerAlliancePerTick = 4;
 
-        private readonly IAirPlanningIntelligence planningIntelligence;
+        private readonly AirPlanningIntelligence planningIntelligence;
         private readonly AirMissionPriorityService priorityService;
         private readonly AirControlAssessmentService airControlAssessmentService;
         private readonly AirMissionRequestGenerator requestGenerator;
@@ -26,12 +26,10 @@ namespace Engine.Models
 
         public AirTaskingSystem(
             GameManager gameManager,
-            ModuleDefinition module,
-            IAirPlanningIntelligence planningIntelligence = null)
+            ModuleDefinition module)
         {
             this.gameManager = gameManager;
-            this.planningIntelligence = planningIntelligence
-                                        ?? new FriendlyAirPlanningIntelligence(gameManager);
+            planningIntelligence = new AirPlanningIntelligence(gameManager);
             var projectedEffects = new ProjectedAirEffectService();
             priorityService = new AirMissionPriorityService(module);
             airControlAssessmentService = new AirControlAssessmentService(
@@ -139,7 +137,12 @@ namespace Engine.Models
         private void RebuildGlobalPlan(AllianceAirTaskingCommander commander)
         {
             commander.BeginPlanningCycle(gameManager.CurrentTime);
-            var snapshot = planningIntelligence.CreateSnapshot(commander.Alliance);
+            var airborneAircraftIds = GetAirborneFlights()
+                .SelectMany(flight => flight.AircraftIds)
+                .ToHashSet();
+            var snapshot = planningIntelligence.CreateSnapshot(
+                commander.Alliance,
+                airborneAircraftIds);
             var cadenceHours = gameManager.SimulationSettings.OperationalCadenceHours;
             var generatedRequests = requestGenerator.Generate(
                 commander,

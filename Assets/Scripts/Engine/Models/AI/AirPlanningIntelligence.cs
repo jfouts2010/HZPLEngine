@@ -7,9 +7,11 @@ using UnityEngine;
 
 namespace Engine.Models
 {
-    public interface IAirPlanningIntelligence
+    public enum ObservedAirportCondition
     {
-        AirPlanningSnapshot CreateSnapshot(Alliance alliance);
+        Intact = 0,
+        Damaged = 1,
+        NonFunctional = 2
     }
 
     public sealed class AirPlanningSnapshot
@@ -20,6 +22,7 @@ namespace Engine.Models
         public IReadOnlyList<AirPlanningSquadronSnapshot> FriendlySquadrons { get; }
         public IReadOnlyList<Vector3Int> FriendlyAirportTiles { get; }
         public IReadOnlyList<Vector3Int> FriendlyAirfieldTiles { get; }
+        public IReadOnlyList<ObservedEnemyAirportSnapshot> EnemyAirports { get; }
 
         public AirPlanningSnapshot(
             Alliance alliance,
@@ -27,7 +30,8 @@ namespace Engine.Models
             int tileDistanceKm,
             IReadOnlyList<AirPlanningSquadronSnapshot> friendlySquadrons,
             IReadOnlyList<Vector3Int> friendlyAirportTiles,
-            IReadOnlyList<Vector3Int> friendlyAirfieldTiles)
+            IReadOnlyList<Vector3Int> friendlyAirfieldTiles,
+            IReadOnlyList<ObservedEnemyAirportSnapshot> enemyAirports)
         {
             Alliance = alliance;
             CurrentTime = currentTime;
@@ -35,6 +39,8 @@ namespace Engine.Models
             FriendlySquadrons = friendlySquadrons;
             FriendlyAirportTiles = friendlyAirportTiles;
             FriendlyAirfieldTiles = friendlyAirfieldTiles;
+            EnemyAirports = enemyAirports
+                            ?? Array.Empty<ObservedEnemyAirportSnapshot>();
         }
     }
 
@@ -67,16 +73,55 @@ namespace Engine.Models
         }
     }
 
-    public sealed class FriendlyAirPlanningIntelligence : IAirPlanningIntelligence
+    public sealed class ObservedEnemyAirportSnapshot
+    {
+        public Guid AirportBuildingId { get; }
+        public Vector3Int AirportTileId { get; }
+        public ObservedAirportCondition Condition { get; }
+        public IReadOnlyList<ObservedAircraftGroup> AircraftGroups { get; }
+
+        public ObservedEnemyAirportSnapshot(
+            Guid airportBuildingId,
+            Vector3Int airportTileId,
+            ObservedAirportCondition condition,
+            IReadOnlyList<ObservedAircraftGroup> aircraftGroups)
+        {
+            AirportBuildingId = airportBuildingId;
+            AirportTileId = airportTileId;
+            Condition = condition;
+            AircraftGroups = aircraftGroups ?? Array.Empty<ObservedAircraftGroup>();
+        }
+    }
+
+    public sealed class ObservedAircraftGroup
+    {
+        public Guid AircraftTypeDefinitionId { get; }
+        public int AircraftOnGroundCount { get; }
+        public int ApparentlyAvailableCount { get; }
+
+        public ObservedAircraftGroup(
+            Guid aircraftTypeDefinitionId,
+            int aircraftOnGroundCount,
+            int apparentlyAvailableCount)
+        {
+            AircraftTypeDefinitionId = aircraftTypeDefinitionId;
+            AircraftOnGroundCount = Math.Max(0, aircraftOnGroundCount);
+            ApparentlyAvailableCount = Math.Max(0, apparentlyAvailableCount);
+        }
+    }
+
+    public sealed class AirPlanningIntelligence
     {
         private readonly GameManager gameManager;
 
-        public FriendlyAirPlanningIntelligence(GameManager gameManager)
+        public AirPlanningIntelligence(GameManager gameManager)
         {
             this.gameManager = gameManager;
         }
 
-        public AirPlanningSnapshot CreateSnapshot(Alliance alliance)
+        public AirPlanningSnapshot CreateSnapshot(
+            Alliance alliance,
+            HashSet<Guid> airborneAircraftIds)
         {
             var friendlySquadrons = new List<AirPlanningSquadronSnapshot>();
 
@@ -112,7 +157,8 @@ namespace Engine.Models
                 gameManager.SimulationSettings.TileDistanceKM,
                 friendlySquadrons,
                 GetAirportTiles(alliance),
-                GetFriendlyAirfieldTiles(alliance));
+                GetFriendlyAirfieldTiles(alliance),
+                GetEnemyAirports(alliance, airborneAircraftIds));
         }
 
         private IReadOnlyList<Vector3Int> GetFriendlyAirfieldTiles(
@@ -157,6 +203,86 @@ namespace Engine.Models
                 .ThenBy(tile => tile.y)
                 .ThenBy(tile => tile.z)
                 .ToList();
+        }
+
+        private IReadOnlyList<ObservedEnemyAirportSnapshot> GetEnemyAirports(
+            Alliance observingAlliance,
+            HashSet<Guid> airborneAircraftIds)
+        {
+            var controllersByTileId = gameManager.Tiles
+                .OfType<LandTileData>()
+                .GroupBy(tile => tile.TileId)
+                .ToDictionary(group => group.Key, group => group.First().Controller);
+
+            return gameManager.buildingSystem
+                .GetBuildings<Airport>()
+                .Where(airport =>
+                    controllersByTileId.TryGetValue(
+                        airport.TileId,
+                        out var controller)
+                    && IsHostile(observingAlliance, controller))
+                .Select(airport => new ObservedEnemyAirportSnapshot(
+                    airport.BuildingId,
+                    airport.TileId,
+                    GetObservedCondition(airport),
+                    GetObservedAircraft(
+                        observingAlliance,
+                        airport.BuildingId,
+                        airborneAircraftIds)))
+                .OrderBy(report => report.AirportTileId.x)
+                .ThenBy(report => report.AirportTileId.y)
+                .ThenBy(report => report.AirportTileId.z)
+                .ToList();
+        }
+
+        private IReadOnlyList<ObservedAircraftGroup> GetObservedAircraft(
+            Alliance observingAlliance,
+            Guid airportBuildingId,
+            HashSet<Guid> airborneAircraftIds)
+        {
+            return gameManager.squadronSystem.Squadrons
+                .Where(squadron =>
+                    squadron.AirportBuildingId == airportBuildingId
+                    && IsHostile(
+                        observingAlliance,
+                        gameManager.GetCountryAlliance(squadron.CountryId)))
+                .SelectMany(squadron => squadron.Aircraft)
+                .Where(aircraft =>
+                    aircraft.Status != CampaignAircraftStatus.Lost
+                    && !airborneAircraftIds.Contains(aircraft.AircraftId))
+                .GroupBy(aircraft => aircraft.AircraftTypeDefinitionId)
+                .Select(group => new ObservedAircraftGroup(
+                    group.Key,
+                    group.Count(),
+                    group.Count(IsApparentlyAvailable)))
+                .OrderBy(group => group.AircraftTypeDefinitionId)
+                .ToList();
+        }
+
+        private static bool IsApparentlyAvailable(CampaignAircraft aircraft)
+        {
+            return aircraft.Status == CampaignAircraftStatus.Ready
+                   || aircraft.Status == CampaignAircraftStatus.Assigned;
+        }
+
+        private static ObservedAirportCondition GetObservedCondition(
+            Airport airport)
+        {
+            if (airport.FunctionalLevel <= 0)
+                return ObservedAirportCondition.NonFunctional;
+
+            return airport.Level.Damage > 0
+                ? ObservedAirportCondition.Damaged
+                : ObservedAirportCondition.Intact;
+        }
+
+        private static bool IsHostile(
+            Alliance observingAlliance,
+            Alliance subjectAlliance)
+        {
+            return observingAlliance != Alliance.Neutral
+                   && subjectAlliance != Alliance.Neutral
+                   && observingAlliance != subjectAlliance;
         }
 
     }
