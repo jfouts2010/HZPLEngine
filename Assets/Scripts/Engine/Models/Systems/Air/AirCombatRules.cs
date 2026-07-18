@@ -50,7 +50,7 @@ namespace Engine.Models
     internal static class AirCombatRules
     {
         private const float PreferredRangeFraction = 0.78f;
-        private const float CloseCombatBoundaryKm = 8f;
+        private const float WvrDecisionRangeKm = 8f;
         private const float TacticalAimDistanceKm = 80f;
         private const float CrankOffsetDegrees = 55f;
         private const float TerminalDefenseSeconds = 45f;
@@ -255,7 +255,11 @@ namespace Engine.Models
                 return disengage;
             }
 
-            var weapon = SelectWeapon(source, target, ordnanceTypes);
+            var weapon = SelectWeapon(
+                source,
+                target,
+                ordnanceTypes,
+                doctrine);
             if (weapon == null)
             {
                 return AimAtTargetCommand(
@@ -325,7 +329,15 @@ namespace Engine.Models
             }
 
             var distanceKm = DistanceKm(flight.PositionFeet, target.Flight.PositionFeet);
-            if (distanceKm <= CloseCombatBoundaryKm)
+            var isInsideWvrDecisionRange = distanceKm <= WvrDecisionRangeKm;
+            var wvrReason = string.Empty;
+            if (isInsideWvrDecisionRange
+                && !ShouldContinueIntoWvr(
+                    source,
+                    target,
+                    frame,
+                    ordnanceTypes,
+                    out wvrReason))
             {
                 return AimAtTargetCommand(
                     source,
@@ -336,7 +348,7 @@ namespace Engine.Models
                     frame.Time.AddSeconds(45),
                     target.Flight.FlightId,
                     Guid.Empty,
-                    "No valid close-range shot; extending through the deferred WVR boundary.",
+                    wvrReason,
                     awayFromTarget: true);
             }
 
@@ -359,9 +371,11 @@ namespace Engine.Models
                 AirCombatManeuverSide.None,
                 interceptPoint,
                 Math.Max(1f, source.AircraftType.CombatSpeedKnots),
-                distanceKm > maximumRange
-                    ? "Closing toward a predicted standoff intercept."
-                    : "Pressing to improve launch geometry.");
+                isInsideWvrDecisionRange
+                    ? wvrReason
+                    : distanceKm > maximumRange
+                        ? "Closing toward a predicted standoff intercept."
+                        : "Pressing to improve launch geometry.");
         }
 
         public static bool EvaluateLaunch(
@@ -1289,38 +1303,50 @@ namespace Engine.Models
         private static OrdnanceTypeDefinition SelectWeapon(
             AirCombatFlightView source,
             AirCombatFlightView target,
-            IReadOnlyDictionary<Guid, OrdnanceTypeDefinition> ordnanceTypes)
+            IReadOnlyDictionary<Guid, OrdnanceTypeDefinition> ordnanceTypes,
+            AllianceAirDoctrine doctrine)
         {
             var distanceKm = DistanceKm(source.Flight.PositionFeet, target.Flight.PositionFeet);
-            var available = source.LiveAircraft
-                .SelectMany(aircraft => aircraft.Loadout)
-                .Where(item => item.Count > 0
-                               && ordnanceTypes.TryGetValue(
-                                   item.OrdnanceTypeDefinitionId,
-                                   out var definition)
-                               && IsAirToAir(definition))
-                .Select(item => ordnanceTypes[item.OrdnanceTypeDefinitionId])
-                .Distinct()
-                .ToList();
-            return available
-                .Select(definition => new
+            return GetAvailableAirToAirWeapons(source, ordnanceTypes)
+                .Select(definition =>
                 {
-                    Definition = definition,
-                    CanLaunch = EvaluateLaunch(
+                    var canLaunch = EvaluateLaunch(
                         source,
                         target,
                         definition,
-                        out var quality),
-                    LaunchQuality = quality
+                        out var quality);
+                    var reserve = definition.EmploymentCategory
+                                  == OrdnanceEmploymentCategory.Gun
+                        ? 0
+                        : doctrine.MinimumAirToAirWeaponReserve;
+                    var hasExpendableRounds = CountRounds(
+                                                  source,
+                                                  definition.OrdnanceTypeDefinitionId)
+                                              > reserve;
+                    return new
+                    {
+                        Definition = definition,
+                        CanEmploy = canLaunch
+                                    && quality >= doctrine.MinimumLaunchQuality
+                                    && hasExpendableRounds,
+                        HasExpendableRounds = hasExpendableRounds,
+                        LaunchQuality = quality
+                    };
                 })
-                .OrderByDescending(candidate => candidate.CanLaunch)
+                .OrderByDescending(candidate => candidate.CanEmploy)
                 .ThenBy(candidate =>
-                    candidate.Definition.EmploymentCategory
-                    == OrdnanceEmploymentCategory.Gun ? 1 : 0)
-                .ThenByDescending(candidate => candidate.LaunchQuality)
-                .ThenBy(candidate => distanceKm <= 18f
-                    ? candidate.Definition.EmploymentCategory == OrdnanceEmploymentCategory.AirToAirInfrared ? 0 : 1
-                    : candidate.Definition.EmploymentCategory == OrdnanceEmploymentCategory.AirToAirRadar ? 0 : 1)
+                    candidate.CanEmploy
+                    && candidate.Definition.EmploymentCategory
+                    == OrdnanceEmploymentCategory.Gun
+                        ? 1
+                        : 0)
+                .ThenByDescending(candidate => candidate.CanEmploy
+                    ? candidate.LaunchQuality
+                    : 0f)
+                .ThenByDescending(candidate => candidate.HasExpendableRounds)
+                .ThenBy(candidate => GetWeaponSetupPriority(
+                    candidate.Definition,
+                    distanceKm))
                 .ThenByDescending(candidate => EffectiveMaximumRangeKm(
                     candidate.Definition,
                     source.Flight))
@@ -1328,6 +1354,129 @@ namespace Engine.Models
                 .ThenBy(candidate => candidate.Definition.OrdnanceTypeDefinitionId)
                 .Select(candidate => candidate.Definition)
                 .FirstOrDefault();
+        }
+
+        private static bool ShouldContinueIntoWvr(
+            AirCombatFlightView source,
+            AirCombatFlightView target,
+            AirCombatFrame frame,
+            IReadOnlyDictionary<Guid, OrdnanceTypeDefinition> ordnanceTypes,
+            out string reason)
+        {
+            if (frame.PendingEffects.Any(effect =>
+                    effect.SourceKind
+                    == OrdnanceEmploymentSourceKind.AircraftFlight
+                    && effect.SourceFlightId == source.Flight.FlightId
+                    && effect.TargetFlightId == target.Flight.FlightId
+                    && effect.ResolveAt > frame.Time
+                    && ordnanceTypes.TryGetValue(
+                        effect.OrdnanceTypeDefinitionId,
+                        out var definition)
+                    && IsAirToAir(definition)))
+            {
+                reason =
+                    "An air-to-air effect is already pending against the target; "
+                    + "extending rather than accepting an unnecessary merge.";
+                return false;
+            }
+
+            var availableWeapons = GetAvailableAirToAirWeapons(
+                source,
+                ordnanceTypes);
+            if (!availableWeapons.Any(IsWvrWeapon))
+            {
+                reason =
+                    "No WVR-capable weapon remains; extending from the close-range threat.";
+                return false;
+            }
+
+            if (source.Flight.MissionType
+                == AirMissionRequestType.BarrierCombatAirPatrol)
+            {
+                reason =
+                    "Continuing into WVR to stop an authorized threat to the BARCAP barrier.";
+                return true;
+            }
+
+            if (source.Flight.MissionType
+                != AirMissionRequestType.OffensiveCounterAirSweep)
+            {
+                reason =
+                    "The assigned mission does not authorize a discretionary WVR merge; "
+                    + "extending from the threat.";
+                return false;
+            }
+
+            if (availableWeapons.Any(definition =>
+                    definition.EmploymentCategory
+                    == OrdnanceEmploymentCategory.AirToAirRadar))
+            {
+                reason =
+                    "A standoff air-to-air weapon remains; extending rather than "
+                    + "accepting a discretionary merge.";
+                return false;
+            }
+
+            reason =
+                "No standoff air-to-air weapon remains; continuing into WVR "
+                + "with available close-range weapons.";
+            return true;
+        }
+
+        private static List<OrdnanceTypeDefinition> GetAvailableAirToAirWeapons(
+            AirCombatFlightView source,
+            IReadOnlyDictionary<Guid, OrdnanceTypeDefinition> ordnanceTypes)
+        {
+            return source.LiveAircraft
+                .SelectMany(aircraft => aircraft.Loadout)
+                .Where(item => item.Count > 0
+                               && ordnanceTypes.TryGetValue(
+                                   item.OrdnanceTypeDefinitionId,
+                                   out var definition)
+                               && IsAirToAir(definition))
+                .Select(item => ordnanceTypes[item.OrdnanceTypeDefinitionId])
+                .GroupBy(definition => definition.OrdnanceTypeDefinitionId)
+                .Select(group => group.First())
+                .ToList();
+        }
+
+        private static int GetWeaponSetupPriority(
+            OrdnanceTypeDefinition definition,
+            float distanceKm)
+        {
+            if (distanceKm <= WvrDecisionRangeKm)
+            {
+                if (definition.EmploymentCategory
+                    == OrdnanceEmploymentCategory.AirToAirInfrared)
+                    return 0;
+                if (definition.EmploymentCategory
+                    == OrdnanceEmploymentCategory.Gun)
+                    return 1;
+                return 2;
+            }
+
+            if (distanceKm <= 18f)
+            {
+                return definition.EmploymentCategory
+                       == OrdnanceEmploymentCategory.AirToAirInfrared
+                    ? 0
+                    : 1;
+            }
+
+            return definition.EmploymentCategory
+                   == OrdnanceEmploymentCategory.AirToAirRadar
+                ? 0
+                : 1;
+        }
+
+        private static bool IsWvrWeapon(OrdnanceTypeDefinition definition)
+        {
+            return definition.EmploymentCategory
+                   == OrdnanceEmploymentCategory.AirToAirInfrared
+                   || (definition.EmploymentCategory
+                       == OrdnanceEmploymentCategory.Gun
+                       && definition.GetEffectiveness(
+                           OrdnanceTargetCategory.Aircraft) > 0f);
         }
 
         private static AirCombatCommand DefensiveCommand(

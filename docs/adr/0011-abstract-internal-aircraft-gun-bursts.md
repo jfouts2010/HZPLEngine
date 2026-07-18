@@ -16,8 +16,8 @@ The air loadout planner selects external weapons within the existing weight and 
 
 One gun burst represents a firing opportunity rather than a projectile or literal ammunition count. Gun ordnance uses the existing envelope, off-boresight geometry, preparation time, effect speed, hit probability, terminal lethality, and target-effectiveness fields. It does not introduce projectile entities or a separate gun-combat resolver.
 
-Air-combat rules evaluate a valid close-range firing opportunity before enforcing the deferred WVR boundary. Flights that lack valid firing geometry still extend under the deferred WVR behavior until a later decision explicitly implements WVR commitment.
+Air-combat rules evaluate a valid close-range firing opportunity before the WVR continuation decision. When no shot is immediately valid, the continuation decision determines whether the flight presses with its close-range weapons or extends.
 
 ## Consequences
 
-Gun-only and missile-armed aircraft can carry persistent, expendable internal-gun capability without misrepresenting it as an external store. The same gun definition can support future air-to-ground employment through target effectiveness. Detailed ammunition belts, rates of fire, convergence, heating, jams, ballistic projectile motion, strafing logic, and WVR maneuver selection remain deferred.
+Gun-only and missile-armed aircraft can carry persistent, expendable internal-gun capability without misrepresenting it as an external store. The same gun definition can support future air-to-ground employment through target effectiveness. Detailed ammunition belts, rates of fire, convergence, heating, jams, ballistic projectile motion, strafing logic, and specialized WVR maneuver selection remain deferred.
