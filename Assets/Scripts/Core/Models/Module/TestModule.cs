@@ -29,6 +29,10 @@ namespace Models.Module
         public static readonly Guid Agm65OrdnanceTypeId = Guid.Parse("24d59f63-9714-4306-9ebb-f79075df0909");
         public static readonly Guid R27OrdnanceTypeId = Guid.Parse("df62234e-e894-4d4e-8d67-e4bc6fe68405");
         public static readonly Guid R73OrdnanceTypeId = Guid.Parse("fc9d6932-ef37-4fc3-b024-12fc1e2d9f1c");
+        public static readonly Guid M61GunOrdnanceTypeId =
+            Guid.Parse("c46325d2-718b-4f48-93d5-1fe7a8aab001");
+        public static readonly Guid Gsh301GunOrdnanceTypeId =
+            Guid.Parse("dc253cf1-6218-4c33-a7ad-2f5c0965b002");
         public static readonly Guid Sa2InterceptorOrdnanceTypeId =
             Guid.Parse("b8afb031-30a8-4de0-90a7-0cc958d8813f");
         public static readonly Guid OsaInterceptorOrdnanceTypeId =
@@ -107,7 +111,9 @@ namespace Models.Module
                         Agm65OrdnanceTypeId
                     },
                     canReceiveAerialRefueling: true,
-                    airInterferenceCapability: 1f),
+                    airInterferenceCapability: 1f,
+                    internalGunOrdnanceTypeDefinitionId: M61GunOrdnanceTypeId,
+                    internalGunBurstCount: 6),
                 new AircraftTypeDefinition(
                     Mig29AircraftTypeId,
                     "MiG-29 Fulcrum",
@@ -131,7 +137,9 @@ namespace Models.Module
                         R73OrdnanceTypeId
                     },
                     canReceiveAerialRefueling: true,
-                    airInterferenceCapability: 0.95f),
+                    airInterferenceCapability: 0.95f,
+                    internalGunOrdnanceTypeDefinitionId: Gsh301GunOrdnanceTypeId,
+                    internalGunBurstCount: 5),
                 new AircraftTypeDefinition(
                     E3AircraftTypeId,
                     "E-3 Sentry",
@@ -256,6 +264,32 @@ namespace Models.Module
                     countermeasureResistance: 0.55f,
                     terminalLethality: 0.75f),
                 new OrdnanceTypeDefinition(
+                    M61GunOrdnanceTypeId,
+                    "M61A1 20 mm Gun Burst",
+                    weight: 0f,
+                    effectPower: 1,
+                    effectivenessByTargetCategory:
+                    new Dictionary<OrdnanceTargetCategory, float>
+                    {
+                        { OrdnanceTargetCategory.Aircraft, 0.55f },
+                        { OrdnanceTargetCategory.Infantry, 0.7f },
+                        { OrdnanceTargetCategory.Vehicle, 0.25f },
+                        { OrdnanceTargetCategory.Building, 0.08f },
+                        { OrdnanceTargetCategory.Radar, 0.2f }
+                    },
+                    employmentCategory: OrdnanceEmploymentCategory.Gun,
+                    guidanceMode: OrdnanceGuidanceMode.None,
+                    minimumRangeKm: 0.1f,
+                    maximumRangeKm: 1.5f,
+                    maximumTargetAltitudeFeet: 80000f,
+                    preparationSeconds: 1.5f,
+                    effectSpeedKnots: 1700f,
+                    hitProbability: 0.24f,
+                    maximumLaunchOffBoresightDegrees: 6f,
+                    noEscapeRangeFraction: 1f,
+                    countermeasureResistance: 1f,
+                    terminalLethality: 0.32f),
+                new OrdnanceTypeDefinition(
                     Agm88OrdnanceTypeId,
                     "AGM-88 HARM",
                     weight: 3f,
@@ -344,6 +378,32 @@ namespace Models.Module
                     noEscapeRangeFraction: 0.68f,
                     countermeasureResistance: 0.6f,
                     terminalLethality: 0.74f),
+                new OrdnanceTypeDefinition(
+                    Gsh301GunOrdnanceTypeId,
+                    "GSh-30-1 30 mm Gun Burst",
+                    weight: 0f,
+                    effectPower: 1,
+                    effectivenessByTargetCategory:
+                    new Dictionary<OrdnanceTargetCategory, float>
+                    {
+                        { OrdnanceTargetCategory.Aircraft, 0.62f },
+                        { OrdnanceTargetCategory.Infantry, 0.65f },
+                        { OrdnanceTargetCategory.Vehicle, 0.35f },
+                        { OrdnanceTargetCategory.Building, 0.1f },
+                        { OrdnanceTargetCategory.Radar, 0.25f }
+                    },
+                    employmentCategory: OrdnanceEmploymentCategory.Gun,
+                    guidanceMode: OrdnanceGuidanceMode.None,
+                    minimumRangeKm: 0.1f,
+                    maximumRangeKm: 1.4f,
+                    maximumTargetAltitudeFeet: 80000f,
+                    preparationSeconds: 1.5f,
+                    effectSpeedKnots: 1600f,
+                    hitProbability: 0.26f,
+                    maximumLaunchOffBoresightDegrees: 6f,
+                    noEscapeRangeFraction: 1f,
+                    countermeasureResistance: 1f,
+                    terminalLethality: 0.4f),
                 new OrdnanceTypeDefinition(
                     Sa2InterceptorOrdnanceTypeId,
                     "V-750 SAM",

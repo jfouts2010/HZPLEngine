@@ -1262,7 +1262,11 @@ namespace Engine.Models
             return definition.EmploymentCategory ==
                    OrdnanceEmploymentCategory.AirToAirRadar
                    || definition.EmploymentCategory ==
-                   OrdnanceEmploymentCategory.AirToAirInfrared;
+                   OrdnanceEmploymentCategory.AirToAirInfrared
+                   || (definition.EmploymentCategory ==
+                       OrdnanceEmploymentCategory.Gun
+                       && definition.GetEffectiveness(
+                           OrdnanceTargetCategory.Aircraft) > 0f);
         }
 
         private static bool IsRadarGuided(OrdnanceGuidanceMode mode)

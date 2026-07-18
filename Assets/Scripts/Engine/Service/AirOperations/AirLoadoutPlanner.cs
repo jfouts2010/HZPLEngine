@@ -43,6 +43,8 @@ namespace Engine.Service
                         : null)
                 .Where(ordnanceType => ordnanceType != null
                                        && IsAirToAir(ordnanceType)
+                                       && ordnanceType.EmploymentCategory
+                                       != OrdnanceEmploymentCategory.Gun
                                        && ordnanceType.GetEffectiveness(
                                            OrdnanceTargetCategory.Aircraft) > 0f
                                        && ordnanceType.Weight <= aircraftType.OrdnanceCapacity)
@@ -52,23 +54,37 @@ namespace Engine.Service
                 .ThenBy(ordnanceType => ordnanceType.OrdnanceTypeDefinitionId)
                 .ToList();
 
-            if (candidates.Count == 0)
+            var internalGun = GetInternalGun(
+                aircraftType,
+                allowed);
+            if (candidates.Count == 0 && internalGun == null)
             {
                 reason = "No allowed compatible air-to-air ordnance is available.";
                 return false;
             }
 
-            var best = FindBestAirCombatLoadout(candidates, aircraftType.OrdnanceCapacity);
-            if (best == null || best.TotalShots < MinimumAirCombatShots)
+            var best = candidates.Count == 0
+                ? null
+                : FindBestAirCombatLoadout(candidates, aircraftType.OrdnanceCapacity);
+            loadout = best?.CountByOrdnance
+                .OrderBy(entry => entry.Key)
+                .Select(entry => new AircraftLoadoutItem(entry.Key, entry.Value))
+                .ToList()
+                ?? new List<AircraftLoadoutItem>();
+            if (internalGun != null)
+            {
+                loadout.Add(new AircraftLoadoutItem(
+                    internalGun.OrdnanceTypeDefinitionId,
+                    aircraftType.InternalGunBurstCount));
+            }
+
+            if (CountMissionUsefulAirCombatShots(loadout) < MinimumAirCombatShots)
             {
                 reason = $"At least {MinimumAirCombatShots} air-to-air shots must fit.";
+                loadout.Clear();
                 return false;
             }
 
-            loadout = best.CountByOrdnance
-                .OrderBy(entry => entry.Key)
-                .Select(entry => new AircraftLoadoutItem(entry.Key, entry.Value))
-                .ToList();
             return true;
         }
 
@@ -108,6 +124,7 @@ namespace Engine.Service
             var allowed = new HashSet<Guid>(
                 allowedOrdnanceForAlliance(alliance));
             var totalWeight = 0f;
+            var internalGunItems = 0;
             foreach (var item in loadout)
             {
                 if (item == null
@@ -138,7 +155,44 @@ namespace Engine.Service
                     return false;
                 }
 
+                var isInternalGun = item.OrdnanceTypeDefinitionId
+                                    == aircraftType.InternalGunOrdnanceTypeDefinitionId;
+                if (ordnanceType.EmploymentCategory
+                    == OrdnanceEmploymentCategory.Gun)
+                {
+                    if (!isInternalGun)
+                    {
+                        reason = "A planned loadout contains a gun not installed on its aircraft.";
+                        return false;
+                    }
+
+                    internalGunItems++;
+                    if (item.Count != aircraftType.InternalGunBurstCount)
+                    {
+                        reason = "A planned loadout has an invalid internal-gun burst count.";
+                        return false;
+                    }
+                    continue;
+                }
+
+                if (isInternalGun)
+                {
+                    reason = "An aircraft internal-gun reference must identify gun ordnance.";
+                    return false;
+                }
+
                 totalWeight += ordnanceType.Weight * item.Count;
+            }
+
+            var requiresInternalGun =
+                aircraftType.InternalGunOrdnanceTypeDefinitionId != Guid.Empty
+                && aircraftType.InternalGunBurstCount > 0;
+            if (internalGunItems != (requiresInternalGun ? 1 : 0))
+            {
+                reason = requiresInternalGun
+                    ? "A planned loadout is missing its aircraft's internal gun."
+                    : "A planned loadout contains unexpected internal-gun inventory.";
+                return false;
             }
 
             if (totalWeight > aircraftType.OrdnanceCapacity)
@@ -153,7 +207,28 @@ namespace Engine.Service
         public static bool IsAirToAir(OrdnanceTypeDefinition ordnanceType)
         {
             return ordnanceType.EmploymentCategory == OrdnanceEmploymentCategory.AirToAirRadar
-                   || ordnanceType.EmploymentCategory == OrdnanceEmploymentCategory.AirToAirInfrared;
+                   || ordnanceType.EmploymentCategory == OrdnanceEmploymentCategory.AirToAirInfrared
+                   || (ordnanceType.EmploymentCategory == OrdnanceEmploymentCategory.Gun
+                       && ordnanceType.GetEffectiveness(
+                           OrdnanceTargetCategory.Aircraft) > 0f);
+        }
+
+        private OrdnanceTypeDefinition GetInternalGun(
+            AircraftTypeDefinition aircraftType,
+            HashSet<Guid> allowed)
+        {
+            if (aircraftType.InternalGunOrdnanceTypeDefinitionId == Guid.Empty
+                || aircraftType.InternalGunBurstCount <= 0
+                || !allowed.Contains(aircraftType.InternalGunOrdnanceTypeDefinitionId)
+                || !ordnanceTypes.TryGetValue(
+                    aircraftType.InternalGunOrdnanceTypeDefinitionId,
+                    out var gun)
+                || gun.EmploymentCategory != OrdnanceEmploymentCategory.Gun)
+            {
+                return null;
+            }
+
+            return gun;
         }
 
         private static PlannedLoadout FindBestAirCombatLoadout(

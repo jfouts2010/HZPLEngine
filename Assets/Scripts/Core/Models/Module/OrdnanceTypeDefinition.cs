@@ -11,7 +11,8 @@ namespace Models.Module
         AntiRadiation = 3,
         AirToGroundPrecision = 4,
         AirToGroundUnguided = 5,
-        SurfaceToAir = 6
+        SurfaceToAir = 6,
+        Gun = 7
     }
 
     public enum OrdnanceGuidanceMode

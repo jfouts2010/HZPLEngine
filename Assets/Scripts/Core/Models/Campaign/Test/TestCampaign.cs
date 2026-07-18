@@ -44,7 +44,7 @@ namespace Models.Gameplay.Campaign
                     SimulationTickMinutes = 5,
                     OperationalCadenceHours = 6
                 },
-                ContentHash = "mechanics-test-campaign-v3",
+                ContentHash = "mechanics-test-campaign-v4",
                 CountryAllianceAssignments = CreateCountryAllianceAssignments(),
                 OrdnanceAllowances = CreateOrdnanceAllowances(),
                 SamSiteTemplateAllowances = CreateSamSiteTemplateAllowances(),
@@ -81,6 +81,7 @@ namespace Models.Gameplay.Campaign
                     {
                         TestModule.Aim120OrdnanceTypeId,
                         TestModule.Aim9OrdnanceTypeId,
+                        TestModule.M61GunOrdnanceTypeId,
                         TestModule.Agm88OrdnanceTypeId,
                         TestModule.Gbu38OrdnanceTypeId,
                         TestModule.Agm65OrdnanceTypeId
@@ -91,7 +92,8 @@ namespace Models.Gameplay.Campaign
                     new List<Guid>
                     {
                         TestModule.R27OrdnanceTypeId,
-                        TestModule.R73OrdnanceTypeId
+                        TestModule.R73OrdnanceTypeId,
+                        TestModule.Gsh301GunOrdnanceTypeId
                     }
                 }
             };

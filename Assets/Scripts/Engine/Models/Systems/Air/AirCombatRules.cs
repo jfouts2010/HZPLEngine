@@ -271,22 +271,6 @@ namespace Engine.Models
                     awayFromTarget: true);
             }
 
-            var distanceKm = DistanceKm(flight.PositionFeet, target.Flight.PositionFeet);
-            if (distanceKm <= CloseCombatBoundaryKm)
-            {
-                return AimAtTargetCommand(
-                    source,
-                    target,
-                    AirCombatIntent.Disengage,
-                    AirCombatManeuver.Extend,
-                    frame.Time,
-                    frame.Time.AddSeconds(45),
-                    target.Flight.FlightId,
-                    Guid.Empty,
-                    "Flights crossed the deferred WVR boundary; extending before possible recommit.",
-                    awayFromTarget: true);
-            }
-
             if (EvaluateLaunch(source, target, weapon, out var launchQuality)
                 && launchQuality >= doctrine.MinimumLaunchQuality)
             {
@@ -307,7 +291,10 @@ namespace Engine.Models
                         / Math.Max(0.05f, weapon.HitProbability * launchQuality)));
                 var availableShots = Math.Max(
                     0,
-                    totalRounds - doctrine.MinimumAirToAirWeaponReserve);
+                    totalRounds - (weapon.EmploymentCategory
+                                   == OrdnanceEmploymentCategory.Gun
+                        ? 0
+                        : doctrine.MinimumAirToAirWeaponReserve));
                 var quantity = Math.Min(
                     availableShots,
                     Math.Max(
@@ -335,6 +322,22 @@ namespace Engine.Models
                     };
                     return command;
                 }
+            }
+
+            var distanceKm = DistanceKm(flight.PositionFeet, target.Flight.PositionFeet);
+            if (distanceKm <= CloseCombatBoundaryKm)
+            {
+                return AimAtTargetCommand(
+                    source,
+                    target,
+                    AirCombatIntent.Disengage,
+                    AirCombatManeuver.Extend,
+                    frame.Time,
+                    frame.Time.AddSeconds(45),
+                    target.Flight.FlightId,
+                    Guid.Empty,
+                    "No valid close-range shot; extending through the deferred WVR boundary.",
+                    awayFromTarget: true);
             }
 
             var maximumRange = EffectiveMaximumRangeKm(weapon, flight);
@@ -1311,6 +1314,9 @@ namespace Engine.Models
                     LaunchQuality = quality
                 })
                 .OrderByDescending(candidate => candidate.CanLaunch)
+                .ThenBy(candidate =>
+                    candidate.Definition.EmploymentCategory
+                    == OrdnanceEmploymentCategory.Gun ? 1 : 0)
                 .ThenByDescending(candidate => candidate.LaunchQuality)
                 .ThenBy(candidate => distanceKm <= 18f
                     ? candidate.Definition.EmploymentCategory == OrdnanceEmploymentCategory.AirToAirInfrared ? 0 : 1
@@ -1568,7 +1574,10 @@ namespace Engine.Models
         private static bool IsAirToAir(OrdnanceTypeDefinition definition)
         {
             return definition.EmploymentCategory == OrdnanceEmploymentCategory.AirToAirRadar
-                   || definition.EmploymentCategory == OrdnanceEmploymentCategory.AirToAirInfrared;
+                   || definition.EmploymentCategory == OrdnanceEmploymentCategory.AirToAirInfrared
+                   || (definition.EmploymentCategory == OrdnanceEmploymentCategory.Gun
+                       && definition.GetEffectiveness(
+                           OrdnanceTargetCategory.Aircraft) > 0f);
         }
 
         private static bool AreHostile(Alliance first, Alliance second)

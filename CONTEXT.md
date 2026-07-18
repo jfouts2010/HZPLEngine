@@ -204,15 +204,19 @@ One aircraft type may provide multiple air mission capabilities. Capability does
 
 **Aircraft employment efficiency** — an aircraft type's authored modifier to the time cost of employing compatible ordnance or ordnance profiles. It represents aircraft, sensor, cockpit, and crew-workload advantages in using certain stores without turning those advantages into fixed mission-role labels.
 
+**Internal aircraft gun** — fixed gun equipment authored on an aircraft type as one compatible gun ordnance type and a full-sortie count of abstract gun bursts. An internal gun is not selected as an external store, does not consume ordnance capacity or the external air-combat shot budget, and is materialized into each assigned aircraft's runtime loadout so normal expenditure, diagnostics, recovery clearing, and later sortie rearming apply. Gun bursts may be fully expended and are not held back by the doctrine reserve intended for discrete air-to-air stores.
+
+**Gun burst** — one abstract firing opportunity from an internal aircraft gun, not one projectile or a literal ammunition count. Its gun ordnance type authors employment range, firing geometry, preparation time, projectile-effect speed, hit probability, lethality, and effectiveness against each supported target category. A gun may therefore support aircraft and ground targets through the same target-effectiveness language rather than belonging exclusively to an air-to-air mission role.
+
 In v1, AWACS and tanker aircraft are dedicated support aircraft: an AWACS-capable aircraft fulfills airborne-C2 requests, a tanker-capable aircraft fulfills aerial-refueling requests, and combat aircraft do not substitute for either capability.
 
 _Avoid_: fixed BARCAP, OCA, or DEAD aircraft-role labels when suitability can be derived from capabilities and loadout.
 
 ### Ordnance
 
-**Ordnance type** — reusable authored identity data for one munition or store in a Module catalog, such as AIM-120, GBU-38, AGM-88, or a SAM interceptor. Its employment category and platform compatibility distinguish aircraft-carried ordnance from surface-to-air ordnance while allowing both to share envelope, guidance, hit-probability, travel, and effect language. Ordnance types are mappable entities when the target simulator needs explicit loadout or munition IDs.
+**Ordnance type** — reusable authored identity data for one munition, store, gun-burst profile, or SAM interceptor in a Module catalog, such as AIM-120, GBU-38, AGM-88, an internal cannon burst, or a SAM interceptor. Its employment category, target effectiveness, and platform compatibility distinguish its uses while allowing all employment to share envelope, guidance, hit-probability, travel, and effect language. Ordnance types are mappable entities when the target simulator needs explicit loadout or munition IDs.
 
-**Ordnance weight** — the capacity cost of one store on an aircraft loadout. Mixed loadouts are valid when the sum of carried ordnance weights is within the aircraft type's **ordnance capacity**.
+**Ordnance weight** — the capacity cost of one selectable external store on an aircraft loadout. Mixed external loadouts are valid when the sum of carried ordnance weights is within the aircraft type's **ordnance capacity**. Fixed internal gun inventory is excluded.
 
 **Ordnance effect power** — the coarse campaign effect strength of one store. Effect power is the v1 stat used to decide whether ordnance can meaningfully affect a target's toughness. It may correlate with warhead size or explosive power, but it is an authored campaign abstraction rather than exact physics.
 
@@ -220,7 +224,7 @@ _Avoid_: fixed BARCAP, OCA, or DEAD aircraft-role labels when suitability can be
 
 **Ordnance employment envelope** — the authored base firing or release limits of an ordnance type, such as range, altitude, and target-geometry constraints. Live employment may modify that base envelope from tactical conditions such as shooter speed, shooter altitude, track quality, guidance support, or target aspect.
 
-**Ordnance employment suitability** — how appropriate an available ordnance type is for the live target and engagement geometry after its employment envelope is evaluated. A flight selects one suitable ordnance type for an employment pass rather than treating every carried air-to-air missile as interchangeable; when both are suitable at close range, an infrared missile is preferred so active-radar missiles are retained for beyond-visual-range engagements.
+**Ordnance employment suitability** — how appropriate an available ordnance type is for the live target and engagement geometry after its employment envelope is evaluated. A flight selects one suitable ordnance type for an employment pass rather than treating every carried weapon as interchangeable. A valid missile is preferred over a gun burst; the gun becomes the candidate when other weapons lack valid geometry or are unavailable.
 
 **Ordnance guidance mode** — a subordinate authored classification within an ordnance employment category that states what guidance or support a store uses. Air-to-air infrared weapons require no post-launch support, semi-active-radar weapons require support through terminal resolution, and active-radar weapons may require support until their authored autonomous time. GPS-guided and laser-guided stores remain precision air-to-ground ordnance while retaining distinct employment requirements.
 
@@ -232,11 +236,11 @@ _Avoid_: fixed BARCAP, OCA, or DEAD aircraft-role labels when suitability can be
 
 **Pending ordnance effect** — a released ordnance employment awaiting its effect-resolution time. It retains the locked ordnance type, quantity, selected member-aircraft targets, release geometry, guidance stage, accumulated support, and accumulated target defense. It is not a moving campaign entity. A missile whose selected aircraft is already unavailable at resolution becomes ineffective rather than retargeting another member of the flight.
 
-**Employment pass** — one continuous ordnance-use action by a flight, such as a missile launch cycle, bomb release pass, rocket pass, or guided-weapon attack. An employment pass may span simulation ticks. Once started, the pass keeps its selected ordnance profile, target set, and preferred aircraft loadout source until release. Full employment geometry is validated both when preparation starts and at the exact release time; invalid release geometry aborts without spending ordnance. A lost loadout source may be replaced by another live member carrying the selected ordnance.
+**Employment pass** — one continuous ordnance-use action by a flight, such as a missile launch cycle, gun burst, bomb release pass, rocket pass, or guided-weapon attack. An employment pass may span simulation ticks. Once started, the pass keeps its selected ordnance profile, target set, and preferred aircraft loadout source until release. Full employment geometry is validated both when preparation starts and at the exact release time; invalid release geometry aborts without spending ordnance. A lost loadout source may be replaced by another live member carrying the selected ordnance.
 
 **Ordnance employment record** — a typed campaign record for one explainable stage of employment: preparation started, ordnance released, or effect resolved. All three stages are retained for timelines and debugging; ordinary player-facing presentation emphasizes releases and resolved effects rather than every preparation start.
 
-**Ordnance capacity** — the maximum total ordnance weight an aircraft type may carry. Aircraft type definitions own ordnance capacity and a compatible ordnance allow-list. A store may be loaded only if it is on that aircraft type's allow-list and the loadout stays within ordnance capacity.
+**Ordnance capacity** — the maximum total selectable external-ordnance weight an aircraft type may carry. Aircraft type definitions own ordnance capacity and a compatible ordnance allow-list. A store may be loaded only if it is on that aircraft type's allow-list and the external loadout stays within ordnance capacity. Fixed internal guns remain compatible ordnance but do not consume this capacity.
 
 _Avoid_: bidirectional aircraft–ordnance compatibility lists that must be kept in sync on both ordnance and aircraft definitions.
 

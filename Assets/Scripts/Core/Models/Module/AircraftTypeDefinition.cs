@@ -31,6 +31,8 @@ namespace Models.Module
         public float AirInterferenceCapability { get; }
         public float OrdnanceCapacity { get; }
         public List<Guid> CompatibleOrdnanceTypeDefinitionIds { get; }
+        public Guid InternalGunOrdnanceTypeDefinitionId { get; }
+        public int InternalGunBurstCount { get; }
         public AirSupportCapability SupportCapability { get; }
         public int SupportSlotCapacity { get; }
         public bool CanReceiveAerialRefueling { get; }
@@ -59,7 +61,9 @@ namespace Models.Module
             int supportSlotCapacity = 0,
             bool canReceiveAerialRefueling = false,
             float ordnanceEmploymentEfficiency = 1f,
-            float airInterferenceCapability = 0f)
+            float airInterferenceCapability = 0f,
+            Guid internalGunOrdnanceTypeDefinitionId = default,
+            int internalGunBurstCount = 0)
         {
             if (aircraftTypeDefinitionId == Guid.Empty)
                 throw new ArgumentException("Aircraft type definition id is required.",
@@ -83,7 +87,23 @@ namespace Models.Module
             Survivability = Math.Max(0f, Math.Min(1f, survivability));
             AirInterferenceCapability = Math.Max(0f, airInterferenceCapability);
             OrdnanceCapacity = Math.Max(0f, ordnanceCapacity);
-            CompatibleOrdnanceTypeDefinitionIds = compatibleOrdnanceTypeDefinitionIds ?? new List<Guid>();
+            CompatibleOrdnanceTypeDefinitionIds =
+                compatibleOrdnanceTypeDefinitionIds == null
+                    ? new List<Guid>()
+                    : new List<Guid>(compatibleOrdnanceTypeDefinitionIds);
+            InternalGunOrdnanceTypeDefinitionId =
+                internalGunOrdnanceTypeDefinitionId;
+            InternalGunBurstCount =
+                internalGunOrdnanceTypeDefinitionId == Guid.Empty
+                    ? 0
+                    : Math.Max(0, internalGunBurstCount);
+            if (InternalGunOrdnanceTypeDefinitionId != Guid.Empty
+                && !CompatibleOrdnanceTypeDefinitionIds.Contains(
+                    InternalGunOrdnanceTypeDefinitionId))
+            {
+                CompatibleOrdnanceTypeDefinitionIds.Add(
+                    InternalGunOrdnanceTypeDefinitionId);
+            }
             SupportCapability = supportCapability;
             SupportSlotCapacity = supportCapability == AirSupportCapability.None
                 ? 0
