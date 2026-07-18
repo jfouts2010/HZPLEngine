@@ -147,7 +147,7 @@ After the player flies an **exported scenario**:
 - Air-primary simulation depth (IADS, tasking, execution, effects)
 - Initial air-tasking backbone for barrier combat air patrols, offensive counter-air sweeps, airborne C2, and aerial refueling; DEAD follows as the first target-attack capability
 - Operational ground layer supporting the air war
-- Alliance-scoped air-planning intelligence, using perfect campaign knowledge in v1 behind a boundary intended for later fog-of-war and intelligence rules
+- Alliance-scoped operational intelligence for hostile ground formations, buildings, airports, and air-defense sites, using quality-1 reports during autonomous testing behind a boundary intended for later observation and reconnaissance rules
 
 **Out of scope now (design for later, do not block on):**
 

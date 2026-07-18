@@ -211,7 +211,8 @@ namespace Engine.Models.Systems.Ground
         private int CalculateDesiredDefenderCount(Vector3Int frontTileId)
         {
             var friendlyPower = SumCombatPower(GetPhysicalDefenders(frontTileId));
-            var enemyPower = SumCombatPower(GetAdjacentHostileDivisions(frontTileId));
+            var enemyPower = SumObservedCombatPower(
+                GetAdjacentHostileDivisionReports(frontTileId));
             var desired = 1;
             
             if (enemyPower > friendlyPower * 1.6f)
@@ -376,7 +377,8 @@ namespace Engine.Models.Systems.Ground
 
         private float CalculateDefensiveThreatScore(Vector3Int frontTileId)
         {
-            var enemyPower = SumCombatPower(GetAdjacentHostileDivisions(frontTileId));
+            var enemyPower = SumObservedCombatPower(
+                GetAdjacentHostileDivisionReports(frontTileId));
             var strategicValue = GetTileStrategicValue(frontTileId) * DEFENSIVE_STRATEGIC_VALUE_THREAT_WEIGHT;
             return enemyPower + strategicValue;
         }
@@ -910,7 +912,7 @@ namespace Engine.Models.Systems.Ground
 
             var desired = MIN_ASSAULT_DIVISIONS_PER_OFFENSIVE_TARGET;
 
-            if (GetAdjacentHostileDivisions(targetTileId).Count() >= 3)
+            if (GetAdjacentHostileDivisionReports(targetTileId).Count() >= 3)
                 desired++;
 
             if (GetTileStrategicValue(targetTileId) >= 8f)
@@ -981,6 +983,7 @@ namespace Engine.Models.Systems.Ground
                 gameManager,
                 assaultingDivisionIds,
                 targetTileId,
+                GetHostileDivisionReports(targetTileId),
                 GroundCombatAssaultIntent.Capture,
                 out estimate);
         }
@@ -1069,26 +1072,30 @@ namespace Engine.Models.Systems.Ground
                                    && IsCombatReady(division));
         }
 
-        private IEnumerable<Division> GetAdjacentHostileDivisions(Vector3Int tileId)
+        private IEnumerable<DivisionIntelligenceReport>
+            GetAdjacentHostileDivisionReports(Vector3Int tileId)
         {
             return GetNeighborTileIds(tileId)
-                .SelectMany(neighborTileId => gameManager.divisionSystem.GetDivisionsOnTile(neighborTileId))
-                .Where(division => GroundSystemUtility.TryGetDivisionAlliance(gameManager, division, out var alliance)
-                                   && GroundSystemUtility.AreHostile(Alliance, alliance)
-                                   && IsCombatReady(division));
+                .SelectMany(GetHostileDivisionReports)
+                .Where(report => report.IsCombatReady);
         }
 
         private bool HasHostilePhysicalDefender(Vector3Int tileId)
         {
-            return gameManager.divisionSystem.GetDivisionsOnTile(tileId)
-                .Any(division => GroundSystemUtility.TryGetDivisionAlliance(gameManager, division, out var alliance)
-                                 && GroundSystemUtility.AreHostile(Alliance, alliance)
-                                 && IsCombatReady(division));
+            return GetHostileDivisionReports(tileId)
+                .Any(report => report.IsCombatReady);
         }
 
         private float SumCombatPower(IEnumerable<Division> divisions)
         {
             return divisions.Sum(GroundCombatEstimationService.CalculateDivisionCombatPower);
+        }
+
+        private float SumObservedCombatPower(
+            IEnumerable<DivisionIntelligenceReport> reports)
+        {
+            return reports.Sum(
+                GroundCombatEstimationService.CalculateDivisionCombatPower);
         }
 
         private float GetTileStrategicValue(Vector3Int tileId)
@@ -1097,30 +1104,73 @@ namespace Engine.Models.Systems.Ground
             if (GroundSystemUtility.TryGetLandTileData(gameManager, tileId, out var landTileData))
                 value += landTileData.Infrastructure.FunctionalLevel;
 
-            foreach (var building in gameManager.buildingSystem.GetBuildingsOnTile(tileId))
+            if (IsHostileControlledLandTile(tileId))
             {
-                var functionalLevel = Mathf.Max(1, building.FunctionalLevel);
-                value += building.Type switch
+                foreach (var report in GetHostileBuildingReports(tileId))
                 {
-                    BuildingType.Airport => 7f,
-                    BuildingType.SupplyHub => 7f,
-                    BuildingType.Port => 5f,
-                    BuildingType.Factory => 4f,
-                    BuildingType.Refinery => 4f,
-                    BuildingType.PowerPlant => 4f,
-                    BuildingType.Railroad => 3f,
-                    BuildingType.Fort => 3f,
-                    BuildingType.AirDefense => 4f,
-                    _ => 1f
-                } * functionalLevel;
+                    value += GetBuildingStrategicValue(
+                        report.Type,
+                        report.FunctionalLevel);
+                }
+            }
+            else
+            {
+                foreach (var building in gameManager.buildingSystem
+                             .GetBuildingsOnTile(tileId))
+                {
+                    value += GetBuildingStrategicValue(
+                        building.Type,
+                        building.FunctionalLevel);
+                }
             }
 
             value += GetSupplyStrategicValue(tileId);
             return value;
         }
 
+        private static float GetBuildingStrategicValue(
+            BuildingType buildingType,
+            int functionalLevel)
+        {
+            var typeValue = buildingType switch
+            {
+                BuildingType.Airport => 7f,
+                BuildingType.SupplyHub => 7f,
+                BuildingType.Port => 5f,
+                BuildingType.Factory => 4f,
+                BuildingType.Refinery => 4f,
+                BuildingType.PowerPlant => 4f,
+                BuildingType.Railroad => 3f,
+                BuildingType.Fort => 3f,
+                BuildingType.AirDefense => 4f,
+                _ => 1f
+            };
+            return typeValue * Mathf.Max(1, functionalLevel);
+        }
+
+        private IReadOnlyList<DivisionIntelligenceReport>
+            GetHostileDivisionReports(Vector3Int tileId)
+        {
+            return gameManager.intelligenceSystem
+                       ?.GetPicture(Alliance)
+                       ?.GetHostileDivisionsOnTile(tileId)
+                   ?? Array.Empty<DivisionIntelligenceReport>();
+        }
+
+        private IReadOnlyList<BuildingIntelligenceReport>
+            GetHostileBuildingReports(Vector3Int tileId)
+        {
+            return gameManager.intelligenceSystem
+                       ?.GetPicture(Alliance)
+                       ?.GetHostileBuildingsOnTile(tileId)
+                   ?? Array.Empty<BuildingIntelligenceReport>();
+        }
+
         private float GetSupplyStrategicValue(Vector3Int tileId)
         {
+            if (IsHostileControlledLandTile(tileId))
+                return 0f;
+
             supplyStrategicValueByTileId ??= SupplyStrategicValueService.BuildSupplyStrategicValueLookup(gameManager);
             return supplyStrategicValueByTileId.TryGetValue(tileId, out var value) ? value : 0f;
         }

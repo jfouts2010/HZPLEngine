@@ -387,6 +387,26 @@ Ground tasking, air tasking, and IADS use separate per-alliance command state wh
 
 _Avoid_: using one generic alliance AI object as the owner of every ground, air-tasking, and IADS responsibility.
 
+### Alliance intelligence picture
+
+An **alliance intelligence picture** is the persistent, observer-relative record of hostile ground formations, buildings, airports, and static or mobile air-defense sites available to one alliance. Bluefor and Redfor each own a separate picture. Friendly command state remains exactly known and is not duplicated as intelligence reports.
+
+Campaign entities remain the source of physical truth. Commanders, target selection, planning estimates, and alliance-facing presentation consume intelligence reports when reasoning about hostile entities; movement, combat, damage, capture, IADS behavior, and other resolution systems consume authoritative campaign state. An intelligence report may retain the subject entity ID as an opaque bookkeeping and resolution reference, but that reference does not authorize a planner to dereference hostile truth.
+
+Each report carries **information quality**, a continuous value clamped from `0` to `1`. The meanings of intermediate values are deliberately deferred until observation, reconnaissance, and strike targeting require them. Quality `1` represents the most complete physical information the alliance could realistically gather: current location and condition, division-template composition, building build and damage state, airport ground inventory, and air-defense component inventory and condition. It does not reveal enemy ground orders, AI intent, movement progress, IADS tracks, engagement assignments, or other private command bookkeeping.
+
+During the current autonomous-testing phase, hostile division, building, airport, and air-defense reports refresh immediately to information quality `1`. This maximum-information refresh is a temporary producer behind the durable intelligence boundary; consumers must not bypass reports merely because the producer currently mirrors observable physical truth.
+
+Large fixed infrastructure such as airports, ports, factories, and railroads may be seeded as known from campaign start when partial intelligence is introduced, while their current condition can remain uncertain. Static or mobile air-defense sites may later require detection. The first implementation does not add sensor sources, reconnaissance missions, confidence decay, deception, false contacts, or contact fusion.
+
+Enemy supply-network criticality is not inferred yet. Ground planning may value observed hostile supply hubs and railroads as buildings, but it does not inspect authoritative hostile supply assignments or topology to add hidden supply-criticality value.
+
+Tile control and derived front boundaries remain perfect alliance knowledge. The operational-map renderer may retain an explicitly omniscient debug mode that reads authoritative state.
+
+_Avoid_: treating information quality as a property of the observed division, building, or site; it belongs to one alliance's report about that subject.
+_Avoid_: exposing exact hostile fields at a lower information quality before that value's gameplay meaning is defined.
+_Avoid_: making combat resolution depend on possibly stale intelligence.
+
 ### Tile control
 
 The alliance that militarily holds a land tile — movement, combat, and occupation rights derive from tile control. Every land tile has a controller. Ocean tiles never have a controller.
@@ -778,11 +798,11 @@ _Avoid_: implementing separate Bluefor and Redfor air-planning algorithms.
 
 **Air-planning intelligence** is the alliance-scoped view of friendly readiness, enemy threats, and potential targets available to an alliance AI when it creates and evaluates mission requests.
 
-In v1, air-planning intelligence provides exact friendly squadron readiness and airfield state. It also provides perfect current observations of hostile airports through deliberately limited, airport-level reports: the airport's broad damage condition and aircraft counts grouped by observed aircraft type. A report distinguishes aircraft observed on the ground from aircraft that appear available, but it does not expose hostile squadron identity, individual aircraft status, assignment, mission, package, route, or loadout.
+In v1, air-planning intelligence provides exact friendly squadron readiness and airfield state. Hostile airport information is projected from the observing alliance's intelligence picture through deliberately limited, airport-level reports: the airport's broad damage condition, information quality, observation time, and aircraft counts grouped by observed aircraft type. A report distinguishes aircraft observed on the ground from aircraft that appear available, but it does not expose hostile squadron identity, individual aircraft status, assignment, mission, package, route, or loadout.
 
 Hostile airborne strength and activity remain separate from airport intelligence. They come from the alliance's remembered air-interference assessment, which is populated only by current IADS tracks; airborne aircraft are excluded from hostile airport reports.
 
-_Avoid_: allowing air-planning consumers to read hostile squadron or aircraft truth directly instead of using the constrained enemy-airport reports and remembered air-interference assessment.
+_Avoid_: allowing air-planning consumers to read hostile airport, squadron, or aircraft truth directly instead of using the alliance intelligence picture's constrained enemy-airport reports and remembered air-interference assessment.
 
 ### Alliance air plan
 

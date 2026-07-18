@@ -89,8 +89,7 @@ namespace Engine.Models.Ground
                 .ToList(),
                 defenders,
                 terrain,
-                assaultIntent,
-                1f);
+                assaultIntent);
             return true;
         }
 
@@ -120,36 +119,88 @@ namespace Engine.Models.Ground
                 out estimate);
         }
 
+        public static bool TryEstimateTileAssault(
+            GameManager gameManager,
+            IEnumerable<Guid> attackerDivisionIds,
+            Vector3Int defendingTileId,
+            IReadOnlyList<DivisionIntelligenceReport> defenderReports,
+            GroundCombatAssaultIntent assaultIntent,
+            out GroundCombatEstimate estimate)
+        {
+            estimate = default;
+            if (gameManager == null || defenderReports == null)
+                return false;
+
+            if (!TryGetDefendingTerrain(gameManager, defendingTileId, out var terrain))
+                return false;
+
+            var attackers = new List<EstimatedCombatant>();
+            foreach (var divisionId in attackerDivisionIds)
+            {
+                if (gameManager.divisionSystem.TryGetDivision(
+                        divisionId,
+                        out var division)
+                    && GroundTacticalCombatRules.IsCombatReady(division))
+                {
+                    attackers.Add(new EstimatedCombatant(division));
+                }
+            }
+
+            var defenders = defenderReports
+                .Where(report => report != null && report.IsCombatReady)
+                .Select(report => new EstimatedCombatant(report))
+                .ToList();
+            estimate = EstimateCombatants(
+                attackers,
+                defenders,
+                terrain,
+                assaultIntent,
+                1f);
+            return true;
+        }
+
         public static GroundCombatEstimate Estimate(
             IReadOnlyList<Division> attackerDivisions,
             IReadOnlyList<Division> defenderDivisions,
             TileTerrain terrain,
             GroundCombatAssaultIntent assaultIntent = GroundCombatAssaultIntent.Capture)
         {
-            return Estimate(
-                attackerDivisions,
-                defenderDivisions,
+            return EstimateCombatants(
+                attackerDivisions
+                    .Where(GroundTacticalCombatRules.IsCombatReady)
+                    .Select(division => new EstimatedCombatant(division))
+                    .ToList(),
+                defenderDivisions
+                    .Where(GroundTacticalCombatRules.IsCombatReady)
+                    .Select(division => new EstimatedCombatant(division))
+                    .ToList(),
                 terrain,
                 assaultIntent,
                 1f);
         }
 
-        private static GroundCombatEstimate Estimate(
-            IReadOnlyList<Division> attackerDivisions,
-            IReadOnlyList<Division> defenderDivisions,
+        private static GroundCombatEstimate EstimateCombatants(
+            IReadOnlyList<EstimatedCombatant> attackerDivisions,
+            IReadOnlyList<EstimatedCombatant> defenderDivisions,
             TileTerrain terrain,
             GroundCombatAssaultIntent assaultIntent,
             float damageScale)
         {
             var attackers = attackerDivisions
                 .Where(GroundTacticalCombatRules.IsCombatReady)
+                .Select(combatant => new EstimatedCombatant(combatant))
                 .ToList();
             var defenders = defenderDivisions
                 .Where(GroundTacticalCombatRules.IsCombatReady)
+                .Select(combatant => new EstimatedCombatant(combatant))
                 .ToList();
 
-            var attackerSide = attackers.Select(division => new EstimatedCombatant(division)).ToList();
-            var defenderSide = defenders.Select(division => new EstimatedCombatant(division)).ToList();
+            var attackerSide = attackers
+                .Select(combatant => new EstimatedCombatant(combatant))
+                .ToList();
+            var defenderSide = defenders
+                .Select(combatant => new EstimatedCombatant(combatant))
+                .ToList();
             var combatWidth = GroundTacticalCombatRules.GetCombatWidth(terrain, attackerSide);
             var attackerFrontLine = GroundTacticalCombatRules.AssignFrontLine(attackerSide, combatWidth, true);
             var defenderFrontLine = GroundTacticalCombatRules.AssignFrontLine(defenderSide, combatWidth, false);
@@ -188,11 +239,30 @@ namespace Engine.Models.Ground
             if (!GroundTacticalCombatRules.IsCombatReady(division))
                 return 0f;
 
-            var strengthPercent = GroundTacticalCombatRules.GetStrengthPercent(new EstimatedCombatant(division));
-            var genericSoftTargetShots = division.SoftAttack * 0.5f + division.HardAttack * 0.5f;
+            return CalculateCombatPower(new EstimatedCombatant(division));
+        }
+
+        public static float CalculateDivisionCombatPower(
+            DivisionIntelligenceReport report)
+        {
+            if (report == null || !report.IsCombatReady)
+                return 0f;
+
+            return CalculateCombatPower(new EstimatedCombatant(report));
+        }
+
+        private static float CalculateCombatPower(
+            IGroundTacticalCombatant combatant)
+        {
+            var strengthPercent =
+                GroundTacticalCombatRules.GetStrengthPercent(combatant);
+            var genericSoftTargetShots =
+                combatant.SoftAttack * 0.5f + combatant.HardAttack * 0.5f;
             var protectedHitChance = 1f - GroundTacticalCombatRules.ProtectedShotMissChance;
             var expectedDamage = Mathf.Max(0f, genericSoftTargetShots) * strengthPercent * protectedHitChance;
-            var widthEfficiency = division.CombatWidth <= 0 ? 1f : 20f / division.CombatWidth;
+            var widthEfficiency = combatant.CombatWidth <= 0
+                ? 1f
+                : 20f / combatant.CombatWidth;
             return expectedDamage * Mathf.Clamp(widthEfficiency, 0.25f, 2f);
         }
 
@@ -209,8 +279,8 @@ namespace Engine.Models.Ground
         }
 
         private static float EstimateVictoryLikelihood(
-            IReadOnlyList<Division> attackers,
-            IReadOnlyList<Division> defenders,
+            IReadOnlyList<EstimatedCombatant> attackers,
+            IReadOnlyList<EstimatedCombatant> defenders,
             TileTerrain terrain,
             float damageScale)
         {
@@ -220,8 +290,12 @@ namespace Engine.Models.Ground
             if (defenders.Count == 0)
                 return 1f;
 
-            var attackerSide = attackers.Select(division => new EstimatedCombatant(division)).ToList();
-            var defenderSide = defenders.Select(division => new EstimatedCombatant(division)).ToList();
+            var attackerSide = attackers
+                .Select(combatant => new EstimatedCombatant(combatant))
+                .ToList();
+            var defenderSide = defenders
+                .Select(combatant => new EstimatedCombatant(combatant))
+                .ToList();
             var combatWidth = GroundTacticalCombatRules.GetCombatWidth(terrain, attackerSide);
             var attackerBreakRound = EstimateSimulationRounds + 1f;
             var defenderBreakRound = EstimateSimulationRounds + 1f;
@@ -373,6 +447,35 @@ namespace Engine.Models.Ground
                 Toughness = division.Toughness;
                 Softness = division.Softness;
                 CombatWidth = division.CombatWidth;
+            }
+
+            public EstimatedCombatant(DivisionIntelligenceReport report)
+            {
+                TileId = report.TileId;
+                MaxStrength = report.MaxStrength;
+                Strength = report.Strength;
+                Organization = report.Organization;
+                SoftAttack = report.SoftAttack;
+                HardAttack = report.HardAttack;
+                Defense = report.Defense;
+                Toughness = report.Toughness;
+                Softness = report.Softness;
+                CombatWidth = report.CombatWidth;
+            }
+
+            public EstimatedCombatant(EstimatedCombatant combatant)
+            {
+                TileId = combatant.TileId;
+                MaxStrength = combatant.MaxStrength;
+                Strength = combatant.Strength;
+                Organization = combatant.Organization;
+                SoftAttack = combatant.SoftAttack;
+                HardAttack = combatant.HardAttack;
+                Defense = combatant.Defense;
+                Toughness = combatant.Toughness;
+                Softness = combatant.Softness;
+                CombatWidth = combatant.CombatWidth;
+                DefensePoints = combatant.DefensePoints;
             }
         }
     }

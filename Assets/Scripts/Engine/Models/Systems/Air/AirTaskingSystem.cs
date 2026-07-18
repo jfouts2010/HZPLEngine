@@ -149,12 +149,8 @@ namespace Engine.Models
         private void RebuildGlobalPlan(AllianceAirTaskingCommander commander)
         {
             commander.BeginPlanningCycle(gameManager.CurrentTime);
-            var airborneAircraftIds = GetAirborneFlights()
-                .SelectMany(flight => flight.AircraftIds)
-                .ToHashSet();
             var snapshot = planningIntelligence.CreateSnapshot(
-                commander.Alliance,
-                airborneAircraftIds);
+                commander.Alliance);
             var cadenceHours = gameManager.SimulationSettings.OperationalCadenceHours;
             var generatedRequests = requestGenerator.Generate(
                 commander,

@@ -73,6 +73,8 @@ namespace Engine.Monobehaviours.Managers
         public DivisionSystem divisionSystem = new DivisionSystem();
         public SquadronSystem squadronSystem = new SquadronSystem();
         public AirDefenseSiteSystem airDefenseSiteSystem = new AirDefenseSiteSystem();
+        public AllianceIntelligenceSystem intelligenceSystem =
+            new AllianceIntelligenceSystem();
 
         private Coroutine GameTurnCoroutine = null;
         private bool _campaignStarted;
@@ -145,6 +147,11 @@ namespace Engine.Monobehaviours.Managers
             };
             airDefenseSiteSystem.Configure(buildingSystem, divisionSystem, GetCountryAlliance);
             airDefenseSiteSystem.RebuildIndex();
+            intelligenceSystem = new AllianceIntelligenceSystem();
+            intelligenceSystem.RefreshMaximumInformation(
+                this,
+                CurrentTime,
+                new HashSet<Guid>());
             _groundTaskingSystem = new GroundTaskingSystem(this);
             _IADSSystem = new IADSSystem(this);
             _airTaskingSystem = new AirTaskingSystem(this, activeModule);
@@ -372,22 +379,27 @@ namespace Engine.Monobehaviours.Managers
                     previousTurnTime,
                     CurrentTime,
                     SimulationSettings.OperationalCadenceHours);
-            if (crossedOperationalCadenceBoundary)
-            {
-                _groundTaskingSystem.OperationalCadenceTurn();
-            }
-
             var resolveCombatRound = SimulationSettings.CrossedOperationalCadenceBoundary(
                     _campaignStartTime,
                     previousTurnTime,
                     CurrentTime,
                     1);
+            if (crossedOperationalCadenceBoundary || resolveCombatRound)
+                RefreshAllianceIntelligence();
+
+            if (crossedOperationalCadenceBoundary)
+            {
+                _groundTaskingSystem.OperationalCadenceTurn();
+            }
+
             if (resolveCombatRound)
                 _groundTaskingSystem.CombatCadenceTurn();
 
             _groundCombatSystem.GameTurn(resolveCombatRound);
             _groundOperationsSystem.GameTurn(elapsedHours);
             _supplySystem.GameTurn(elapsedHours);
+            if (crossedOperationalCadenceBoundary)
+                RefreshAllianceIntelligence();
             _airTaskingSystem.GameTurn(crossedOperationalCadenceBoundary);
             divisionSystem.ApplyCombatSupplyPenalties(
                 elapsedHours,
@@ -399,6 +411,7 @@ namespace Engine.Monobehaviours.Managers
                 _groundCombatSystem.IsDivisionEngagedInCombat,
                 _supplySystem.GetSupplyRatio,
                 division => division?.CurrentOrder is not MoveGroundOrder { Purpose: MoveGroundOrderPurpose.Retreat });
+            RefreshAllianceIntelligence();
             BuildTurnChanges(_gameTurnSnapshot);
             LastTurnCompletedAt = CurrentTime;
             GameTurnCompleted?.Invoke();
@@ -406,6 +419,20 @@ namespace Engine.Monobehaviours.Managers
             _nextGameTurnAt = CurrentTime.AddMinutes(
                 SimulationSettings.SimulationTickMinutes);
             _gameTurnSnapshot = CaptureTurnSnapshot();
+        }
+
+        private void RefreshAllianceIntelligence()
+        {
+            var airborneAircraftIds = _airTaskingSystem == null
+                ? new HashSet<Guid>()
+                : _airTaskingSystem
+                    .GetAirborneFlights()
+                    .SelectMany(flight => flight.AircraftIds)
+                    .ToHashSet();
+            intelligenceSystem.RefreshMaximumInformation(
+                this,
+                CurrentTime,
+                airborneAircraftIds);
         }
 
         private TurnSnapshot CaptureTurnSnapshot()
