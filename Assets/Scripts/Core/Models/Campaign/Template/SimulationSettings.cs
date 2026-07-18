@@ -15,7 +15,7 @@ namespace Models.Gameplay.Campaign
         public const int DefaultOperationalCadenceHours = 6;
 
         public const int MinTileDistanceKM = 1;
-        public const int DefaultTileDistanceKM = 50;
+        public const int DefaultTileDistanceKM = 20;
 
         public int SimulationTickMinutes = DefaultSimulationTickMinutes;
         public int OperationalCadenceHours = DefaultOperationalCadenceHours;

@@ -30,6 +30,8 @@ namespace Models.Gameplay.Campaign
         private DateTime plannedArrivalTime;
         [SerializeField, FormerlySerializedAs("EffectArea")]
         private AirMissionArea effectArea;
+        [SerializeField]
+        private BarcapStationCoverage barcapCoverage;
         [SerializeField, FormerlySerializedAs("HasRepeat")]
         private bool hasRepeat;
         [SerializeField, FormerlySerializedAs("RepeatFromWaypointId")]
@@ -46,6 +48,7 @@ namespace Models.Gameplay.Campaign
         public AirMissionArea EffectArea => effectArea == null
             ? null
             : new AirMissionArea(effectArea.CenterTileId, effectArea.RadiusTiles);
+        public BarcapStationCoverage BarcapCoverage => barcapCoverage?.Clone();
         public bool HasRepeat => hasRepeat;
         public Guid RepeatFromWaypointId => repeatFromWaypointId;
         public DateTime RepeatUntil => repeatUntil;
@@ -63,7 +66,8 @@ namespace Models.Gameplay.Campaign
             bool hasRepeat = false,
             Guid repeatFromWaypointId = default,
             DateTime repeatUntil = default,
-            Guid airportBuildingId = default)
+            Guid airportBuildingId = default,
+            BarcapStationCoverage barcapCoverage = null)
         {
             this.positionFeet = positionFeet;
             this.action = action;
@@ -71,6 +75,7 @@ namespace Models.Gameplay.Campaign
             this.effectArea = effectArea == null
                 ? null
                 : new AirMissionArea(effectArea.CenterTileId, effectArea.RadiusTiles);
+            this.barcapCoverage = barcapCoverage?.Clone();
             this.hasRepeat = hasRepeat;
             this.repeatFromWaypointId = repeatFromWaypointId;
             this.repeatUntil = repeatUntil;

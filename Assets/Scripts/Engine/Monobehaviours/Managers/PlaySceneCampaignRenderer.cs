@@ -68,6 +68,7 @@ namespace Engine.Monobehaviours.Managers
         private const int MovementArrowHeadPixelSize = 18;
         private const float RailwayLineWidth = 0.05f;
         private const float AirRouteLineWidth = 0.025f;
+        private const float BarcapBarrierLineWidth = 0.060f;
         private const float AirIntentLineWidth = 0.052f;
         private const float AirIntentAreaLineWidth = 0.038f;
         private const float AirEngagementLineWidth = 0.060f;
@@ -177,6 +178,7 @@ namespace Engine.Monobehaviours.Managers
         private Toggle overlayCombatsToggle;
         private Toggle overlayMovementToggle;
         private Toggle overlayRoutesToggle;
+        private Toggle overlayBarriersToggle;
         private Toggle overlaySamToggle;
         private Toggle overlayOrdnanceToggle;
         private Toggle overlayRailToggle;
@@ -629,6 +631,7 @@ namespace Engine.Monobehaviours.Managers
             overlayCombatsToggle = root.Q<Toggle>("overlay-combats-toggle");
             overlayMovementToggle = root.Q<Toggle>("overlay-movement-toggle");
             overlayRoutesToggle = root.Q<Toggle>("overlay-routes-toggle");
+            overlayBarriersToggle = root.Q<Toggle>("overlay-barriers-toggle");
             overlaySamToggle = root.Q<Toggle>("overlay-sam-toggle");
             overlayOrdnanceToggle = root.Q<Toggle>("overlay-ordnance-toggle");
             overlayRailToggle = root.Q<Toggle>("overlay-rail-toggle");
@@ -954,6 +957,11 @@ namespace Engine.Monobehaviours.Managers
                     movementArrowRoot.gameObject.SetActive(value);
             });
             ConfigureOverlayToggle(overlayRoutesToggle, "Routes", true, SetAirRouteVisibility);
+            ConfigureOverlayToggle(
+                overlayBarriersToggle,
+                "Barriers",
+                true,
+                _ => RefreshAirOverlaysForSelection());
             ConfigureOverlayToggle(overlaySamToggle, "SamCoverage", true, _ => RefreshSamCoverageOverlay());
             ConfigureOverlayToggle(overlayRailToggle, "Railways", true, value =>
             {
@@ -1138,6 +1146,7 @@ namespace Engine.Monobehaviours.Managers
             SetOverlayToggleValue(overlayCombatsToggle, true);
             SetOverlayToggleValue(overlayMovementToggle, true);
             SetOverlayToggleValue(overlayRoutesToggle, true);
+            SetOverlayToggleValue(overlayBarriersToggle, true);
             SetOverlayToggleValue(overlayOrdnanceToggle, true);
             SetOverlayToggleValue(overlayRailToggle, true);
             SetOverlayToggleValue(overlayAirControlToggle, false);
@@ -3880,6 +3889,9 @@ namespace Engine.Monobehaviours.Managers
             if (airOverlayRoot == null || gameManager == null)
                 return;
 
+            if (overlayBarriersToggle == null || overlayBarriersToggle.value)
+                CreateBarcapBarrierOverlays();
+
             foreach (var alliance in new[] { Alliance.Bluefor, Alliance.Redfor })
             {
                 var commander = gameManager.GetAllianceAirTaskingCommander(alliance);
@@ -3899,6 +3911,161 @@ namespace Engine.Monobehaviours.Managers
             }
 
             CreateSelectedFlightTargetOverlay();
+        }
+
+        private void CreateBarcapBarrierOverlays()
+        {
+            foreach (var alliance in new[] { Alliance.Bluefor, Alliance.Redfor })
+            {
+                var commander = gameManager.GetAllianceAirTaskingCommander(alliance);
+                var liveRequestIds = commander.Packages
+                    .Where(package => !package.IsTerminal)
+                    .Select(package => package.MissionRequestId)
+                    .ToHashSet();
+                var barriers = commander.MissionRequests
+                    .Where(request =>
+                        (request.PlanningCycle == commander.PlanningCycle
+                         || liveRequestIds.Contains(request.MissionRequestId))
+                        && request.RequestType ==
+                            AirMissionRequestType.BarrierCombatAirPatrol
+                        && request.BarcapBarrier?.BarrierTileIds?.Count > 0)
+                    .Select(request => request.BarcapBarrier)
+                    .GroupBy(barrier => barrier.BarrierId)
+                    .Select(group => group.First())
+                    .ToList();
+                var coverages = commander.Packages
+                    .Where(package => !package.IsTerminal)
+                    .SelectMany(package => package.Flights)
+                    .Where(flight =>
+                        flight.MissionType ==
+                            AirMissionRequestType.BarrierCombatAirPatrol
+                        && !flight.IsTerminal
+                        && flight.ExecutionPhase != FlightExecutionPhase.Returning
+                        && flight.ExecutionPhase != FlightExecutionPhase.Landing
+                        && flight.ExecutionPhase != FlightExecutionPhase.Ended
+                        && gameManager.RetainsProjectedBarcapCoverage(flight))
+                    .Select(flight => flight.PlannedBarcapCoverage)
+                    .ToList();
+
+                foreach (var barrier in barriers)
+                    CreateBarcapBarrierOverlay(alliance, barrier, coverages);
+            }
+        }
+
+        private void CreateBarcapBarrierOverlay(
+            Alliance alliance,
+            BarcapBarrierPlan barrier,
+            IReadOnlyList<BarcapStationCoverage> coverages)
+        {
+            var tileDistanceKm = gameManager.SimulationSettings.TileDistanceKM;
+            var points = BarcapInterceptGeometry
+                .GetOperationalBarrierPointsFeet(
+                    barrier.BarrierTileIds,
+                    barrier.ThreatReferenceTileId,
+                    tileDistanceKm,
+                    barrier.WeaponReleaseStandoffKm)
+                .Select(AirPositionToMapPosition)
+                .ToList();
+            if (points.Count == 0)
+                return;
+
+            var color = GetAirMissionIntentColor(
+                AirMissionRequestType.BarrierCombatAirPatrol,
+                alliance);
+            if (points.Count == 1)
+            {
+                CreateAirIntentCircle(
+                    $"BARCAP Barrier {ShortId(barrier.BarrierId)}",
+                    airOverlayRoot,
+                    points[0],
+                    0.22f,
+                    WithAlpha(color, 0.55f),
+                    BarcapBarrierLineWidth,
+                    -0.36f,
+                    37);
+            }
+            else
+            {
+                CreateAirIntentPolyline(
+                    $"BARCAP Barrier {ShortId(barrier.BarrierId)}",
+                    airOverlayRoot,
+                    points,
+                    WithAlpha(color, 0.55f),
+                    BarcapBarrierLineWidth,
+                    -0.36f,
+                    37);
+            }
+
+            var midpoint = points[points.Count / 2];
+            var threat = GetTileMapCenter(barrier.ThreatReferenceTileId);
+            var defensiveDirection = midpoint - threat;
+            CreateAirIntentChevron(
+                airOverlayRoot,
+                midpoint,
+                defensiveDirection,
+                0.25f,
+                WithAlpha(color, 0.88f),
+                39);
+            CreateAirIntentLabel(
+                airOverlayRoot,
+                midpoint + new Vector3(0f, 0.16f, 0f),
+                barrier.IsSupplemental
+                    ? "BARCAP RELEASE SCREEN"
+                    : "BARCAP RELEASE LINE",
+                WithAlpha(color, 0.92f),
+                39);
+
+            var barrierTiles = barrier.BarrierTileIds.ToHashSet();
+            foreach (var coverage in coverages.Where(coverage =>
+                         coverage.BarrierId == barrier.BarrierId
+                         || coverage.CoveredBarrierTileIds.Any(
+                                barrierTiles.Contains)
+                            && BarcapInterceptGeometry.IsApproachCompatible(
+                                coverage,
+                                barrier)))
+            {
+                var coveredTiles = barrier.BarrierTileIds
+                    .Where(coverage.CoveredBarrierTileIds.Contains)
+                    .ToList();
+                var coveredPoints = BarcapInterceptGeometry
+                    .GetOperationalBarrierPointsFeet(
+                        coveredTiles,
+                        coverage.ThreatReferenceTileId,
+                        tileDistanceKm,
+                        coverage.WeaponReleaseStandoffKm)
+                    .Select(AirPositionToMapPosition)
+                    .ToList();
+                if (coveredPoints.Count == 0)
+                    continue;
+
+                if (coveredPoints.Count == 1)
+                {
+                    CreateAirIntentCircle(
+                        $"BARCAP Station Coverage {ShortId(barrier.BarrierId)}",
+                        airOverlayRoot,
+                        coveredPoints[0],
+                        0.16f,
+                        WithAlpha(color, 0.98f),
+                        BarcapBarrierLineWidth * 1.35f,
+                        -0.38f,
+                        40);
+                    continue;
+                }
+
+                CreateAirIntentPolyline(
+                    $"BARCAP Station Coverage {ShortId(barrier.BarrierId)}",
+                    airOverlayRoot,
+                    coveredPoints,
+                    WithAlpha(color, 0.98f),
+                    BarcapBarrierLineWidth * 1.35f,
+                    -0.38f,
+                    40);
+            }
+        }
+
+        private Vector3 GetTileMapCenter(Vector3Int tileId)
+        {
+            return GetMissionAreaMapCenter(new AirMissionArea(tileId, 0));
         }
 
         private void CreateAirIntentVisuals(AirFlight flight, Alliance alliance)

@@ -227,6 +227,8 @@ namespace Models.Gameplay.Campaign
 
                 packages.Add(package);
                 request.State = request.IsSupportRequest
+                                || request.RequestType
+                                == AirMissionRequestType.BarrierCombatAirPatrol
                     ? AirMissionRequestState.PartiallyFulfilled
                     : AirMissionRequestState.InProgress;
 
@@ -377,6 +379,28 @@ namespace Models.Gameplay.Campaign
                 reason);
         }
 
+        public void ReopenFulfilledRequest(
+            Guid requestId,
+            DateTime currentTime,
+            string reason)
+        {
+            var request = GetRequest(requestId);
+            if (request == null)
+                throw new InvalidOperationException(
+                    $"Mission request {requestId} does not exist.");
+            if (request.State != AirMissionRequestState.Fulfilled)
+                return;
+
+            request.State = AirMissionRequestState.Actionable;
+            AddDiagnostic(new AirTaskingDiagnostic
+            {
+                RecordedAt = currentTime,
+                MissionRequestId = requestId,
+                Code = "request-coverage-reopened",
+                Message = reason
+            });
+        }
+
         public void RecordRequestDeferred(Guid requestId, DateTime currentTime, string reason)
         {
             AddDiagnostic(new AirTaskingDiagnostic
@@ -441,15 +465,22 @@ namespace Models.Gameplay.Campaign
             var flights = package.Flights;
             if (flights.Count == 0)
                 return "The package proposal must contain valid flights.";
+            var spatialBarcap = request.RequestType
+                                == AirMissionRequestType.BarrierCombatAirPatrol
+                                && request.BarcapBarrier?.BarrierTileIds?.Count > 0;
             foreach (var flight in flights)
             {
                 if (!flight.TryValidateRoute(out _))
                     return "A proposed flight has an invalid materialized route.";
+                var satisfiesMissionGeometry = spatialBarcap
+                    ? HasValidSpatialBarcapCoverage(request, flight)
+                    : request.MissionArea.Contains(
+                        flight.MissionArea.CenterTileId);
                 if (flight.PlannedTakeoffTime < package.CreatedAt + AirPackage.PreparationDelay
                     || flight.EffectStart < request.EffectStart
                     || flight.EffectEnd > request.EffectEnd
                     || flight.EffectEnd < flight.EffectStart
-                    || !request.MissionArea.Contains(flight.MissionArea.CenterTileId))
+                    || !satisfiesMissionGeometry)
                 {
                     return "A proposed flight route does not satisfy its request.";
                 }
@@ -472,10 +503,34 @@ namespace Models.Gameplay.Campaign
                 || supportingFlightIds.Distinct().Count() != supportingFlightIds.Count)
                 return "The package proposal contains invalid or duplicate support flights.";
             if (!request.IsSupportRequest
-                && aircraftIds.Count < Math.Max(1, request.DesiredAircraftStrength))
+                && aircraftIds.Count < (request.RequestType
+                    == AirMissionRequestType.BarrierCombatAirPatrol
+                        ? 1
+                        : Math.Max(1, request.DesiredAircraftStrength)))
                 return "The package proposal cannot deliver the requested combat effect.";
 
             return string.Empty;
+        }
+
+        private static bool HasValidSpatialBarcapCoverage(
+            AirMissionRequest request,
+            AirFlight flight)
+        {
+            var barrier = request.BarcapBarrier;
+            var coverage = flight.PlannedBarcapCoverage;
+            if (barrier?.BarrierTileIds == null
+                || coverage?.CoveredBarrierTileIds == null
+                || coverage.BarrierId != barrier.BarrierId
+                || coverage.ThreatReferenceTileId
+                != barrier.ThreatReferenceTileId
+                || coverage.CoveredBarrierTileIds.Count == 0)
+            {
+                return false;
+            }
+
+            var barrierTiles = barrier.BarrierTileIds.ToHashSet();
+            return coverage.CoveredBarrierTileIds
+                .All(barrierTiles.Contains);
         }
 
         private bool TryPlanSupportReservations(

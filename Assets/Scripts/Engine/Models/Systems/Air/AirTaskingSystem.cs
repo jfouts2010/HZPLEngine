@@ -19,6 +19,7 @@ namespace Engine.Models
         private readonly AirControlAssessmentService airControlAssessmentService;
         private readonly AirMissionRequestGenerator requestGenerator;
         private readonly AirPackageBuilder packageBuilder;
+        private readonly ProjectedAirEffectService projectedEffects;
         private readonly AircraftReservationService aircraftReservations;
         private readonly AllianceAirTaskingCommander blueforCommander;
         private readonly AllianceAirTaskingCommander redforCommander;
@@ -30,7 +31,9 @@ namespace Engine.Models
         {
             this.gameManager = gameManager;
             planningIntelligence = new AirPlanningIntelligence(gameManager);
-            var projectedEffects = new ProjectedAirEffectService();
+            projectedEffects = new ProjectedAirEffectService(
+                gameManager,
+                module);
             priorityService = new AirMissionPriorityService(module);
             airControlAssessmentService = new AirControlAssessmentService(
                 gameManager.CampaignTiles,
@@ -84,6 +87,15 @@ namespace Engine.Models
             return GetPackages()
                 .SelectMany(package => package.Flights)
                 .Where(flight => flight.IsAirborne && !flight.HasPhysicallyEnded);
+        }
+
+        public bool RetainsProjectedBarcapCoverage(AirFlight flight)
+        {
+            var coverage = flight?.PlannedBarcapCoverage;
+            return coverage != null
+                   && projectedEffects.RetainsPlannedBarcapWeaponCapability(
+                       flight,
+                       coverage);
         }
 
         public void Initialize()
@@ -254,6 +266,7 @@ namespace Engine.Models
         {
             var evaluations = 0;
             var packagesCreated = 0;
+            ReopenFulfilledBarcapCoverageGaps(commander);
             var requests = commander.MissionRequests
                 .Where(request => !request.IsTerminal
                                   && request.PlanningCycle == commander.PlanningCycle
@@ -265,6 +278,7 @@ namespace Engine.Models
                 .ThenBy(request => request.MissionArea.CenterTileId.y)
                 .ThenBy(request => request.MissionArea.CenterTileId.z)
                 .ToList();
+            requests = OrderBarcapCoverageFirst(commander, requests);
 
             foreach (var request in requests)
             {
@@ -320,6 +334,68 @@ namespace Engine.Models
                     gameManager.CurrentTime,
                     commitReason);
             }
+        }
+
+        private void ReopenFulfilledBarcapCoverageGaps(
+            AllianceAirTaskingCommander commander)
+        {
+            var planningStart =
+                gameManager.CurrentTime + AirPackage.PreparationDelay;
+            var requestsToReopen = commander.MissionRequests
+                .Where(request =>
+                    request.State == AirMissionRequestState.Fulfilled
+                    && request.PlanningCycle == commander.PlanningCycle
+                    && request.EffectEnd > planningStart
+                    && request.RequestType ==
+                        AirMissionRequestType.BarrierCombatAirPatrol
+                    && request.BarcapBarrier?.BarrierTileIds?.Count > 0)
+                .Where(request => projectedEffects.TryFindFirstBarcapCoverageGap(
+                    commander,
+                    request,
+                    planningStart,
+                    out _,
+                    out _))
+                .ToList();
+            foreach (var request in requestsToReopen)
+            {
+                commander.ReopenFulfilledRequest(
+                    request.MissionRequestId,
+                    gameManager.CurrentTime,
+                    "Projected BARCAP coverage developed a spatial or temporal gap.");
+            }
+        }
+
+        private List<AirMissionRequest> OrderBarcapCoverageFirst(
+            AllianceAirTaskingCommander commander,
+            IReadOnlyList<AirMissionRequest> normallyOrdered)
+        {
+            var planningStart = gameManager.CurrentTime + AirPackage.PreparationDelay;
+            var barcaps = normallyOrdered
+                .Where(request => request.RequestType
+                                  == AirMissionRequestType.BarrierCombatAirPatrol
+                                  && request.BarcapBarrier?.BarrierTileIds?.Count > 0)
+                .OrderBy(request => projectedEffects
+                    .GetProjectedBarcapCoverageFraction(
+                        commander,
+                        request,
+                        planningStart))
+                .ThenByDescending(request => request.Priority)
+                .ThenBy(request => request.MissionArea.CenterTileId.x)
+                .ThenBy(request => request.MissionArea.CenterTileId.y)
+                .ThenBy(request => request.MissionArea.CenterTileId.z)
+                .ToList();
+            if (barcaps.Count < 2)
+                return normallyOrdered.ToList();
+
+            var nextBarcap = 0;
+            return normallyOrdered
+                .Select(request =>
+                    request.RequestType
+                    == AirMissionRequestType.BarrierCombatAirPatrol
+                    && request.BarcapBarrier?.BarrierTileIds?.Count > 0
+                        ? barcaps[nextBarcap++]
+                        : request)
+                .ToList();
         }
 
         private AllianceAirDoctrine GetDoctrine(Alliance alliance)

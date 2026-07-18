@@ -234,6 +234,34 @@ namespace Models.Gameplay.Campaign
             }
         }
 
+        public BarcapStationCoverage ActiveBarcapCoverage
+        {
+            get
+            {
+                if (executionPhase != FlightExecutionPhase.Executing
+                    || route.Count == 0)
+                    return null;
+
+                for (var index = Math.Min(currentWaypointIndex, route.Count - 1);
+                     index >= 0;
+                     index--)
+                {
+                    var waypoint = route[index];
+                    if (waypoint.Action == AirWaypointAction.StationEntry)
+                        return waypoint.BarcapCoverage;
+                    if (waypoint.Action == AirWaypointAction.ReturnToBase)
+                        return null;
+                }
+
+                return null;
+            }
+        }
+
+        public BarcapStationCoverage PlannedBarcapCoverage =>
+            EffectWaypoints
+                .Select(waypoint => waypoint.BarcapCoverage)
+                .FirstOrDefault(coverage => coverage != null);
+
         public void MaterializeRoute(
             IEnumerable<AirWaypoint> waypoints)
         {

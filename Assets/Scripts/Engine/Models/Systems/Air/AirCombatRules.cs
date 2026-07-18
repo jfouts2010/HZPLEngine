@@ -57,8 +57,25 @@ namespace Engine.Models
         private const float HotThreatAspectDegrees = 30f;
         private const float BarcapThreatLookaheadMinutes = 20f;
         private const float BarcapResponsePaddingTiles = 2f;
+        private const float BarcapCommitMarginMinutes = 1.5f;
+        private const float BarcapBoundaryToleranceTiles = 0.1f;
+        private const float BarcapDefensiveBufferTiles = 0.15f;
 
         public static AirCombatCommand Decide(
+            AirCombatFlightView source,
+            AirCombatFrame frame,
+            IReadOnlyDictionary<Guid, OrdnanceTypeDefinition> ordnanceTypes,
+            AllianceAirDoctrine doctrine)
+        {
+            var command = DecideCore(
+                source,
+                frame,
+                ordnanceTypes,
+                doctrine);
+            return EnforceBarcapDefensiveBoundary(source, frame, command);
+        }
+
+        private static AirCombatCommand DecideCore(
             AirCombatFlightView source,
             AirCombatFrame frame,
             IReadOnlyDictionary<Guid, OrdnanceTypeDefinition> ordnanceTypes,
@@ -473,9 +490,9 @@ namespace Engine.Models
                                                  out var track)
                                              && TryGetBarcapThreatMinutes(
                                                  defender,
-                                                 target,
                                                  track,
                                                  frame,
+                                                 ordnanceTypes,
                                                  out minutes);
                             return new
                             {
@@ -610,6 +627,7 @@ namespace Engine.Models
                     HotThreat = IsHotThreatWithinSelfDefenseEnvelope(
                         source,
                         candidate,
+                        frame,
                         ordnanceTypes),
                     Distance = DistanceKm(
                         source.Flight.PositionFeet,
@@ -677,7 +695,11 @@ namespace Engine.Models
             if (isSelfDefenseTarget)
                 return true;
 
-            if (IsHotThreatWithinSelfDefenseEnvelope(source, target, ordnanceTypes))
+            if (IsHotThreatWithinSelfDefenseEnvelope(
+                    source,
+                    target,
+                    frame,
+                    ordnanceTypes))
                 return true;
 
             if (!IsCounterAirMission(source.Flight.MissionType))
@@ -685,6 +707,7 @@ namespace Engine.Models
                 return IsHotThreatWithinSelfDefenseEnvelope(
                     source,
                     target,
+                    frame,
                     ordnanceTypes);
             }
 
@@ -709,9 +732,9 @@ namespace Engine.Models
                        && assignedTargetId == target.Flight.FlightId
                        && TryGetBarcapThreatMinutes(
                            source,
-                           target,
                            track,
                            frame,
+                           ordnanceTypes,
                            out _);
             }
 
@@ -732,15 +755,68 @@ namespace Engine.Models
 
         private static bool TryGetBarcapThreatMinutes(
             AirCombatFlightView source,
-            AirCombatFlightView target,
             IADSTrack track,
             AirCombatFrame frame,
+            IReadOnlyDictionary<Guid, OrdnanceTypeDefinition> ordnanceTypes,
             out float minutesToEntry)
         {
             minutesToEntry = float.MaxValue;
             if (track == null || track.IsStale)
                 return false;
 
+            var coverage = source.Flight.ActiveBarcapCoverage;
+            if (coverage?.CoveredBarrierTileIds?.Count >= 1)
+            {
+                var currentResponseDepthKm =
+                    CalculateCurrentBarcapResponseDepthKm(
+                        source,
+                        coverage,
+                        ordnanceTypes);
+                if (BarcapInterceptGeometry.IsOnDefendedSide(
+                        track.LastKnownPositionFeet,
+                        coverage.CoveredBarrierTileIds,
+                        coverage.ThreatReferenceTileId,
+                        frame.TileDistanceKm,
+                        coverage.WeaponReleaseStandoffKm)
+                    && DistanceToBarrierKm(
+                           track.LastKnownPositionFeet,
+                           coverage.CoveredBarrierTileIds,
+                           coverage.ThreatReferenceTileId,
+                           frame.TileDistanceKm,
+                           coverage.WeaponReleaseStandoffKm)
+                       <= currentResponseDepthKm)
+                {
+                    minutesToEntry = 0f;
+                    return true;
+                }
+
+                if (!BarcapInterceptGeometry.TryPredictBarrierCrossing(
+                        track.LastKnownPositionFeet,
+                        track.EstimatedHeadingDegrees,
+                        track.EstimatedSpeedKnots,
+                        coverage.CoveredBarrierTileIds,
+                        coverage.ThreatReferenceTileId,
+                        frame.TileDistanceKm,
+                        coverage.WeaponReleaseStandoffKm,
+                        BarcapThreatLookaheadMinutes,
+                        out var crossingFeet,
+                        out var minutesToCrossing))
+                    return false;
+
+                var interceptMinutes = CalculateBarcapInterceptMinutes(
+                    source,
+                    crossingFeet,
+                    ordnanceTypes);
+                if (minutesToCrossing
+                    > interceptMinutes + BarcapCommitMarginMinutes)
+                    return false;
+
+                minutesToEntry = minutesToCrossing;
+                return true;
+            }
+
+            // Legacy or authored BARCAP routes without a materialized barrier
+            // assignment retain bounded circular-area authorization.
             var area = source.Flight.MissionArea;
             var centerFeet = AirspaceGeometry.TileCenterFeet(
                 area.CenterTileId,
@@ -826,6 +902,7 @@ namespace Engine.Models
                    || IsHotThreatWithinSelfDefenseEnvelope(
                        source,
                        target,
+                       frame,
                        ordnanceTypes);
         }
 
@@ -986,8 +1063,25 @@ namespace Engine.Models
         private static bool IsHotThreatWithinSelfDefenseEnvelope(
             AirCombatFlightView source,
             AirCombatFlightView target,
+            AirCombatFrame frame,
             IReadOnlyDictionary<Guid, OrdnanceTypeDefinition> ordnanceTypes)
         {
+            if (source.Flight.MissionType
+                    == AirMissionRequestType.BarrierCombatAirPatrol
+                && source.Flight.ActiveBarcapCoverage is BarcapStationCoverage coverage
+                && coverage.CoveredBarrierTileIds != null
+                && coverage.CoveredBarrierTileIds.Count > 0
+                && (!frame.TryGetCurrentTrack(
+                        source.Alliance,
+                        target.Flight.FlightId,
+                        out var track)
+                    || !IsBarcapDefensiveContact(
+                        source,
+                        track,
+                        frame,
+                        ordnanceTypes)))
+                return false;
+
             if (TargetAspect(source.Flight, target.Flight) > HotThreatAspectDegrees)
                 return false;
 
@@ -1008,6 +1102,163 @@ namespace Engine.Models
                                  source.Flight)
                              && targetAltitudeFeet >= ordnance.MinimumTargetAltitudeFeet
                              && targetAltitudeFeet <= ordnance.MaximumTargetAltitudeFeet);
+        }
+
+        private static bool IsBarcapDefensiveContact(
+            AirCombatFlightView source,
+            IADSTrack track,
+            AirCombatFrame frame,
+            IReadOnlyDictionary<Guid, OrdnanceTypeDefinition> ordnanceTypes)
+        {
+            return TryGetBarcapThreatMinutes(
+                source,
+                track,
+                frame,
+                ordnanceTypes,
+                out _);
+        }
+
+        private static AirCombatCommand EnforceBarcapDefensiveBoundary(
+            AirCombatFlightView source,
+            AirCombatFrame frame,
+            AirCombatCommand command)
+        {
+            var coverage = source.Flight.ActiveBarcapCoverage;
+            if (source.Flight.MissionType
+                    != AirMissionRequestType.BarrierCombatAirPatrol
+                || command == null
+                || coverage?.CoveredBarrierTileIds == null
+                || coverage.CoveredBarrierTileIds.Count < 1
+                || !command.HasAimPoint
+                || command.Maneuver == AirCombatManeuver.FollowRoute)
+                return command;
+
+            var toleranceKm = frame.TileDistanceKm
+                              * BarcapBoundaryToleranceTiles;
+            if (command.Intent == AirCombatIntent.EngageTarget
+                && !BarcapInterceptGeometry.IsOnDefendedSide(
+                    source.Flight.PositionFeet,
+                    coverage.CoveredBarrierTileIds,
+                    coverage.ThreatReferenceTileId,
+                    frame.TileDistanceKm,
+                    coverage.WeaponReleaseStandoffKm,
+                    toleranceKm))
+            {
+                return RouteCommand(
+                    source,
+                    frame.Time,
+                    AirCombatIntent.FollowMission,
+                    "Defensive barrier reached; returning to the BARCAP station.");
+            }
+
+            var clampedAim = BarcapInterceptGeometry.ClampToDefendedSide(
+                command.AimPointFeet,
+                coverage.CoveredBarrierTileIds,
+                coverage.ThreatReferenceTileId,
+                frame.TileDistanceKm,
+                coverage.WeaponReleaseStandoffKm,
+                frame.TileDistanceKm * BarcapDefensiveBufferTiles);
+            if ((clampedAim - command.AimPointFeet).sqrMagnitude < 1f)
+                return command;
+
+            command.AimPointFeet = clampedAim;
+            command.Reason = string.IsNullOrWhiteSpace(command.Reason)
+                ? "Holding on the defended side of the BARCAP barrier."
+                : command.Reason
+                  + " Holding on the defended side of the BARCAP barrier.";
+            return command;
+        }
+
+        private static float DistanceToBarrierKm(
+            Vector3 positionFeet,
+            IReadOnlyList<Vector3Int> coveredBarrierTiles,
+            Vector3Int threatReferenceTileId,
+            float tileDistanceKm,
+            float weaponReleaseStandoffKm)
+        {
+            if (coveredBarrierTiles == null || coveredBarrierTiles.Count == 0)
+                return float.MaxValue;
+
+            return BarcapInterceptGeometry.DistanceToOperationalBarrierKm(
+                positionFeet,
+                coveredBarrierTiles,
+                threatReferenceTileId,
+                tileDistanceKm,
+                weaponReleaseStandoffKm);
+        }
+
+        private static float CalculateCurrentBarcapResponseDepthKm(
+            AirCombatFlightView source,
+            BarcapStationCoverage coverage,
+            IReadOnlyDictionary<Guid, OrdnanceTypeDefinition> ordnanceTypes)
+        {
+            var currentPreferredLaunchRangeKm = source.LiveAircraft
+                .SelectMany(aircraft => aircraft.Loadout)
+                .Where(item => item.Count > 0
+                               && ordnanceTypes.TryGetValue(
+                                   item.OrdnanceTypeDefinitionId,
+                                   out var definition)
+                               && IsAirToAir(definition))
+                .Select(item => ordnanceTypes[item.OrdnanceTypeDefinitionId])
+                .Select(definition =>
+                    EffectiveMaximumRangeKm(
+                        definition,
+                        source.Flight)
+                    * PreferredRangeFraction)
+                .DefaultIfEmpty(0f)
+                .Max();
+            var plannedKinematicResponseKm = Math.Max(
+                0f,
+                coverage.PlannedResponseRadiusKm
+                - coverage.PlannedPreferredLaunchRangeKm);
+            return Mathf.Clamp(
+                plannedKinematicResponseKm + currentPreferredLaunchRangeKm,
+                0f,
+                coverage.PlannedResponseRadiusKm);
+        }
+
+        private static float CalculateBarcapInterceptMinutes(
+            AirCombatFlightView source,
+            Vector3 crossingFeet,
+            IReadOnlyDictionary<Guid, OrdnanceTypeDefinition> ordnanceTypes)
+        {
+            var weapon = source.LiveAircraft
+                .SelectMany(aircraft => aircraft.Loadout)
+                .Where(item => item.Count > 0
+                               && ordnanceTypes.TryGetValue(
+                                   item.OrdnanceTypeDefinitionId,
+                                   out var definition)
+                               && IsAirToAir(definition))
+                .Select(item => ordnanceTypes[item.OrdnanceTypeDefinitionId])
+                .OrderByDescending(definition =>
+                    EffectiveMaximumRangeKm(
+                        definition,
+                        source.Flight))
+                .ThenBy(definition => definition.PreparationSeconds)
+                .ThenBy(definition => definition.OrdnanceTypeDefinitionId)
+                .FirstOrDefault();
+            var preferredLaunchRangeKm = weapon == null
+                ? 0f
+                : EffectiveMaximumRangeKm(weapon, source.Flight)
+                  * PreferredRangeFraction;
+            var travelDistanceKm = Math.Max(
+                0f,
+                DistanceKm(source.Flight.PositionFeet, crossingFeet)
+                - preferredLaunchRangeKm);
+            var travelMinutes = travelDistanceKm
+                                / Math.Max(
+                                    1f,
+                                    source.AircraftType.CombatSpeedKnots
+                                    * 1.852f)
+                                * 60f;
+            var preparationMinutes = weapon == null
+                ? 0f
+                : weapon.PreparationSeconds
+                  / Math.Max(
+                      0.01f,
+                      source.AircraftType.OrdnanceEmploymentEfficiency)
+                  / 60f;
+            return travelMinutes + preparationMinutes;
         }
 
         private static bool IsCounterAirMission(AirMissionRequestType missionType)

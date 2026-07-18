@@ -171,7 +171,7 @@ namespace Engine.Monobehaviours.Managers
 
         public GroundTaskingCommander GetGroundTaskingCommander(Alliance alliance)
         {
-            if (!_campaignStarted || _groundTaskingSystem == null)
+            if (_groundTaskingSystem == null)
                 return null;
 
             return _groundTaskingSystem.GetCommander(alliance);
@@ -188,6 +188,12 @@ namespace Engine.Monobehaviours.Managers
         public IReadOnlyList<AirFlight> GetAirborneFlights()
         {
             return _airTaskingSystem.GetAirborneFlights().ToList();
+        }
+
+        public bool RetainsProjectedBarcapCoverage(AirFlight flight)
+        {
+            return _airTaskingSystem != null
+                   && _airTaskingSystem.RetainsProjectedBarcapCoverage(flight);
         }
 
         public AllianceIADS GetAllianceIADS(Alliance alliance)

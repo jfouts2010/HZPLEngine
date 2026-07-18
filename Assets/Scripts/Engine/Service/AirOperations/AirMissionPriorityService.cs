@@ -53,11 +53,14 @@ namespace Engine.Service
         private const float KilometersPerNauticalMile = 1.852f;
 
         private readonly IReadOnlyDictionary<Guid, AircraftTypeDefinition> aircraftTypes;
+        private readonly IReadOnlyDictionary<Guid, OrdnanceTypeDefinition> ordnanceTypes;
 
         public AirMissionPriorityService(ModuleDefinition module)
         {
             aircraftTypes = module.AircraftTypeDefinitions
                 .ToDictionary(definition => definition.AircraftTypeDefinitionId);
+            ordnanceTypes = module.OrdnanceTypeDefinitions
+                .ToDictionary(definition => definition.OrdnanceTypeDefinitionId);
         }
 
         public void Score(
@@ -100,7 +103,7 @@ namespace Engine.Service
             var barcapFrontPriority = request.PriorityComponents.TryGetValue(
                 "barcapFrontPriority",
                 out var rawBarcapFrontPriority)
-                ? Mathf.Clamp01(rawBarcapFrontPriority / 2.5f)
+                ? Mathf.Clamp01(rawBarcapFrontPriority)
                 : 0f;
             var urgency = request.RequestType switch
             {
@@ -236,6 +239,46 @@ namespace Engine.Service
             return aircraftType != null
                    && aircraftType.SupportCapability == AirSupportCapability.None
                    && aircraftType.AirInterferenceCapability > 0f;
+        }
+
+        public bool CanPerformCombatMission(AircraftTypeDefinition aircraftType)
+        {
+            if (aircraftType == null
+                || aircraftType.SupportCapability != AirSupportCapability.None)
+                return false;
+            if (CanPerformAirCombat(aircraftType))
+                return true;
+
+            return aircraftType.CompatibleOrdnanceTypeDefinitionIds.Any(id =>
+                ordnanceTypes.TryGetValue(id, out var ordnance)
+                && (ordnance.EmploymentCategory
+                    == OrdnanceEmploymentCategory.AirToGroundPrecision
+                    || ordnance.EmploymentCategory
+                    == OrdnanceEmploymentCategory.AirToGroundUnguided
+                    || ordnance.EmploymentCategory
+                    == OrdnanceEmploymentCategory.AntiRadiation));
+        }
+
+        public AircraftTypeDefinition GetAircraftType(Guid aircraftTypeDefinitionId)
+        {
+            return aircraftTypes.TryGetValue(aircraftTypeDefinitionId, out var aircraftType)
+                ? aircraftType
+                : null;
+        }
+
+        public float GetLongestAirToAirWeaponRangeKm(
+            AircraftTypeDefinition aircraftType)
+        {
+            if (aircraftType == null)
+                return 0f;
+
+            return aircraftType.CompatibleOrdnanceTypeDefinitionIds
+                .Where(ordnanceTypes.ContainsKey)
+                .Select(id => ordnanceTypes[id])
+                .Where(AirLoadoutPlanner.IsAirToAir)
+                .Select(ordnance => Math.Max(0f, ordnance.MaximumRangeKm))
+                .DefaultIfEmpty(0f)
+                .Max();
         }
 
         public float CalculatePowerNear(

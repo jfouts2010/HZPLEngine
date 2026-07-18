@@ -27,6 +27,29 @@ namespace Engine.Service
             return NeighborDirections.Select(direction => tileId + direction);
         }
 
+        public static IReadOnlyList<Vector3Int> TilesAlongLine(
+            Vector3Int start,
+            Vector3Int end)
+        {
+            var distance = AirMissionArea.HexDistance(start, end);
+            if (distance == 0)
+                return new[] { start };
+
+            var tiles = new List<Vector3Int>(distance + 1);
+            for (var index = 0; index <= distance; index++)
+            {
+                var progress = index / (float)distance;
+                var tile = CubeRound(
+                    Mathf.Lerp(start.x, end.x, progress),
+                    Mathf.Lerp(start.y, end.y, progress),
+                    Mathf.Lerp(start.z, end.z, progress));
+                if (tiles.Count == 0 || tiles[tiles.Count - 1] != tile)
+                    tiles.Add(tile);
+            }
+
+            return tiles;
+        }
+
         public static Vector3 TileCenterFeet(
             Vector3Int cubeCoordinate,
             float tileDistanceKm,

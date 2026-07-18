@@ -18,6 +18,7 @@ namespace Models.Gameplay.Campaign
         public int PlanningCycle;
         public int DesiredAircraftStrength;
         public int DesiredSupportSlots;
+        public BarcapBarrierPlan BarcapBarrier;
         public float Priority;
         public Dictionary<string, float> PriorityComponents = new Dictionary<string, float>();
         public string Rationale = string.Empty;

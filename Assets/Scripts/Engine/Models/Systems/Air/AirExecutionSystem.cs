@@ -593,6 +593,19 @@ namespace Engine.Models
                 {
                     if (package.LifecycleState == AirTaskingLifecycleState.Completed)
                     {
+                        var request = commander.GetRequest(
+                            package.MissionRequestId);
+                        if (request?.RequestType
+                                == AirMissionRequestType
+                                    .BarrierCombatAirPatrol
+                            && request.BarcapBarrier?.BarrierTileIds?.Count > 0)
+                        {
+                            // Spatial BARCAP request fulfillment is owned by
+                            // projected whole-barrier coverage, not the outcome
+                            // of any one rotation.
+                            continue;
+                        }
+
                         commander.MarkRequestFulfilled(
                             package.MissionRequestId,
                             currentTime,
