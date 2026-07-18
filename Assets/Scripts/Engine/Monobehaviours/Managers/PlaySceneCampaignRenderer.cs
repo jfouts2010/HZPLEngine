@@ -179,6 +179,7 @@ namespace Engine.Monobehaviours.Managers
         private Toggle overlayMovementToggle;
         private Toggle overlayRoutesToggle;
         private Toggle overlayBarriersToggle;
+        private Toggle overlayTerritoryBoundariesToggle;
         private Toggle overlaySamToggle;
         private Toggle overlayOrdnanceToggle;
         private Toggle overlayRailToggle;
@@ -632,6 +633,7 @@ namespace Engine.Monobehaviours.Managers
             overlayMovementToggle = root.Q<Toggle>("overlay-movement-toggle");
             overlayRoutesToggle = root.Q<Toggle>("overlay-routes-toggle");
             overlayBarriersToggle = root.Q<Toggle>("overlay-barriers-toggle");
+            overlayTerritoryBoundariesToggle = root.Q<Toggle>("overlay-territory-boundaries-toggle");
             overlaySamToggle = root.Q<Toggle>("overlay-sam-toggle");
             overlayOrdnanceToggle = root.Q<Toggle>("overlay-ordnance-toggle");
             overlayRailToggle = root.Q<Toggle>("overlay-rail-toggle");
@@ -962,6 +964,11 @@ namespace Engine.Monobehaviours.Managers
                 "Barriers",
                 true,
                 _ => RefreshAirOverlaysForSelection());
+            ConfigureOverlayToggle(
+                overlayTerritoryBoundariesToggle,
+                "TerritoryBoundaries",
+                true,
+                _ => RefreshTerritoryBoundaries());
             ConfigureOverlayToggle(overlaySamToggle, "SamCoverage", true, _ => RefreshSamCoverageOverlay());
             ConfigureOverlayToggle(overlayRailToggle, "Railways", true, value =>
             {
@@ -1008,6 +1015,17 @@ namespace Engine.Monobehaviours.Managers
                 if (child.name.StartsWith("Air Route ", StringComparison.Ordinal))
                     child.gameObject.SetActive(visible);
             }
+        }
+
+        private void RefreshTerritoryBoundaries()
+        {
+            if (tilemap == null)
+                return;
+
+            foreach (var campaignTile in tilesById.Values)
+                tilemap.SetTile(GetCell(campaignTile.Coordinates), GetRenderTile(campaignTile));
+
+            tilemap.RefreshAllTiles();
         }
 
         private void ConfigureAirControlTile(Vector3Int cell, Vector3 hexCenter)
@@ -1133,7 +1151,19 @@ namespace Engine.Monobehaviours.Managers
             PlayerPrefs.DeleteKey("HZPL.Workbench.Window.Height");
             PlayerPrefs.DeleteKey("HZPL.Workbench.Panel.Width");
             PlayerPrefs.DeleteKey("HZPL.Workbench.Panel.Hidden");
-            foreach (var name in new[] { "Units", "Combats", "Movement", "Routes", "Ordnance", "Railways", "AirControl" })
+            foreach (var name in new[]
+                     {
+                         "Units",
+                         "Combats",
+                         "Movement",
+                         "Routes",
+                         "Barriers",
+                         "TerritoryBoundaries",
+                         "SamCoverage",
+                         "Ordnance",
+                         "Railways",
+                         "AirControl"
+                     })
                 PlayerPrefs.DeleteKey($"HZPL.Workbench.Overlay.{name}");
             if (hudPanel != null)
             {
@@ -1147,6 +1177,8 @@ namespace Engine.Monobehaviours.Managers
             SetOverlayToggleValue(overlayMovementToggle, true);
             SetOverlayToggleValue(overlayRoutesToggle, true);
             SetOverlayToggleValue(overlayBarriersToggle, true);
+            SetOverlayToggleValue(overlayTerritoryBoundariesToggle, true);
+            SetOverlayToggleValue(overlaySamToggle, true);
             SetOverlayToggleValue(overlayOrdnanceToggle, true);
             SetOverlayToggleValue(overlayRailToggle, true);
             SetOverlayToggleValue(overlayAirControlToggle, false);
@@ -5904,7 +5936,9 @@ namespace Engine.Monobehaviours.Managers
             if (campaignTile.Surface == TileSurface.Ocean)
                 return $"Ocean:{campaignTile.Terrain}";
 
-            var borderMask = GetTerritoryBorderMask(campaignTile, controller);
+            var borderMask = AreTerritoryBoundariesVisible()
+                ? GetTerritoryBorderMask(campaignTile, controller)
+                : 0;
             var supplyOverlay = GetSupplyOverlayKey(campaignTile.Coordinates);
             return $"Land:{campaignTile.Terrain}:{campaignTile.Urbanization}:{campaignTile.ForestCover}:{controller}:{borderMask}:{supplyOverlay}";
         }
@@ -5916,7 +5950,9 @@ namespace Engine.Monobehaviours.Managers
 
             tileDataById.TryGetValue(campaignTile.Coordinates, out var tileData);
             var controller = tileData is LandTileData landData ? landData.Controller : Alliance.Neutral;
-            var borderMask = GetTerritoryBorderMask(campaignTile, controller);
+            var borderMask = AreTerritoryBoundariesVisible()
+                ? GetTerritoryBorderMask(campaignTile, controller)
+                : 0;
 
             var texture = CreateTileTexture(campaignTile, controller, borderMask);
             sprite = Sprite.Create(
@@ -5949,6 +5985,12 @@ namespace Engine.Monobehaviours.Managers
             texture.SetPixels(pixels);
             texture.Apply();
             return texture;
+        }
+
+        private bool AreTerritoryBoundariesVisible()
+        {
+            return overlayTerritoryBoundariesToggle == null
+                   || overlayTerritoryBoundariesToggle.value;
         }
 
         private void FillTerrainPixels(Color[] pixels, CampaignTile campaignTile)

@@ -95,7 +95,7 @@ No third-party flight simulator is required for the current Standalone Module.
 | Select playback speed | **5 SEC** or **5 MIN** |
 | Advance while paused | **Next +5s** or **Next +5m**, depending on the selected increment |
 | Inspect the campaign | Use the **Tile**, **Ground**, **Air**, **Last Turn**, and **Diagnostics** tabs |
-| Toggle map information | Use the overlay palette for units, combat, movement, routes, SAM coverage, ordnance, railways, and air interference |
+| Toggle map information | Use the overlay palette for units, combat, movement, routes, BARCAP and territory boundaries, SAM coverage, ordnance, railways, and air interference |
 | Pan the map | <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>, arrow keys, middle-mouse drag, or right-mouse drag |
 | Zoom the map | Mouse wheel while the pointer is over the map |
 | Restore the interface | **Reset Layout** |
