@@ -2759,7 +2759,8 @@ namespace Engine.Monobehaviours.Managers
 
             AddAircraftDetailSection(flight, squadron);
             AddRouteDetailSection(flight);
-            AddSupportDetailSection(flight);
+            AddSupportDetailSection(flight, package);
+            AddAerialRefuelingDetailSection(flight);
             AddExecutionEventSection(flight);
             AddOrdnanceEmploymentSection(flight);
             if (flightDetailScroll != null)
@@ -2880,14 +2881,31 @@ namespace Engine.Monobehaviours.Managers
             flightDetailContent.Add(section);
         }
 
-        private void AddSupportDetailSection(AirFlight flight)
+        private void AddSupportDetailSection(
+            AirFlight flight,
+            AirPackage package)
         {
             var reservations = flight.SupportReservations;
-            if (reservations.Count == 0 && flight.ProvidedSupportSlots <= 0)
+            var supportingFlightIds = package?.SupportingFlightIds
+                                      ?? new List<Guid>();
+            if (reservations.Count == 0
+                && flight.ProvidedSupportSlots <= 0
+                && supportingFlightIds.Count == 0)
                 return;
 
             var section = CreateFlightDetailSection("SUPPORT COMMITMENTS");
-            AddFlightDetailMessage(section, $"Support capacity: {flight.ProvidedSupportSlots} slots");
+            if (flight.ProvidedSupportSlots > 0)
+            {
+                AddFlightDetailMessage(
+                    section,
+                    $"Support capacity: {flight.ProvidedSupportSlots} slots");
+            }
+            foreach (var supportingFlightId in supportingFlightIds)
+            {
+                AddFlightDetailMessage(
+                    section,
+                    $"Reserved tanker: FLT {ShortId(supportingFlightId)}");
+            }
             foreach (var reservation in reservations)
             {
                 AddFlightDetailMessage(
@@ -2895,7 +2913,68 @@ namespace Engine.Monobehaviours.Managers
                     $"{reservation.SlotCount} slots for PKG {ShortId(reservation.ConsumingPackageId)}  •  " +
                     $"{reservation.StartTime:MM-dd HH:mm} – {reservation.EndTime:HH:mm}");
             }
-            section.style.minHeight = 66f + reservations.Count * 23f;
+            section.style.minHeight =
+                66f + (reservations.Count + supportingFlightIds.Count) * 23f;
+            flightDetailContent.Add(section);
+        }
+
+        private void AddAerialRefuelingDetailSection(AirFlight flight)
+        {
+            var received = flight.AerialRefuelingRecords
+                .OrderByDescending(record => record.OccurredAt)
+                .ToList();
+            var provided = new List<AerialRefuelingRecord>();
+            foreach (var alliance in new[] { Alliance.Bluefor, Alliance.Redfor })
+            {
+                var commander = gameManager.GetAllianceAirTaskingCommander(alliance);
+                if (commander == null)
+                    continue;
+
+                provided.AddRange(commander.Packages
+                    .SelectMany(package => package.Flights)
+                    .SelectMany(receiver => receiver.AerialRefuelingRecords)
+                    .Where(record => record.TankerFlightId == flight.FlightId));
+            }
+
+            provided = provided
+                .OrderByDescending(record => record.OccurredAt)
+                .ToList();
+            if (received.Count == 0 && provided.Count == 0)
+                return;
+
+            var section = CreateFlightDetailSection("AERIAL REFUELING");
+            if (received.Count > 0)
+            {
+                AddFlightDetailMessage(
+                    section,
+                    $"Transfers received: {received.Count}");
+                foreach (var record in received.Take(12))
+                {
+                    AddFlightDetailMessage(
+                        section,
+                        $"{record.OccurredAt:MM-dd HH:mm} from FLT "
+                        + $"{ShortId(record.TankerFlightId)} - "
+                        + $"{record.FuelBefore:P0} to {record.FuelAfter:P0}");
+                }
+            }
+
+            if (provided.Count > 0)
+            {
+                AddFlightDetailMessage(
+                    section,
+                    $"Transfers provided: {provided.Count}");
+                foreach (var record in provided.Take(12))
+                {
+                    AddFlightDetailMessage(
+                        section,
+                        $"{record.OccurredAt:MM-dd HH:mm} to FLT "
+                        + $"{ShortId(record.ReceiverFlightId)} - "
+                        + $"{record.FuelBefore:P0} to {record.FuelAfter:P0}");
+                }
+            }
+
+            section.style.minHeight =
+                66f + Math.Min(24, received.Count + provided.Count) * 23f;
             flightDetailContent.Add(section);
         }
 

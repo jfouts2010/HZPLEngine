@@ -26,7 +26,7 @@ namespace Engine.Service
         private const float MaximumSupportStationHostileInterference = 0.10f;
         private const float MeaningfulOcaPresence = 0.10f;
         private const float MeaningfulBarcapPressure = 0.10f;
-        private const float BarcapFuelPlanningMarginSeconds = 60f;
+        private const float FuelPlanningMarginSeconds = 60f;
         private const float BarcapPreferredLaunchRangeFraction = 0.78f;
         private static readonly TimeSpan BarcapHandoffOverlap = TimeSpan.FromMinutes(10);
 
@@ -320,7 +320,10 @@ namespace Engine.Service
 
                     package = candidatePackage;
                     reason = $"Proposed one aircraft covering "
-                             + $"{coverage.CoveredBarrierTileIds.Count} barrier tiles.";
+                             + $"{coverage.CoveredBarrierTileIds.Count} barrier tiles"
+                             + (package.SupportingFlightIds.Count > 0
+                                 ? $" with {package.SupportingFlightIds.Count} tanker rotation(s)."
+                                 : ".");
                     return AirPackageBuildOutcome.Built;
                 }
 
@@ -1032,18 +1035,54 @@ namespace Engine.Service
             }
 
             var plannedEffectEnd = proposedEffectEnd;
-            if (request.RequestType == AirMissionRequestType.BarrierCombatAirPatrol)
+            if (request.FulfillmentPattern
+                == AirMissionRequestFulfillmentPattern.Sustained)
             {
                 foreach (var plan in plans)
                 {
-                    var usableFuelSeconds = plan.AircraftType.EnduranceHours
-                                            * 3600f
-                                            * (1f - commander.Doctrine.JokerFuelFraction)
-                                            - BarcapFuelPlanningMarginSeconds;
+                    var usableFuelSeconds =
+                        AirFuelRules.CalculateUsableSecondsUntilJoker(
+                            plan.AircraftType,
+                            commander.Doctrine)
+                        - FuelPlanningMarginSeconds;
                     var fuelLimitedEnd = plan.PlannedTakeoff
                                          + TimeSpan.FromSeconds(Math.Max(0f, usableFuelSeconds));
                     if (fuelLimitedEnd < plannedEffectEnd)
                         plannedEffectEnd = fuelLimitedEnd;
+                }
+            }
+
+            if (request.RequestType
+                == AirMissionRequestType.BarrierCombatAirPatrol
+                && barcapCoverage != null
+                && plans.Count == 1
+                && plannedEffectStart < plannedEffectEnd
+                && plans[0].AircraftType.CanReceiveAerialRefueling)
+            {
+                var receiverArea = CreateSustainedEffectArea(
+                    request,
+                    plans[0],
+                    barcapCoverage);
+                var reservations = projectedEffects.PlanAerialRefuelingCoverage(
+                    commander,
+                    receiverArea,
+                    package.PackageId,
+                    plans[0].Flight.AircraftIds.Count,
+                    plannedEffectStart,
+                    proposedEffectEnd,
+                    out var supportedUntil);
+                if (supportedUntil > plannedEffectEnd)
+                {
+                    plannedEffectEnd = supportedUntil < proposedEffectEnd
+                        ? supportedUntil
+                        : proposedEffectEnd;
+                    package.SupportingFlightIds.AddRange(
+                        reservations
+                            .Where(reservation =>
+                                reservation.StartTime < plannedEffectEnd)
+                            .Select(reservation => reservation.SupportingFlightId)
+                            .Distinct()
+                            .OrderBy(id => id));
                 }
             }
 
@@ -1347,21 +1386,10 @@ namespace Engine.Service
             }
             else if (request.FulfillmentPattern == AirMissionRequestFulfillmentPattern.Sustained)
             {
-                var effectArea = barcapCoverage == null
-                    ? new AirMissionArea(
-                        request.MissionArea.CenterTileId,
-                        request.MissionArea.RadiusTiles)
-                    : new AirMissionArea(
-                        AirspaceGeometry.TileCoordinateFromPositionFeet(
-                            plan.MissionEntryPosition
-                            + (plan.MissionExitPosition
-                               - plan.MissionEntryPosition) * 0.5f,
-                            gameManager.SimulationSettings.TileDistanceKM),
-                        Math.Max(
-                            1,
-                            Mathf.CeilToInt(
-                                barcapCoverage.PlannedResponseRadiusKm
-                                / gameManager.SimulationSettings.TileDistanceKM)));
+                var effectArea = CreateSustainedEffectArea(
+                    request,
+                    plan,
+                    barcapCoverage);
                 var stationEntry = NewWaypoint(
                     plan.MissionEntryPosition,
                     AirWaypointAction.StationEntry,
@@ -1421,6 +1449,30 @@ namespace Engine.Service
             }
 
             flight.MaterializeRoute(route);
+        }
+
+        private AirMissionArea CreateSustainedEffectArea(
+            AirMissionRequest request,
+            RoutePlan plan,
+            BarcapStationCoverage barcapCoverage)
+        {
+            if (barcapCoverage == null)
+            {
+                return new AirMissionArea(
+                    request.MissionArea.CenterTileId,
+                    request.MissionArea.RadiusTiles);
+            }
+
+            return new AirMissionArea(
+                AirspaceGeometry.TileCoordinateFromPositionFeet(
+                    plan.MissionEntryPosition
+                    + (plan.MissionExitPosition - plan.MissionEntryPosition) * 0.5f,
+                    gameManager.SimulationSettings.TileDistanceKM),
+                Math.Max(
+                    1,
+                    Mathf.CeilToInt(
+                        barcapCoverage.PlannedResponseRadiusKm
+                        / gameManager.SimulationSettings.TileDistanceKM)));
         }
 
         private static AirWaypoint NewWaypoint(

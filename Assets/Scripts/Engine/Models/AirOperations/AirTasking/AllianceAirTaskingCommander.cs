@@ -235,7 +235,9 @@ namespace Models.Gameplay.Campaign
                 var tankerSlots = supportReservations
                     .Where(entry =>
                         entry.Flight.MissionType == AirMissionRequestType.ProvideAerialRefueling)
-                    .Sum(entry => entry.Reservation.SlotCount);
+                    .Select(entry => Math.Max(0, entry.Reservation.SlotCount))
+                    .DefaultIfEmpty(0)
+                    .Max();
                 if (tankerSlots > 0)
                 {
                     AddSupportDemand(new SupportDemandSample
@@ -298,6 +300,8 @@ namespace Models.Gameplay.Campaign
                 supportFlight.SupportReservations.RemoveAll(
                     reservation => reservation.ConsumingPackageId == package.PackageId);
             }
+            foreach (var cancelledProvider in package.Flights)
+                cancelledProvider.SupportReservations.Clear();
 
             foreach (var flight in package.Flights)
             {
@@ -344,18 +348,53 @@ namespace Models.Gameplay.Campaign
                 var requiredFlights = package.Flights
                     .Where(flight => flight.IsRequired)
                     .ToList();
-                if (requiredFlights.Count > 0
-                    && requiredFlights.All(flight =>
-                        flight.LifecycleState != AirTaskingLifecycleState.Cancelled
-                        && flight.LifecycleState != AirTaskingLifecycleState.Failed
-                        && flight.LifecycleState != AirTaskingLifecycleState.Aborted))
+                var requiredFlightFailed = requiredFlights.Count == 0
+                                           || requiredFlights.Any(flight =>
+                                               flight.LifecycleState
+                                               == AirTaskingLifecycleState.Cancelled
+                                               || flight.LifecycleState
+                                               == AirTaskingLifecycleState.Failed
+                                               || flight.LifecycleState
+                                               == AirTaskingLifecycleState.Aborted);
+                if (requiredFlightFailed)
+                {
+                    CancelPackage(
+                        package.PackageId,
+                        aircraftReservations,
+                        currentTime,
+                        "A required package flight was cancelled or became unable to launch.");
+                    continue;
+                }
+
+                if (package.SupportingFlightIds.Count == 0
+                    || package.Flights.Any(flight =>
+                        flight.ExecutionPhase
+                        != FlightExecutionPhase.AwaitingTakeoff))
+                    continue;
+
+                var supportingIds = package.SupportingFlightIds.ToHashSet();
+                var supportingFlights = packages
+                    .SelectMany(candidate => candidate.Flights)
+                    .Where(flight => supportingIds.Contains(flight.FlightId))
+                    .ToList();
+                var requiredSlots = package.Flights.Sum(
+                    flight => flight.AircraftIds.Count);
+                if (supportingFlights.Select(flight => flight.FlightId)
+                        .Distinct()
+                        .Count() == supportingIds.Count
+                    && AirSupportCoveragePlanner.HasContinuousReservedCoverage(
+                        supportingFlights,
+                        package.PackageId,
+                        requiredSlots,
+                        package.EffectStart,
+                        package.SupportWindowEnd))
                     continue;
 
                 CancelPackage(
                     package.PackageId,
                     aircraftReservations,
                     currentTime,
-                    "A required package flight was cancelled or became unable to launch.");
+                    "Reserved tanker coverage became unavailable before takeoff.");
             }
         }
 
@@ -540,55 +579,56 @@ namespace Models.Gameplay.Campaign
         {
             planned = new List<PlannedSupportReservation>();
             reason = string.Empty;
+            if (package.SupportingFlightIds.Count == 0)
+                return true;
+
             var requiredSlots = package.Flights.Sum(flight => flight.AircraftIds.Count);
-            var remainingSlots = requiredSlots;
-
-            foreach (var supportFlightId in package.SupportingFlightIds)
+            var supportingIds = package.SupportingFlightIds.ToHashSet();
+            var supportingFlights = packages
+                .Where(candidate => !candidate.IsTerminal)
+                .SelectMany(candidate => candidate.Flights)
+                .Where(flight => supportingIds.Contains(flight.FlightId)
+                                 && !flight.IsTerminal)
+                .GroupBy(flight => flight.FlightId)
+                .Select(group => group.First())
+                .ToList();
+            if (supportingFlights.Count != supportingIds.Count)
             {
-                var supportFlight = packages
-                    .Where(candidate => !candidate.IsTerminal)
-                    .SelectMany(candidate => candidate.Flights)
-                    .FirstOrDefault(flight => flight.FlightId == supportFlightId
-                                              && !flight.IsTerminal);
-                if (supportFlight == null
-                    || supportFlight.EffectStart > package.EffectStart
-                    || supportFlight.EffectEnd < package.SupportWindowEnd)
-                {
-                    reason = "A required support flight is no longer available.";
-                    return false;
-                }
-
-                var alreadyReserved = supportFlight.SupportReservations
-                    .Where(reservation => reservation.StartTime < package.SupportWindowEnd
-                                          && reservation.EndTime > package.EffectStart)
-                    .Sum(reservation => Math.Max(0, reservation.SlotCount));
-                var slots = Math.Min(
-                    remainingSlots,
-                    Math.Max(0, supportFlight.ProvidedSupportSlots - alreadyReserved));
-                if (slots <= 0)
-                    continue;
-
-                planned.Add(new PlannedSupportReservation(
-                    supportFlight,
-                    new AirSupportReservation
-                    {
-                        SupportingFlightId = supportFlight.FlightId,
-                        ConsumingPackageId = package.PackageId,
-                        SlotCount = slots,
-                        StartTime = package.EffectStart,
-                        EndTime = package.SupportWindowEnd
-                    }));
-                remainingSlots -= slots;
-                if (remainingSlots == 0)
-                    break;
+                reason = "A required support flight is no longer available.";
+                return false;
             }
 
-            if (package.SupportingFlightIds.Count > 0 && remainingSlots > 0)
+            if (supportingFlights.Any(flight =>
+                    flight.MissionType
+                    != AirMissionRequestType.ProvideAerialRefueling
+                    || package.Flights.Any(receiver =>
+                        !flight.MissionArea.Contains(
+                            receiver.MissionArea.CenterTileId))))
+            {
+                reason = "A required tanker does not cover the receiving package.";
+                return false;
+            }
+
+            var reservations =
+                AirSupportCoveragePlanner.PlanContinuousCoverage(
+                    supportingFlights,
+                    package.PackageId,
+                    requiredSlots,
+                    package.EffectStart,
+                    package.SupportWindowEnd,
+                    out var coveredUntil);
+            if (coveredUntil < package.SupportWindowEnd)
             {
                 reason = "Required support capacity is no longer available.";
                 return false;
             }
 
+            var flightsById = supportingFlights.ToDictionary(
+                flight => flight.FlightId);
+            planned.AddRange(reservations.Select(reservation =>
+                new PlannedSupportReservation(
+                    flightsById[reservation.SupportingFlightId],
+                    reservation)));
             return true;
         }
 

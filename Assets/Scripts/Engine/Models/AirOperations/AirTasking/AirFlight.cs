@@ -71,6 +71,17 @@ namespace Models.Gameplay.Campaign
     }
 
     [Serializable]
+    public sealed class AerialRefuelingRecord
+    {
+        public Guid RecordId = Guid.NewGuid();
+        public Guid TankerFlightId;
+        public Guid ReceiverFlightId;
+        public DateTime OccurredAt;
+        public float FuelBefore;
+        public float FuelAfter;
+    }
+
+    [Serializable]
     public sealed class PlannedAircraftLoadout
     {
         public Guid AircraftId;
@@ -116,8 +127,12 @@ namespace Models.Gameplay.Campaign
         private bool missionAchieved;
         private List<FlightExecutionEvent> executionEvents =
             new List<FlightExecutionEvent>();
+        private List<AerialRefuelingRecord> aerialRefuelingRecords =
+            new List<AerialRefuelingRecord>();
         [NonSerialized] private ReadOnlyCollection<AirWaypoint> routeView;
         [NonSerialized] private ReadOnlyCollection<FlightExecutionEvent> executionEventView;
+        [NonSerialized] private ReadOnlyCollection<AerialRefuelingRecord>
+            aerialRefuelingRecordView;
 
         public int ProvidedSupportSlots;
         private List<AirSupportReservation> supportReservations =
@@ -184,6 +199,10 @@ namespace Models.Gameplay.Campaign
             GetRequiredWaypoint(AirWaypointAction.Land, last: true).AirportBuildingId;
         public IReadOnlyList<FlightExecutionEvent> ExecutionEvents =>
             executionEventView ??= executionEvents.AsReadOnly();
+        public IReadOnlyList<AerialRefuelingRecord> AerialRefuelingRecords =>
+            aerialRefuelingRecordView ??=
+                (aerialRefuelingRecords ??= new List<AerialRefuelingRecord>())
+                .AsReadOnly();
 
         private IReadOnlyList<AirWaypoint> EffectWaypoints =>
             route
@@ -312,6 +331,31 @@ namespace Models.Gameplay.Campaign
             TacticalState.FuelFraction = 1f;
             TacticalState.ClearCombat(occurredAt, "Flight began route execution.");
             RecordEvent(takeoff, occurredAt, "Flight took off.");
+            return true;
+        }
+
+        public bool TryReceiveAerialRefueling(
+            Guid tankerFlightId,
+            DateTime occurredAt)
+        {
+            if (tankerFlightId == Guid.Empty
+                || lifecycleState != AirTaskingLifecycleState.Active
+                || executionPhase != FlightExecutionPhase.Executing
+                || TacticalState.FuelFraction >= 1f)
+                return false;
+
+            var fuelBefore = TacticalState.FuelFraction;
+            TacticalState.FuelFraction = 1f;
+            aerialRefuelingRecords ??= new List<AerialRefuelingRecord>();
+            aerialRefuelingRecords.Add(new AerialRefuelingRecord
+            {
+                TankerFlightId = tankerFlightId,
+                ReceiverFlightId = FlightId,
+                OccurredAt = occurredAt,
+                FuelBefore = fuelBefore,
+                FuelAfter = TacticalState.FuelFraction
+            });
+            aerialRefuelingRecordView = null;
             return true;
         }
 

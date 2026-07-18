@@ -200,6 +200,12 @@ namespace Engine.Service
                 .SelectMany(package => package.Flights)
                 .Where(flight => !flight.IsTerminal
                                  && flight.MissionType == supportType
+                                 && flight.ExecutionPhase
+                                 != FlightExecutionPhase.Returning
+                                 && flight.ExecutionPhase
+                                 != FlightExecutionPhase.Landing
+                                 && flight.ExecutionPhase
+                                 != FlightExecutionPhase.Ended
                                  && flight.EffectStart <= start
                                  && flight.EffectEnd >= end
                                  && flight.MissionArea.Contains(missionArea.CenterTileId))
@@ -213,11 +219,50 @@ namespace Engine.Service
             DateTime start,
             DateTime end)
         {
-            var reserved = supportingFlight.SupportReservations
-                .Where(reservation => reservation.StartTime < end
-                                      && reservation.EndTime > start)
-                .Sum(reservation => Math.Max(0, reservation.SlotCount));
-            return Math.Max(0, supportingFlight.ProvidedSupportSlots - reserved);
+            return Math.Max(
+                0,
+                AirSupportCoveragePlanner.GetMinimumAvailableSlots(
+                    supportingFlight,
+                    start,
+                    end));
+        }
+
+        public IReadOnlyList<AirSupportReservation>
+            PlanAerialRefuelingCoverage(
+                AllianceAirTaskingCommander commander,
+                AirMissionArea receiverArea,
+                Guid consumingPackageId,
+                int requiredSlots,
+                DateTime start,
+                DateTime requestedEnd,
+                out DateTime coveredUntil)
+        {
+            var candidates = commander.Packages
+                .Where(package => !package.IsTerminal)
+                .SelectMany(package => package.Flights)
+                .Where(flight => !flight.IsTerminal
+                                 && flight.MissionType
+                                 == AirMissionRequestType.ProvideAerialRefueling
+                                 && flight.ExecutionPhase
+                                 != FlightExecutionPhase.Returning
+                                 && flight.ExecutionPhase
+                                 != FlightExecutionPhase.Landing
+                                 && flight.ExecutionPhase
+                                 != FlightExecutionPhase.Ended
+                                 && flight.EffectEnd > start
+                                 && flight.EffectStart < requestedEnd
+                                 && flight.MissionArea.Contains(
+                                     receiverArea.CenterTileId))
+                .OrderBy(flight => flight.EffectStart)
+                .ThenBy(flight => flight.FlightId)
+                .ToList();
+            return AirSupportCoveragePlanner.PlanContinuousCoverage(
+                candidates,
+                consumingPackageId,
+                requiredSlots,
+                start,
+                requestedEnd,
+                out coveredUntil);
         }
 
         private IEnumerable<AirFlight> GetProjectedFlights(
@@ -247,11 +292,18 @@ namespace Engine.Service
                                          barrierTiles));
             }
 
-            return commander.Packages
+            var projected = commander.Packages
                 .Where(package => !package.IsTerminal
                                   && package.MissionRequestId == request.MissionRequestId)
                 .SelectMany(package => package.Flights)
                 .Where(flight => !flight.IsTerminal);
+            return request.FulfillmentPattern
+                   == AirMissionRequestFulfillmentPattern.Sustained
+                ? projected.Where(flight =>
+                    flight.ExecutionPhase != FlightExecutionPhase.Returning
+                    && flight.ExecutionPhase != FlightExecutionPhase.Landing
+                    && flight.ExecutionPhase != FlightExecutionPhase.Ended)
+                : projected;
         }
 
         private bool IsBarcapCoverageApplicable(

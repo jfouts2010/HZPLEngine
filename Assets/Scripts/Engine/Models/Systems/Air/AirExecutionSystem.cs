@@ -120,6 +120,7 @@ namespace Engine.Models
 
         private void PrepareFlightsAt(DateTime currentTime)
         {
+            RefreshActiveSupportCapacities();
             foreach (var package in airTaskingSystem.GetPackages()
                          .OrderBy(candidate => candidate.PackageId))
             {
@@ -135,6 +136,18 @@ namespace Engine.Models
                         if (flight.LifecycleState != AirTaskingLifecycleState.Committed
                             || flight.PlannedTakeoffTime > currentTime)
                             continue;
+                        if (package.SupportingFlightIds.Count > 0
+                            && package.Flights.All(candidate =>
+                                candidate.ExecutionPhase
+                                == FlightExecutionPhase.AwaitingTakeoff)
+                            && !HasContinuousReservedTankerCoverage(package))
+                        {
+                            airTaskingSystem.CancelPackage(
+                                package.Alliance,
+                                package.PackageId,
+                                "Reserved tanker coverage became unavailable before takeoff.");
+                            continue;
+                        }
                         if (!IsAirportFriendly(flight.LaunchAirportBuildingId, package.Alliance))
                         {
                             LoseGroundedFlight(flight, squadron, currentTime);
@@ -163,6 +176,13 @@ namespace Engine.Models
                         && flight.ExecutionPhase != FlightExecutionPhase.Landing
                         && flight.TacticalState.FuelFraction <= doctrine.JokerFuelFraction)
                     {
+                        if (TryRefuelFromReservedTanker(
+                                package,
+                                flight,
+                                aircraftType,
+                                currentTime))
+                            continue;
+
                         AbortToImmediateRecovery(
                             package,
                             flight,
@@ -350,20 +370,116 @@ namespace Engine.Models
             AirCombatIntent intent,
             double seconds)
         {
-            if (aircraftType.EnduranceHours <= 0f || seconds <= 0d)
-                return;
-            var multiplier = intent switch
-            {
-                AirCombatIntent.EngageTarget => 1.8f,
-                AirCombatIntent.Defend => 2.5f,
-                AirCombatIntent.Disengage => 1.4f,
-                AirCombatIntent.Recover => 0.9f,
-                _ => 1f
-            };
-            var consumed = (float)(seconds / (aircraftType.EnduranceHours * 3600d))
-                           * multiplier;
+            var consumed = AirFuelRules.CalculateBurnFraction(
+                aircraftType,
+                intent,
+                seconds);
             flight.TacticalState.FuelFraction = Mathf.Clamp01(
                 flight.TacticalState.FuelFraction - consumed);
+        }
+
+        private bool TryRefuelFromReservedTanker(
+            AirPackage receiverPackage,
+            AirFlight receiver,
+            AircraftTypeDefinition receiverType,
+            DateTime currentTime)
+        {
+            if (receiverPackage == null
+                || receiver == null
+                || receiverType == null
+                || !receiverType.CanReceiveAerialRefueling
+                || receiver.ExecutionPhase != FlightExecutionPhase.Executing
+                || receiverPackage.SupportingFlightIds.Count == 0)
+                return false;
+
+            var supportingFlightIds = receiverPackage.SupportingFlightIds.ToHashSet();
+            var doctrine = GetDoctrine(receiverPackage.Alliance);
+            foreach (var tanker in airTaskingSystem.GetPackages()
+                         .Where(package => package.Alliance == receiverPackage.Alliance)
+                         .SelectMany(package => package.Flights)
+                         .Where(flight => supportingFlightIds.Contains(flight.FlightId))
+                         .OrderBy(flight => flight.FlightId))
+            {
+                if (!TryGetFlightContext(tanker, out _, out var tankerType))
+                    continue;
+                if (tanker.TacticalState.FuelFraction
+                    <= doctrine.JokerFuelFraction)
+                    continue;
+
+                var reservation = tanker.SupportReservations
+                    .Where(candidate =>
+                        candidate.ConsumingPackageId == receiverPackage.PackageId
+                        && candidate.SupportingFlightId == tanker.FlightId
+                        && candidate.StartTime <= currentTime
+                        && candidate.EndTime > currentTime)
+                    .OrderBy(candidate => candidate.StartTime)
+                    .FirstOrDefault();
+                if (!AirSupportCoveragePlanner.HasCapacityForReservation(
+                        tanker,
+                        reservation,
+                        currentTime))
+                    continue;
+                if (!AirFuelRules.CanReceiveFuel(
+                        receiver,
+                        receiverType,
+                        tanker,
+                        tankerType,
+                        reservation,
+                        receiverPackage.PackageId,
+                        currentTime))
+                    continue;
+
+                return receiver.TryReceiveAerialRefueling(
+                    tanker.FlightId,
+                    currentTime);
+            }
+
+            return false;
+        }
+
+        private void RefreshActiveSupportCapacities()
+        {
+            foreach (var flight in airTaskingSystem.GetPackages()
+                         .SelectMany(package => package.Flights)
+                         .Where(flight => flight.IsAirborne
+                                          && flight.ProvidedSupportSlots > 0))
+            {
+                if (!TryGetFlightContext(
+                        flight,
+                        out var squadron,
+                        out var aircraftType)
+                    || aircraftType.SupportCapability
+                    == AirSupportCapability.None)
+                    continue;
+
+                var survivingAircraft = squadron.Aircraft.Count(aircraft =>
+                    aircraft.AssignedFlightId == flight.FlightId
+                    && aircraft.Status != CampaignAircraftStatus.Lost);
+                flight.ProvidedSupportSlots =
+                    survivingAircraft * aircraftType.SupportSlotCapacity;
+            }
+        }
+
+        private bool HasContinuousReservedTankerCoverage(
+            AirPackage receiverPackage)
+        {
+            var supportingIds = receiverPackage.SupportingFlightIds.ToHashSet();
+            var supportingFlights = airTaskingSystem.GetPackages()
+                .Where(package => package.Alliance == receiverPackage.Alliance)
+                .SelectMany(package => package.Flights)
+                .Where(flight => supportingIds.Contains(flight.FlightId))
+                .ToList();
+            if (supportingFlights.Select(flight => flight.FlightId)
+                    .Distinct()
+                    .Count() != supportingIds.Count)
+                return false;
+
+            return AirSupportCoveragePlanner.HasContinuousReservedCoverage(
+                supportingFlights,
+                receiverPackage.PackageId,
+                receiverPackage.Flights.Sum(flight => flight.AircraftIds.Count),
+                receiverPackage.EffectStart,
+                receiverPackage.SupportWindowEnd);
         }
 
         private AllianceAirDoctrine GetDoctrine(Alliance alliance)
@@ -595,14 +711,12 @@ namespace Engine.Models
                     {
                         var request = commander.GetRequest(
                             package.MissionRequestId);
-                        if (request?.RequestType
-                                == AirMissionRequestType
-                                    .BarrierCombatAirPatrol
-                            && request.BarcapBarrier?.BarrierTileIds?.Count > 0)
+                        if (request?.FulfillmentPattern
+                            == AirMissionRequestFulfillmentPattern.Sustained)
                         {
-                            // Spatial BARCAP request fulfillment is owned by
-                            // projected whole-barrier coverage, not the outcome
-                            // of any one rotation.
+                            // Sustained request fulfillment is owned by
+                            // projected coverage across rotations, not the
+                            // outcome of any one completed flight.
                             continue;
                         }
 

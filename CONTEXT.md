@@ -681,13 +681,13 @@ Generated v1 mission altitudes are 40,000 feet for BARCAP and OCA, 35,000 feet f
 
 _Avoid_: treating low, medium, and high altitude bands as exact aircraft performance or route altitudes.
 
-A sustained flight repeats its station route until its already-assigned effect end, then follows its return and landing legs. BARCAP route planning bounds that effect end by the least-enduring assigned aircraft's doctrine joker point, with a small timing margin, and rejects a sortie that cannot complete one station circuit. Tactical maneuvering may burn fuel faster and force an earlier recovery. AWACS and tanker coverage planning remains window-based rather than endurance-bounded in this pass; detailed range, reserve-to-alternate, and tanker-transfer planning remain later fidelity work.
+A sustained flight repeats its station route until its already-assigned effect end, then follows its return and landing legs. Unrefueled BARCAP, AWACS, and tanker route planning bounds that effect end by the least-enduring assigned aircraft's doctrine joker point, with a small timing margin, and rejects a sortie that cannot complete one station circuit. Tactical maneuvering may burn fuel faster and force an earlier recovery. A refuel-capable BARCAP may instead extend through the continuous tanker coverage reserved for its package and refuel repeatedly while that coverage remains active. Detailed range, reserve-to-alternate, and physical tanker-offload planning remain later fidelity work.
 
 **Flight execution phase** — the mission-independent stage of a flight's physical journey: awaiting takeoff, outbound, executing, returning, landing, or ended. Execution phase is separate from lifecycle outcome; an aborted flight has stopped its assigned mission and may have a terminal planning outcome while remaining physically in the returning phase until its surviving aircraft land.
 
 _Avoid_: mission-specific execution phases such as BARCAP, AWACS orbit, tanker track, or strike; those are mission behaviors performed during the generic executing phase.
 
-**Air mission behavior** — the mission-specific effect a flight performs during its generic executing phase, separate from the shared rules for takeoff, route movement, return, and landing. Initial behaviors establish BARCAP presence on an assigned defensive barrier segment, airborne-C2 service, placeholder tanker service, or a no-effect OCA sweep action; later air-combat and ground-attack behaviors may add their own resolution without replacing flight execution.
+**Air mission behavior** — the mission-specific effect a flight performs during its generic executing phase, separate from the shared rules for takeoff, route movement, return, and landing. Initial behaviors establish BARCAP presence on an assigned defensive barrier segment, airborne-C2 service, aerial-refueling coverage, or a no-effect OCA sweep action; later air-combat and ground-attack behaviors may add their own resolution without replacing flight execution.
 
 _Avoid_: implementing navigation, takeoff, RTB, or landing separately for each mission type.
 
@@ -749,6 +749,8 @@ _Avoid_: creating independent strike, escort, and support flights without record
 ### Supporting flight
 
 A **supporting flight** provides an airborne service, such as AWACS coverage or aerial refueling, that may support multiple packages during its mission. It belongs to the package created for its own mission request, while other packages reference the service it provides without taking ownership of the flight.
+
+A receiving package may reserve a continuous support window across multiple sequential supporting flights. Each time-segment reservation belongs to the supporting flight that provides that portion of the window, allowing a long-running receiver to hand off between tanker rotations without owning those tanker flights or changing its locked mission intent.
 
 _Avoid_: duplicating an AWACS or tanker flight for every package that uses the same available coverage.
 
@@ -864,13 +866,13 @@ _Avoid_: pre-authoring fixed mission areas, or treating a single target point, a
 
 ### Coverage window
 
-A **coverage window** is the bounded interval during which an area-based mission request asks the alliance to maintain an air effect. A BARCAP window is fulfilled by sequential fuel-bounded rotations, with replacement station time planned to overlap the preceding patrol by ten minutes when preparation time permits. Other sustained mission types retain their existing window-based planning in this pass.
+A **coverage window** is the bounded interval during which an area-based mission request asks the alliance to maintain an air effect. An unrefueled BARCAP window is fulfilled by sequential fuel-bounded rotations, with replacement station time planned to overlap the preceding patrol by ten minutes when preparation time permits. A tanker-supported BARCAP may cover a longer window while continuous reserved tanker coverage exists. AWACS and tanker requests use their own fuel-bounded rotations to fill the requested window.
 
 Coverage planning uses a rolling handoff across air-planning cadences. A window may extend beyond the next cadence boundary long enough for the following planning cycle to prepare, launch, and position replacement coverage, preventing a gap while the new alliance air plan is being fulfilled.
 
 The following planning cycle reassesses the need. It may cancel no-longer-needed committed rotations before takeoff, but an active sortie continues its locked mission through its planned coverage.
 
-For BARCAP, projected coverage from committed and active flights is credited tile by tile wherever their assigned barrier segments overlap the current requested barrier with a compatible threat-facing direction, including across planning cycles. Geometric overlap from the opposite approach does not count. This avoids duplicating patrols and lets one correctly oriented front barrier screen downstream airports. A flight that has begun returning, landing, or has ended no longer contributes projected BARCAP coverage. An airborne flight also loses its original coverage credit when weapon expenditure or aircraft loss removes the preferred air-to-air range used to plan that segment, allowing a replacement to be scheduled while the depleted patrol recovers or continues limited defense. If cancellation, abort, capability loss, or early recovery opens a spatial or temporal gap after a request was marked fulfilled, the current spatial BARCAP request becomes actionable again. Completion of one patrol rotation never completes the whole sustained request. Existing active coverage still finishes on its originally assigned segment when the new plan moves elsewhere. Other mission types retain the existing request-scoped handoff behavior.
+For BARCAP, projected coverage from committed and active flights is credited tile by tile wherever their assigned barrier segments overlap the current requested barrier with a compatible threat-facing direction, including across planning cycles. Geometric overlap from the opposite approach does not count. This avoids duplicating patrols and lets one correctly oriented front barrier screen downstream airports. A flight that has begun returning, landing, or has ended no longer contributes projected BARCAP coverage. An airborne flight also loses its original coverage credit when weapon expenditure or aircraft loss removes the preferred air-to-air range used to plan that segment, allowing a replacement to be scheduled while the depleted patrol recovers or continues limited defense. If cancellation, abort, capability loss, or early recovery opens a spatial or temporal gap after a sustained request was marked fulfilled, that request becomes actionable again. Completion of one BARCAP, AWACS, or tanker rotation never completes the whole sustained request. Existing active BARCAP coverage still finishes on its originally assigned segment when the new plan moves elsewhere.
 
 _Avoid_: infinite coverage requests, ending coverage exactly at a planning-cadence boundary without allowing for replacement lead time, or adding spatial-overlap optimization to v1 handoff.
 
@@ -918,19 +920,21 @@ _Avoid_: recording only the final package while discarding the reasons competing
 
 ### Support capacity
 
-**Support capacity** is the bounded number of friendly aircraft that an AWACS or tanker flight can support within its coverage area and time window. In v1 it is measured in abstract **support slots**: each support-capable aircraft type provides a configured number of simultaneous slots, and each supported combat aircraft reserves one compatible slot during the relevant overlap.
+**Support capacity** is the bounded number of friendly aircraft that an AWACS or tanker flight can support within its coverage area and time window. In v1 it is measured in abstract **support slots**: each support-capable aircraft type provides a configured number of simultaneous slots, and each supported combat aircraft reserves one compatible slot during the relevant overlap. One tanker slot represents continuous access for its receiver during that reservation, not one fuel-transfer event. An airborne support flight's available capacity falls with the number of surviving assigned support aircraft.
 
 A sustained support request asks for enough projected capacity to meet the area's demand. Multiple packages may share one supporting flight only while their overlapping reservations remain within its available slots; additional packages and flights are created only when existing capacity is insufficient.
 
-Future AWACS control-channel rules and tanker fuel-transfer rules may specialize capacity without changing the shared support-capacity concept.
+Future AWACS control-channel rules and physical tanker offload rules may specialize capacity without changing the shared support-capacity concept.
 
 **Airborne-C2 effect** — in v1, AWACS coverage has no numerical effect on air-combat power, mission risk, or air-planning knowledge because airborne C2 does not yet contribute observations to the alliance IADS. Baseline demand authored through the campaign template or alliance doctrine still causes the planner to create airborne-C2 requests, packages, flights, coverage windows, and support-slot reservations so the support-tasking backbone exists.
 
 Observed and forecast mission demand do not escalate AWACS coverage until its operational effect exists. Future AWACS behavior is intended to contribute through alliance IADS and intelligence rules, where its help may not reduce cleanly to one numerical benefit. Do not add a placeholder combat multiplier that would compete with that future model.
 
-**Aerial-refueling effect** — in the initial air-execution model, tanker coverage has no numerical effect on receiver feasibility, range, endurance, or runtime behavior. Aerial-refueling requests, packages, flights, station routes, coverage windows, and support slots still exist so tankers can execute complete missions and the support-tasking backbone is ready for later fuel-transfer rules.
+**Aerial-refueling effect** — a refuel-capable executing flight with an active package reservation may restore its aggregate fuel fraction to full whenever it reaches doctrine joker fuel inside the reserved tanker's coverage. It may refuel repeatedly while continuous reserved coverage exists. If no reserved tanker is active when the receiver reaches joker, the receiver follows ordinary recovery behavior. A BARCAP planner extends a patrol beyond its unrefueled fuel limit only through the continuous tanker coverage it can reserve; sequential tanker rotations may form that coverage.
 
-_Avoid_: adding placeholder range multipliers, fuel burn, transfer rates, boom queues, partial offloads, or fuel-driven aborts to the initial air-execution model.
+Tanker propulsion fuel remains separate from abstract service capacity: tanker sorties are themselves fuel-bounded, while support slots constrain simultaneous receivers. V1 does not track transferable fuel mass or reduce tanker propulsion fuel when a receiver refuels.
+
+_Avoid_: placeholder range multipliers, transfer rates, boom queues, partial offloads, or a fixed per-sortie refueling-count limit.
 
 Support demand blends three inputs:
 

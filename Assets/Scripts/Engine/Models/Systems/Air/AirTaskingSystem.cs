@@ -266,7 +266,7 @@ namespace Engine.Models
         {
             var evaluations = 0;
             var packagesCreated = 0;
-            ReopenFulfilledBarcapCoverageGaps(commander);
+            ReopenFulfilledSustainedCoverageGaps(commander);
             var requests = commander.MissionRequests
                 .Where(request => !request.IsTerminal
                                   && request.PlanningCycle == commander.PlanningCycle
@@ -336,7 +336,7 @@ namespace Engine.Models
             }
         }
 
-        private void ReopenFulfilledBarcapCoverageGaps(
+        private void ReopenFulfilledSustainedCoverageGaps(
             AllianceAirTaskingCommander commander)
         {
             var planningStart =
@@ -346,22 +346,31 @@ namespace Engine.Models
                     request.State == AirMissionRequestState.Fulfilled
                     && request.PlanningCycle == commander.PlanningCycle
                     && request.EffectEnd > planningStart
-                    && request.RequestType ==
-                        AirMissionRequestType.BarrierCombatAirPatrol
-                    && request.BarcapBarrier?.BarrierTileIds?.Count > 0)
-                .Where(request => projectedEffects.TryFindFirstBarcapCoverageGap(
-                    commander,
-                    request,
-                    planningStart,
-                    out _,
-                    out _))
+                    && request.FulfillmentPattern
+                    == AirMissionRequestFulfillmentPattern.Sustained)
+                .Where(request =>
+                    request.RequestType
+                    == AirMissionRequestType.BarrierCombatAirPatrol
+                    && request.BarcapBarrier?.BarrierTileIds?.Count > 0
+                        ? projectedEffects.TryFindFirstBarcapCoverageGap(
+                            commander,
+                            request,
+                            planningStart,
+                            out _,
+                            out _)
+                        : projectedEffects.TryFindFirstCoverageGap(
+                            commander,
+                            request,
+                            planningStart,
+                            out _,
+                            out _))
                 .ToList();
             foreach (var request in requestsToReopen)
             {
                 commander.ReopenFulfilledRequest(
                     request.MissionRequestId,
                     gameManager.CurrentTime,
-                    "Projected BARCAP coverage developed a spatial or temporal gap.");
+                    "Projected sustained coverage developed a spatial or temporal gap.");
             }
         }
 
