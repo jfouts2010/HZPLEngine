@@ -311,15 +311,6 @@ namespace Engine.Models
 
                 if (contexts.TryGetValue(effect.TargetFlightId, out var defendedTarget))
                 {
-                    var defensiveStrength = defendedTarget.Flight.TacticalState.Maneuver switch
-                    {
-                        AirCombatManeuver.BeamLeft => 1f,
-                        AirCombatManeuver.BeamRight => 1f,
-                        AirCombatManeuver.Drag => 0.75f,
-                        AirCombatManeuver.Extend => 0.4f,
-                        _ => 0f
-                    };
-                    effect.DefensiveSeconds += (float)seconds * defensiveStrength;
                     if (TryGetGuidanceSourcePosition(
                             effect,
                             contexts,
@@ -329,6 +320,11 @@ namespace Engine.Models
                             defendedTarget.Flight.PositionFeet,
                             threatSourcePosition);
                     }
+                    var defensiveStrength = CalculateDefensiveManeuverStrength(
+                        defendedTarget.Flight.TacticalState.Maneuver,
+                        defendedTarget.Flight.HeadingDegrees,
+                        effect.PrincipalThreatBearingDegrees);
+                    effect.DefensiveSeconds += (float)seconds * defensiveStrength;
                 }
                 effect.LastGuidanceUpdateAt = boundedCurrent;
             }
@@ -414,6 +410,30 @@ namespace Engine.Models
 
             position = effect.SourcePositionFeet;
             return true;
+        }
+
+        internal static float CalculateDefensiveManeuverStrength(
+            AirCombatManeuver maneuver,
+            float headingDegrees,
+            float threatBearingDegrees)
+        {
+            var relativeBearing = Math.Abs(Mathf.DeltaAngle(
+                headingDegrees,
+                threatBearingDegrees));
+            var perpendicularStrength = 1f - Mathf.Clamp01(
+                Math.Abs(relativeBearing - 90f) / 90f);
+            var dragStrength = Mathf.Clamp01(relativeBearing / 180f);
+
+            return maneuver switch
+            {
+                AirCombatManeuver.BeamLeft => perpendicularStrength,
+                AirCombatManeuver.BeamRight => perpendicularStrength,
+                AirCombatManeuver.BreakLeft => perpendicularStrength,
+                AirCombatManeuver.BreakRight => perpendicularStrength,
+                AirCombatManeuver.Drag => 0.75f * dragStrength,
+                AirCombatManeuver.Extend => 0.4f,
+                _ => 0f
+            };
         }
 
         public void RefreshTacticalState(DateTime currentTime)
@@ -642,7 +662,7 @@ namespace Engine.Models
             float distanceKm,
             float maximumRangeKm,
             float shooterSensorQuality,
-            float targetEcmQuality,
+            AircraftTypeDefinition targetType,
             float launchQuality)
         {
             var maximumRange = Math.Max(
@@ -653,11 +673,11 @@ namespace Engine.Models
             if (IsRadarGuided(ordnance.GuidanceMode))
             {
                 probability *= 0.75f + 0.25f * Mathf.Clamp01(shooterSensorQuality);
-                probability *= 1f - 0.35f * Mathf.Clamp01(targetEcmQuality);
+                probability *= 1f - 0.35f * targetType.RadarDefense;
             }
             else if (ordnance.GuidanceMode == OrdnanceGuidanceMode.Infrared)
             {
-                probability *= 1f - 0.2f * Mathf.Clamp01(targetEcmQuality);
+                probability *= 1f - 0.2f * targetType.InfraredDefense;
             }
             return Mathf.Clamp01(probability * launchQuality);
         }
@@ -699,7 +719,7 @@ namespace Engine.Models
                     release.ReleaseRangeKm,
                     release.MaximumRangeKm,
                     release.ShooterSensorQuality,
-                    release.Target.AircraftType.EcmQuality,
+                    release.Target.AircraftType,
                     release.LaunchQuality);
 
             return new PendingOrdnanceEffect
@@ -762,7 +782,8 @@ namespace Engine.Models
                     {
                         effect.HitProbability = CalculateTerminalHitProbability(
                             effect,
-                            resolvingOrdnance);
+                            resolvingOrdnance,
+                            target.AircraftType);
                     }
                     effect.GuidanceStage = OrdnanceGuidanceStage.Resolved;
                     var hits = 0;
@@ -924,9 +945,10 @@ namespace Engine.Models
 
         }
 
-        private static float CalculateTerminalHitProbability(
+        internal static float CalculateTerminalHitProbability(
             PendingOrdnanceEffect effect,
-            OrdnanceTypeDefinition ordnance)
+            OrdnanceTypeDefinition ordnance,
+            AircraftTypeDefinition targetType)
         {
             var totalSeconds = Math.Max(
                 1d,
@@ -940,7 +962,7 @@ namespace Engine.Models
             var defenseRatio = Mathf.Clamp01(
                 effect.DefensiveSeconds / (float)totalSeconds);
             var defenseAuthority = 0.35f
-                                   + 0.45f * (1f - ordnance.CountermeasureResistance);
+                                   + 0.45f * targetType.GetDefenseAgainst(ordnance);
             var defenseMultiplier = 1f - defenseRatio * defenseAuthority;
             return Mathf.Clamp01(
                 effect.HitProbability * supportMultiplier * defenseMultiplier);

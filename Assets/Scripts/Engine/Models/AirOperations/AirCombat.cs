@@ -25,7 +25,9 @@ namespace Models.Gameplay.Campaign
         Drag = 8,
         Extend = 9,
         Recommit = 10,
-        Dogfight = 11
+        Dogfight = 11,
+        BreakLeft = 12,
+        BreakRight = 13
     }
 
     public enum AirCombatManeuverSide

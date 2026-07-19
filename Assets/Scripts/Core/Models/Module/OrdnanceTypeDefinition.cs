@@ -48,7 +48,6 @@ namespace Models.Module
         public float NoEscapeRangeFraction { get; }
         public float SecondsUntilAutonomous { get; }
         public bool RequiresSupportUntilAutonomous { get; }
-        public float CountermeasureResistance { get; }
         public float TerminalLethality { get; }
         public float MaximumSupportAngleDegrees { get; }
         public Dictionary<OrdnanceTargetCategory, float> EffectivenessByTargetCategory { get; }
@@ -73,7 +72,6 @@ namespace Models.Module
             float noEscapeRangeFraction = 0.55f,
             float secondsUntilAutonomous = 0f,
             bool requiresSupportUntilAutonomous = false,
-            float countermeasureResistance = 0.5f,
             float terminalLethality = 1f,
             float maximumSupportAngleDegrees = 70f)
         {
@@ -102,7 +100,6 @@ namespace Models.Module
             NoEscapeRangeFraction = Math.Max(0.05f, Math.Min(1f, noEscapeRangeFraction));
             SecondsUntilAutonomous = Math.Max(0f, secondsUntilAutonomous);
             RequiresSupportUntilAutonomous = requiresSupportUntilAutonomous;
-            CountermeasureResistance = Math.Max(0f, Math.Min(1f, countermeasureResistance));
             TerminalLethality = Math.Max(0f, Math.Min(1f, terminalLethality));
             MaximumSupportAngleDegrees = Math.Max(
                 0f,

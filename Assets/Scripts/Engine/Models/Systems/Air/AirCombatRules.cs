@@ -119,11 +119,15 @@ namespace Engine.Models
                         threatFlightId = attacker.Flight.FlightId;
                         threatPosition = attacker.Flight.PositionFeet;
                     }
+                    ordnanceTypes.TryGetValue(
+                        incoming.OrdnanceTypeDefinitionId,
+                        out var incomingOrdnance);
                     return DefensiveCommand(
                         source,
                         threatPosition,
                         threatFlightId,
                         incoming,
+                        incomingOrdnance,
                         frame.Time);
                 }
             }
@@ -168,6 +172,8 @@ namespace Engine.Models
                 && state.HasTacticalAimPoint
                 && (state.Maneuver == AirCombatManeuver.BeamLeft
                     || state.Maneuver == AirCombatManeuver.BeamRight
+                    || state.Maneuver == AirCombatManeuver.BreakLeft
+                    || state.Maneuver == AirCombatManeuver.BreakRight
                     || state.Maneuver == AirCombatManeuver.Drag
                     || state.Maneuver == AirCombatManeuver.Extend))
             {
@@ -1498,6 +1504,7 @@ namespace Engine.Models
             Vector3 threatPositionFeet,
             Guid threatFlightId,
             PendingOrdnanceEffect effect,
+            OrdnanceTypeDefinition ordnance,
             DateTime currentTime)
         {
             var secondsToImpact = Math.Max(0d, (effect.ResolveAt - currentTime).TotalSeconds);
@@ -1532,12 +1539,12 @@ namespace Engine.Models
                       + Direction(heading) * TacticalAimDistanceKm
                       * AirspaceGeometry.FeetPerKilometer;
             aim.y = Math.Max(1000f, source.Flight.PositionFeet.y - 5000f);
+            var isInfrared = ordnance?.GuidanceMode ==
+                             OrdnanceGuidanceMode.Infrared;
             return Command(
                 source,
                 AirCombatIntent.Defend,
-                side == AirCombatManeuverSide.Left
-                    ? AirCombatManeuver.BeamLeft
-                    : AirCombatManeuver.BeamRight,
+                SelectTerminalDefensiveManeuver(side, ordnance),
                 threatFlightId,
                 Guid.Empty,
                 currentTime,
@@ -1545,7 +1552,28 @@ namespace Engine.Models
                 side,
                 aim,
                 Math.Max(1f, source.AircraftType.CombatSpeedKnots),
-                $"Beaming a terminal missile with {secondsToImpact:0} seconds to impact.");
+                isInfrared
+                    ? $"Breaking against an infrared missile with "
+                      + $"{secondsToImpact:0} seconds to impact."
+                    : $"Beaming a terminal missile with "
+                      + $"{secondsToImpact:0} seconds to impact.");
+        }
+
+        internal static AirCombatManeuver SelectTerminalDefensiveManeuver(
+            AirCombatManeuverSide side,
+            OrdnanceTypeDefinition ordnance)
+        {
+            var isInfrared = ordnance?.GuidanceMode ==
+                             OrdnanceGuidanceMode.Infrared;
+            if (side == AirCombatManeuverSide.Left)
+            {
+                return isInfrared
+                    ? AirCombatManeuver.BreakLeft
+                    : AirCombatManeuver.BeamLeft;
+            }
+            return isInfrared
+                ? AirCombatManeuver.BreakRight
+                : AirCombatManeuver.BeamRight;
         }
 
         private static AirCombatCommand CrankCommand(

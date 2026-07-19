@@ -764,7 +764,6 @@ namespace Engine.Models
                         ? 1
                         : 0)
                 .ThenByDescending(definition => definition.HitProbability)
-                .ThenByDescending(definition => definition.CountermeasureResistance)
                 .ThenBy(definition => definition.OrdnanceTypeDefinitionId)
                 .FirstOrDefault();
         }
@@ -783,14 +782,8 @@ namespace Engine.Models
                     ? 0.5f
                     : -1f;
             logOdds += targetAware ? -0.75f : 1f;
-            if (targetAware
-                && weapon.EmploymentCategory
-                == OrdnanceEmploymentCategory.AirToAirInfrared)
-            {
-                logOdds -= (1f - weapon.CountermeasureResistance)
-                           * targetType.EcmQuality
-                           * 0.75f;
-            }
+            if (targetAware)
+                logOdds -= targetType.GetDefenseAgainst(weapon) * 0.75f;
             return Mathf.Clamp(1f / (1f + Mathf.Exp(-logOdds)), 0.02f, 0.98f);
         }
 

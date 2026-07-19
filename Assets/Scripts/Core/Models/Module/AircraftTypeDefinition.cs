@@ -26,7 +26,9 @@ namespace Models.Module
         public float EnduranceHours { get; }
         public float RadarQuality { get; }
         public float RadarDetectability { get; }
-        public float EcmQuality { get; }
+        public float RadarDefense { get; }
+        public float InfraredDefense { get; }
+        public float GunDefense { get; }
         public float Survivability { get; }
         public float AirInterferenceCapability { get; }
         public float WvrCombatRating { get; }
@@ -53,7 +55,9 @@ namespace Models.Module
             float enduranceHours,
             float radarQuality,
             float radarDetectability,
-            float ecmQuality,
+            float radarDefense,
+            float infraredDefense,
+            float gunDefense,
             float survivability,
             float ordnanceCapacity = 0f,
             List<Guid> compatibleOrdnanceTypeDefinitionIds = null,
@@ -85,7 +89,9 @@ namespace Models.Module
             EnduranceHours = enduranceHours;
             RadarQuality = Math.Max(0f, Math.Min(1f, radarQuality));
             RadarDetectability = Math.Max(0f, Math.Min(1f, radarDetectability));
-            EcmQuality = Math.Max(0f, Math.Min(1f, ecmQuality));
+            RadarDefense = Math.Max(0f, Math.Min(1f, radarDefense));
+            InfraredDefense = Math.Max(0f, Math.Min(1f, infraredDefense));
+            GunDefense = Math.Max(0f, Math.Min(1f, gunDefense));
             Survivability = Math.Max(0f, Math.Min(1f, survivability));
             AirInterferenceCapability = Math.Max(0f, airInterferenceCapability);
             WvrCombatRating = Math.Max(0f, Math.Min(1f, wvrCombatRating));
@@ -113,6 +119,23 @@ namespace Models.Module
                 : Math.Max(0, supportSlotCapacity);
             CanReceiveAerialRefueling = canReceiveAerialRefueling;
             OrdnanceEmploymentEfficiency = Math.Max(0.01f, ordnanceEmploymentEfficiency);
+        }
+
+        public float GetDefenseAgainst(OrdnanceTypeDefinition weapon)
+        {
+            if (weapon == null)
+                return 0f;
+            if (weapon.EmploymentCategory == OrdnanceEmploymentCategory.Gun)
+                return GunDefense;
+
+            return weapon.GuidanceMode switch
+            {
+                OrdnanceGuidanceMode.Infrared => InfraredDefense,
+                OrdnanceGuidanceMode.Radar => RadarDefense,
+                OrdnanceGuidanceMode.ActiveRadar => RadarDefense,
+                OrdnanceGuidanceMode.SemiActiveRadar => RadarDefense,
+                _ => 0f
+            };
         }
     }
 }
