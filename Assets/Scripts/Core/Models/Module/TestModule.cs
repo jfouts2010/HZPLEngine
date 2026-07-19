@@ -451,7 +451,9 @@ namespace Models.Module
                     detectionRangeKm: 75f,
                     maxAltitudeMeters: 24000f,
                     trackQuality: 0.75f,
-                    providesWeaponQualityTrack: true),
+                    providesWeaponQualityTrack: true,
+                    maximumSupportedMissiles: 3,
+                    maximumConcurrentTargetEngagements: 1),
                 new LauncherAirDefenseComponentDefinition(
                     Sa2LauncherComponentId,
                     "SA-2 launcher rail",
@@ -464,6 +466,8 @@ namespace Models.Module
                     readyRoundCapacity: 1,
                     reserveRoundCapacity: 1,
                     reloadMinutes: 30f,
+                    minimumTrackQualityToFire: 0.45f,
+                    preferredEngagementSalvoSize: 2,
                     surfaceToAirOrdnanceTypeDefinitionId: Sa2InterceptorOrdnanceTypeId),
                 new CommandAirDefenseComponentDefinition(
                     SamCommandPostComponentId,
@@ -491,6 +495,7 @@ namespace Models.Module
                     readyRoundCapacity: 6,
                     reserveRoundCapacity: 0,
                     reloadMinutes: 0f,
+                    minimumTrackQualityToFire: 0.4f,
                     surfaceToAirOrdnanceTypeDefinitionId: OsaInterceptorOrdnanceTypeId),
                 new CommandAirDefenseComponentDefinition(
                     OsaCommandComponentId,

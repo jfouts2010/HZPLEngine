@@ -1150,9 +1150,11 @@ If a stale track is reacquired before expiry, it keeps the same track identity, 
 
 ### IADS track quality
 
-IADS track quality is a continuous 0.0 to 1.0 estimate of how useful an IADS current track is for air-defense decisions. Track quality builds over time from radar contributions, is capped by the radar-flight situation, may improve faster when multiple radars contribute with diminishing returns, and is interpreted through gameplay thresholds for awareness, engagement assignment, weapon-quality use, and other actions.
+IADS track quality is one continuous 0.0 to 1.0 estimate of the alliance's combined certainty about a hostile flight's current position, altitude, heading, and speed. Quality `1.0` means the track contains complete current kinematic information at the campaign abstraction; lower quality means its position and predicted motion are less dependable. HZPL does not persist separate position-, altitude-, velocity-, or confidence-quality fields.
 
-A flight contact must reach at least 0.10 IADS track quality before it becomes an IADS current track. The 0.10 threshold creates tracks; stale tracks below that quality persist until their stale expiry threshold is reached.
+Each observing radar contributes an individual situation-dependent quality cap and build rate. Independent radar caps fuse by combining their remaining uncertainty, so additional radars can raise the achievable shared quality as well as build it faster; build-rate contributions retain diminishing returns. Quality moves toward the currently fused cap rather than snapping down to it, loses quality when the observed flight changes heading, speed, or altitude, and decays quickly when observation is lost.
+
+A flight contact must reach at least 0.10 IADS track quality before it becomes an IADS current track. Sub-threshold tentative acquisitions retain their accumulated quality internally only while continuously observed, allowing successive radar updates to establish a contact without exposing it to IADS consumers. The 0.10 threshold creates current tracks; established stale tracks below that quality persist until their stale expiry threshold is reached.
 
 Damaged, destroyed, disabled, or suppressed radar capability does not contribute to IADS track quality in v1. Radar emission is binary, and available radars are assumed to emit; future emission modes or graded suppression may add more detailed behavior.
 
@@ -1186,21 +1188,27 @@ _Avoid_: network dirty flag (implementation name), full IADS refresh
 
 ### Weapon-quality track
 
-A weapon-quality track is an IADS current track precise enough to support a SAM launch. Remote SAM launches require a weapon-quality track, typically provided by a live fire-control-capable site or an equivalent organic shooter sensor; search-only and passive-only tracks provide awareness or cueing until a fire-control-quality source upgrades the track.
+A weapon-quality track is an IADS current track whose aggregate quality meets the assigned SAM system's authored minimum launch quality. Remote observations may raise the shared track to weapon quality, but a radar-guided SAM launch also requires a live local fire-control-capable radar or equivalent organic shooter sensor inside its applicable envelope.
 
-Organic launcher guidance can make a track weapon-quality for that launcher site's own assigned shot. Organic launcher guidance does not upgrade shared tracks into weapon-quality tracks for other shooters.
+Search-only and passive-only contributors may improve shared awareness and cueing but cannot replace the shooter's required local fire-control and guidance role.
 
 ### Weapon-quality for shot
 
-Weapon-quality for shot is whether a specific SAM site may treat an IADS current track as weapon-quality for that site's own engagement assignment or SAM launch. It is evaluated per shooter and per track, not only from the track's shared quality label.
+Weapon-quality for shot is whether a specific SAM site has both a shared track meeting its launcher's authored minimum quality and an operational local fire-control source able to acquire and support the target. The local source is an authorization and guidance-continuity requirement; it does not cut the fused shared quality back to that radar's individual contribution cap.
 
 A weapon-quality track on the air picture does not by itself mean every networked launcher has weapon-quality for shot; remote engagement still requires doctrine, network support, and a valid fire-control source on the network.
 
 Weapon-quality for shot is one input to SAM launch authorization, not the whole decision. Full launch eligibility (ammo, reload, envelope, channels, role status, and other gates) belongs in a separate launch-authorization step that composes multiple checks; it should not be folded into the weapon-quality for shot module.
 
+For a surface-to-air missile released with continuous required guidance and no target maneuver or active countermeasure response, the snapshotted shared track quality is its ideal hit probability: quality `1.0` produces a certain hit, while quality `0.5` produces a fifty-percent ideal hit chance. Post-launch guidance loss and actual target defense modify that probability. A successful hit remains distinct from destruction; ordnance lethality and aircraft survivability determine whether the hit destroys or mission-kills the selected aircraft.
+
 ### SAM launch execution
 
 SAM launch execution is the resolution of assigned SAM engagements after sortie movement has updated target positions. It validates whether assigned sites can still fire and resolves launch outcomes without choosing engagements itself.
+
+A SAM site's launcher components represent its ready rails or vehicles, not independent authorization to fire every ready missile. Each launcher definition authors a preferred engagement salvo size, while the selected fire-control radar authors its maximum simultaneously supported missiles and maximum concurrent target engagements. Launch execution selects only enough eligible launcher components to fill the preferred salvo without exceeding the radar's remaining capacity.
+
+An operational fire-control radar does not accept another salvo against a flight while missiles it already launched at that flight remain unresolved. The IADS also reserves a flight with an in-progress SAM engagement so another site is not assigned to duplicate that engagement. Once the existing effects resolve, surviving targets may be assigned for a subsequent engagement.
 
 SAM launch execution happens once per simulation tick after all live sorties have moved for that tick, so all launch decisions use the same updated air picture.
 

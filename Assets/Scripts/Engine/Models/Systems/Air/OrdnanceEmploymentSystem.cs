@@ -11,7 +11,6 @@ namespace Engine.Models
 {
     public sealed class OrdnanceEmploymentSystem
     {
-        private const float MinimumWeaponQualityTrack = 0.5f;
         private const int MaximumEmploymentRecords = 5000;
 
         private readonly GameManager gameManager;
@@ -533,6 +532,12 @@ namespace Engine.Models
             return Mathf.Clamp01(probability * launchQuality);
         }
 
+        private static float CalculateSamReleaseHitProbability(
+            float launchQuality)
+        {
+            return Mathf.Clamp01(launchQuality);
+        }
+
         private static PendingOrdnanceEffect CreatePendingOrdnanceEffect(
             AuthorizedOrdnanceRelease release)
         {
@@ -550,13 +555,18 @@ namespace Engine.Models
                 : isSemiActiveRadar
                     ? release.ReleasedAt.AddSeconds(travelSeconds)
                     : release.ReleasedAt;
-            var hitProbability = CalculateReleaseHitProbability(
-                release.Ordnance,
-                release.ReleaseRangeKm,
-                release.MaximumRangeKm,
-                release.ShooterSensorQuality,
-                release.Target.AircraftType.EcmQuality,
-                release.LaunchQuality);
+            var hitProbability = release.SourceKind ==
+                                 OrdnanceEmploymentSourceKind.SamLauncher
+                                 && IsRadarGuided(release.Ordnance.GuidanceMode)
+                ? CalculateSamReleaseHitProbability(
+                    release.LaunchQuality)
+                : CalculateReleaseHitProbability(
+                    release.Ordnance,
+                    release.ReleaseRangeKm,
+                    release.MaximumRangeKm,
+                    release.ShooterSensorQuality,
+                    release.Target.AircraftType.EcmQuality,
+                    release.LaunchQuality);
 
             return new PendingOrdnanceEffect
             {
@@ -838,37 +848,60 @@ namespace Engine.Models
                                     && !track.IsStale
                                     && contexts.ContainsKey(track.FlightId))
                     .ToList();
-                var assignments = new List<IADSEngagementAssignment>();
+                var reservedTargetFlightIds = PendingEffects
+                    .Where(effect => IsPendingSamEffectForAlliance(
+                        effect,
+                        alliance,
+                        currentTime))
+                    .Select(effect => effect.TargetFlightId)
+                    .ToHashSet();
+                var candidates = new List<SamEngagementCandidate>();
                 foreach (var site in gameManager.airDefenseSiteSystem.Sites
                              .Where(site => site != null
                                             && gameManager.airDefenseSiteSystem
-                                                .GetEffectiveAlliance(site) == alliance)
-                             .OrderBy(site => site.SiteId))
+                                                .GetEffectiveAlliance(site) == alliance))
                 {
                     if (!TryGetSamSitePosition(site, out var sitePosition))
                         continue;
 
-                    var bestTrack = tracks
-                        .Where(track => CanAnyLauncherEngage(
+                    foreach (var track in tracks.Where(track =>
+                                 !reservedTargetFlightIds.Contains(track.FlightId)
+                                 && CanAnyLauncherEngage(
+                                     site,
+                                     sitePosition,
+                                     contexts[track.FlightId],
+                                     track)))
+                    {
+                        candidates.Add(new SamEngagementCandidate(
                             site,
-                            sitePosition,
-                            contexts[track.FlightId],
-                            track))
-                        .OrderBy(track => Vector3.Distance(
-                            sitePosition,
-                            contexts[track.FlightId].Flight.PositionFeet))
-                        .ThenBy(track => track.FlightId)
-                        .FirstOrDefault();
-                    if (bestTrack == null)
+                            track,
+                            Vector3.Distance(
+                                sitePosition,
+                                contexts[track.FlightId].Flight.PositionFeet)));
+                    }
+                }
+
+                var assignments = new List<IADSEngagementAssignment>();
+                var assignedSiteIds = new HashSet<Guid>();
+                foreach (var candidate in candidates
+                             .OrderBy(item => item.DistanceFeet)
+                             .ThenBy(item => item.Site.SiteId)
+                             .ThenBy(item => item.Track.FlightId))
+                {
+                    if (assignedSiteIds.Contains(candidate.Site.SiteId)
+                        || reservedTargetFlightIds.Contains(
+                            candidate.Track.FlightId))
                         continue;
 
                     assignments.Add(new IADSEngagementAssignment
                     {
-                        SiteId = site.SiteId,
-                        TrackId = bestTrack.TrackId,
-                        TargetFlightId = bestTrack.FlightId,
+                        SiteId = candidate.Site.SiteId,
+                        TrackId = candidate.Track.TrackId,
+                        TargetFlightId = candidate.Track.FlightId,
                         AssignedAt = currentTime
                     });
+                    assignedSiteIds.Add(candidate.Site.SiteId);
+                    reservedTargetFlightIds.Add(candidate.Track.FlightId);
                 }
                 iads.ReplaceEngagementAssignments(assignments);
             }
@@ -908,11 +941,23 @@ namespace Engine.Models
                             out var weaponQualityForShot))
                         continue;
 
+                    var remainingSupportSlots =
+                        supportRadarDefinition.MaximumSupportedMissiles
+                        - CountPendingSupportedMissiles(
+                            site.SiteId,
+                            supportRadar.ComponentId,
+                            currentTime);
+                    if (remainingSupportSlots <= 0)
+                        continue;
+
+                    var launchesByDefinitionId = new Dictionary<Guid, int>();
                     foreach (var launcher in gameManager.airDefenseSiteSystem
                                  .GetAvailableComponents(site)
                                  .OfType<LauncherAirDefenseComponent>()
                                  .OrderBy(component => component.ComponentId))
                     {
+                        if (remainingSupportSlots <= 0)
+                            break;
                         if (!TryGetLauncherEmployment(
                                 launcher,
                                 sitePosition,
@@ -921,6 +966,15 @@ namespace Engine.Models
                                 out var ordnance,
                                 out var distanceFeet,
                                 out var maximumRangeKm))
+                            continue;
+                        if (weaponQualityForShot
+                            < launcherDefinition.MinimumTrackQualityToFire)
+                            continue;
+                        launchesByDefinitionId.TryGetValue(
+                            launcherDefinition.SamComponentDefinitionId,
+                            out var launchesForDefinition);
+                        if (launchesForDefinition
+                            >= launcherDefinition.PreferredEngagementSalvoSize)
                             continue;
                         if (!launcher.TrySpendRound(launcherDefinition, currentTime))
                             continue;
@@ -962,6 +1016,10 @@ namespace Engine.Models
                                                  / AirspaceGeometry.FeetPerKilometer
                             });
                         PendingEffects.Add(pending);
+                        launchesByDefinitionId[
+                                launcherDefinition.SamComponentDefinitionId] =
+                            launchesForDefinition + 1;
+                        remainingSupportSlots--;
                         AddRecord(
                             pending,
                             OrdnanceEmploymentRecordStage.OrdnanceReleased,
@@ -993,24 +1051,29 @@ namespace Engine.Models
             FlightContext target,
             IADSTrack track)
         {
-            return TryGetWeaponQualityRadar(
-                       site,
-                       target,
-                       track,
-                       out _,
-                       out _,
-                       out _)
-                   && gameManager.airDefenseSiteSystem
+            if (!TryGetWeaponQualityRadar(
+                    site,
+                    target,
+                    track,
+                    out _,
+                    out _,
+                    out var weaponQualityForShot))
+                return false;
+
+            return gameManager.airDefenseSiteSystem
                 .GetAvailableComponents(site)
                 .OfType<LauncherAirDefenseComponent>()
-                .Any(launcher => TryGetLauncherEmployment(
-                    launcher,
-                    sitePosition,
-                    target,
-                    out _,
-                    out _,
-                    out _,
-                    out _));
+                .Any(launcher =>
+                    TryGetLauncherEmployment(
+                        launcher,
+                        sitePosition,
+                        target,
+                        out var launcherDefinition,
+                        out _,
+                        out _,
+                        out _)
+                    && weaponQualityForShot
+                    >= launcherDefinition.MinimumTrackQualityToFire);
         }
 
         private bool TryGetLauncherEmployment(
@@ -1123,7 +1186,13 @@ namespace Engine.Models
                         target.AircraftType.RadarDetectability,
                         item.DistanceKm)
                 })
-                .Where(item => item.LocalQualityCap >= MinimumWeaponQualityTrack)
+                .Where(item => item.LocalQualityCap > 0f)
+                .Where(item => CanRadarAcceptNewSalvo(
+                    site.SiteId,
+                    item.Component.ComponentId,
+                    item.Definition,
+                    target.Flight.FlightId,
+                    gameManager.CurrentTime))
                 .OrderByDescending(item => item.LocalQualityCap)
                 .ThenBy(item => item.Component.ComponentId)
                 .FirstOrDefault();
@@ -1131,10 +1200,86 @@ namespace Engine.Models
             radarDefinition = candidate?.Definition;
             weaponQualityForShot = candidate == null
                 ? 0f
-                : Mathf.Min(track.Quality, candidate.LocalQualityCap);
+                : track.Quality;
             return radar != null
                    && radarDefinition != null
-                   && weaponQualityForShot >= MinimumWeaponQualityTrack;
+                   && weaponQualityForShot > 0f;
+        }
+
+        private bool CanRadarAcceptNewSalvo(
+            Guid siteId,
+            Guid radarComponentId,
+            RadarAirDefenseComponentDefinition definition,
+            Guid targetFlightId,
+            DateTime currentTime)
+        {
+            var pendingEffects = GetPendingSupportedSamEffects(
+                    siteId,
+                    radarComponentId,
+                    currentTime)
+                .ToList();
+            if (pendingEffects.Any(effect =>
+                    effect.TargetFlightId == targetFlightId))
+                return false;
+
+            var supportedMissiles = pendingEffects.Sum(effect =>
+                Math.Max(0, effect.Quantity));
+            if (supportedMissiles >= definition.MaximumSupportedMissiles)
+                return false;
+
+            return pendingEffects
+                       .Select(effect => effect.TargetFlightId)
+                       .Where(flightId => flightId != Guid.Empty)
+                       .Distinct()
+                       .Count()
+                   < definition.MaximumConcurrentTargetEngagements;
+        }
+
+        private int CountPendingSupportedMissiles(
+            Guid siteId,
+            Guid radarComponentId,
+            DateTime currentTime)
+        {
+            return GetPendingSupportedSamEffects(
+                    siteId,
+                    radarComponentId,
+                    currentTime)
+                .Sum(effect => Math.Max(0, effect.Quantity));
+        }
+
+        private IEnumerable<PendingOrdnanceEffect> GetPendingSupportedSamEffects(
+            Guid siteId,
+            Guid radarComponentId,
+            DateTime currentTime)
+        {
+            return PendingEffects.Where(effect =>
+                effect != null
+                && effect.SourceKind == OrdnanceEmploymentSourceKind.SamLauncher
+                && effect.ResolveAt > currentTime
+                && (effect.SupportSourceSiteId == siteId
+                    || effect.SupportSourceSiteId == Guid.Empty
+                    && effect.SourceSiteId == siteId)
+                && (effect.SupportSourceComponentId == radarComponentId
+                    || effect.SupportSourceComponentId == Guid.Empty));
+        }
+
+        private bool IsPendingSamEffectForAlliance(
+            PendingOrdnanceEffect effect,
+            Alliance alliance,
+            DateTime currentTime)
+        {
+            if (effect == null
+                || effect.SourceKind != OrdnanceEmploymentSourceKind.SamLauncher
+                || effect.ResolveAt <= currentTime
+                || effect.TargetFlightId == Guid.Empty)
+                return false;
+
+            var siteId = effect.SourceSiteId != Guid.Empty
+                ? effect.SourceSiteId
+                : effect.SupportSourceSiteId;
+            return gameManager.airDefenseSiteSystem.TryGetSite(siteId, out var site)
+                   && gameManager.airDefenseSiteSystem.GetEffectiveAlliance(site)
+                   == alliance;
         }
 
         private static bool IsTargetInsideRadarEnvelope(
@@ -1337,6 +1482,23 @@ namespace Engine.Models
             public float ShooterSensorQuality;
             public float LaunchQuality;
             public float ReleaseRangeKm;
+        }
+
+        private sealed class SamEngagementCandidate
+        {
+            public readonly SamSite Site;
+            public readonly IADSTrack Track;
+            public readonly float DistanceFeet;
+
+            public SamEngagementCandidate(
+                SamSite site,
+                IADSTrack track,
+                float distanceFeet)
+            {
+                Site = site;
+                Track = track;
+                DistanceFeet = distanceFeet;
+            }
         }
 
         private sealed class FlightContext

@@ -11,9 +11,12 @@ namespace Models.Gameplay.Campaign
     public sealed class AllianceIADS
     {
         private const float DefaultStaleExpirySeconds = 15f * 60f;
-        private const float DefaultStaleQualityDecayPerSecond = 0.03f / 60f;
+        private const float DefaultStaleQualityDecayPerSecond = 0.02f;
         private const float BaseTrackBuildRatePerSecond = 0.04f;
         private const float AdditionalRadarDiminishingFactor = 0.5f;
+        private const float ObservedExcessQualityDecayPerSecond = 0.01f;
+        private const float HeadingChangeQualityPenalty = 0.35f;
+        private const float SignificantAltitudeChangeFeet = 10000f;
         private const float UnknownContactAirInterferenceCapabilityPerAircraft = 1f;
 
         [SerializeReference] public List<IADSTrack> Tracks = new List<IADSTrack>();
@@ -35,14 +38,26 @@ namespace Models.Gameplay.Campaign
             Alliance = alliance;
         }
 
-        public IReadOnlyList<IADSTrack> CurrentTracks => Tracks;
+        public IReadOnlyList<IADSTrack> CurrentTracks
+        {
+            get
+            {
+                EnsureIndex();
+                return Tracks
+                    .Where(track => track != null && track.IsEstablished)
+                    .ToList();
+            }
+        }
         public IReadOnlyList<IADSEngagementAssignment> CurrentEngagementAssignments =>
             EngagementAssignments;
 
         public IADSTrack GetTrackForFlight(Guid flightId)
         {
             EnsureIndex();
-            return tracksByFlightId.TryGetValue(flightId, out var track) ? track : null;
+            return tracksByFlightId.TryGetValue(flightId, out var track)
+                   && track.IsEstablished
+                ? track
+                : null;
         }
 
         public void RefreshTracks(
@@ -105,11 +120,22 @@ namespace Models.Gameplay.Campaign
                     continue;
 
                 var totalQualityIncrease = CalculateDiminishedQualityIncrease(contributions);
-                var qualityCap = contributions.Max(contribution => contribution.QualityCap);
+                var qualityCap = CalculateFusedQualityCap(contributions);
                 var currentQuality = tracksByFlightId.TryGetValue(flight.FlightId, out var existingTrack)
                     ? existingTrack.Quality
                     : 0f;
-                var newQuality = Mathf.Min(qualityCap, currentQuality + totalQualityIncrease);
+                var newQuality = CalculateObservedQuality(
+                    currentQuality,
+                    qualityCap,
+                    totalQualityIncrease,
+                    elapsedSeconds);
+                if (existingTrack != null)
+                {
+                    newQuality = Mathf.Clamp01(
+                        newQuality - CalculateManeuverQualityPenalty(
+                            existingTrack,
+                            flight));
+                }
                 var aircraftCount = aircraftCountByFlightId != null
                                     && aircraftCountByFlightId.TryGetValue(flight.FlightId, out var count)
                     ? count
@@ -143,7 +169,7 @@ namespace Models.Gameplay.Campaign
                     continue;
                 }
 
-                if (newQuality < IADSTrack.MinimumCreationQuality)
+                if (newQuality <= 0f)
                     continue;
 
                 var track = new IADSTrack(
@@ -169,6 +195,12 @@ namespace Models.Gameplay.Campaign
 
         public void RebuildIndex()
         {
+            foreach (var track in Tracks.Where(track => track != null))
+            {
+                if (track.Quality >= IADSTrack.MinimumCreationQuality)
+                    track.IsEstablished = true;
+            }
+
             tracksByFlightId = (Tracks)
                 .Where(track => track != null && track.FlightId != Guid.Empty)
                 .GroupBy(track => track.FlightId)
@@ -241,7 +273,7 @@ namespace Models.Gameplay.Campaign
                         * detectabilityFactor
                         * rangeFactor);
 
-                    if (qualityCap <= 0f || qualityIncrease <= 0f)
+                    if (qualityCap <= 0f)
                         continue;
 
                     yield return new RadarContribution(qualityIncrease, qualityCap);
@@ -260,6 +292,60 @@ namespace Models.Gameplay.Campaign
             }
 
             return Mathf.Clamp01(total);
+        }
+
+        private static float CalculateFusedQualityCap(
+            IReadOnlyList<RadarContribution> contributions)
+        {
+            var remainingUncertainty = 1f;
+            foreach (var contribution in contributions)
+            {
+                remainingUncertainty *= 1f - Mathf.Clamp01(contribution.QualityCap);
+            }
+
+            return Mathf.Clamp01(1f - remainingUncertainty);
+        }
+
+        private static float CalculateObservedQuality(
+            float currentQuality,
+            float qualityCap,
+            float qualityIncrease,
+            float elapsedSeconds)
+        {
+            var current = Mathf.Clamp01(currentQuality);
+            var cap = Mathf.Clamp01(qualityCap);
+            if (current <= cap)
+                return Mathf.Min(cap, current + Mathf.Max(0f, qualityIncrease));
+
+            return Mathf.Max(
+                cap,
+                current - ObservedExcessQualityDecayPerSecond
+                * Mathf.Max(0f, elapsedSeconds));
+        }
+
+        private static float CalculateManeuverQualityPenalty(
+            IADSTrack track,
+            AirFlight flight)
+        {
+            if (track == null || flight == null)
+                return 0f;
+
+            var headingChange = Mathf.Abs(Mathf.DeltaAngle(
+                                    track.EstimatedHeadingDegrees,
+                                    flight.HeadingDegrees))
+                                / 180f;
+            var speedScale = Mathf.Max(
+                100f,
+                Mathf.Max(track.EstimatedSpeedKnots, flight.SpeedKnots));
+            var speedChange = Mathf.Abs(
+                                  track.EstimatedSpeedKnots - flight.SpeedKnots)
+                              / speedScale;
+            var altitudeChange = Mathf.Abs(
+                                     track.LastKnownPositionFeet.y
+                                     - flight.PositionFeet.y)
+                                 / SignificantAltitudeChangeFeet;
+            return Mathf.Clamp01(
+                headingChange * HeadingChangeQualityPenalty);
         }
 
         private void RemoveInactiveTracks(IReadOnlyDictionary<Guid, AirFlight> activeHostileFlights)
@@ -287,7 +373,8 @@ namespace Models.Gameplay.Campaign
         {
             Tracks.RemoveAll(track => track == null
                                       || track.IsStale
-                                      && track.StaleSeconds >= StaleExpirySeconds);
+                                      && (!track.IsEstablished
+                                          || track.StaleSeconds >= StaleExpirySeconds));
             RebuildIndex();
         }
 

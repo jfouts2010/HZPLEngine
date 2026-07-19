@@ -18,6 +18,7 @@ namespace Models.Gameplay.Campaign
         public float EstimatedHeadingDegrees;
         public float EstimatedSpeedKnots;
         public float Quality;
+        public bool IsEstablished;
         public bool IsStale;
         public float StaleSeconds;
         public DateTime LastObservedAt;
@@ -46,6 +47,7 @@ namespace Models.Gameplay.Campaign
             EstimatedHeadingDegrees = estimatedHeadingDegrees;
             EstimatedSpeedKnots = Mathf.Max(0f, estimatedSpeedKnots);
             Quality = Mathf.Clamp01(quality);
+            IsEstablished = Quality >= MinimumCreationQuality;
             IsStale = false;
             StaleSeconds = 0f;
             LastObservedAt = observedAt;
@@ -66,6 +68,7 @@ namespace Models.Gameplay.Campaign
             EstimatedHeadingDegrees = estimatedHeadingDegrees;
             EstimatedSpeedKnots = Mathf.Max(0f, estimatedSpeedKnots);
             Quality = Mathf.Clamp01(quality);
+            IsEstablished = IsEstablished || Quality >= MinimumCreationQuality;
             IsStale = false;
             StaleSeconds = 0f;
             LastObservedAt = observedAt;

@@ -3242,6 +3242,10 @@ namespace Engine.Monobehaviours.Managers
             OrdnanceEmploymentRecord record)
         {
             var resolvedShots = GetResolvedShots(record).ToList();
+            var probabilityExplanation = record.SourceKind ==
+                                         OrdnanceEmploymentSourceKind.SamLauncher
+                ? "A SAM hit chance starts at the fused IADS track quality snapshotted at release; later guidance support and actual target defense modify terminal probability."
+                : "An aircraft-weapon hit chance is snapshotted at release from ordnance probability, range, guidance mode, shooter capability, target ECM, and launch geometry.";
             var lines = new List<string>
             {
                 "PASS SUMMARY",
@@ -3256,7 +3260,7 @@ namespace Engine.Monobehaviours.Managers
                 $"Release target position  X {record.TargetPositionFeet.x:0} / Z {record.TargetPositionFeet.z:0} / ALT {record.TargetPositionFeet.y:0} ft",
                 string.Empty,
                 "WHY THIS PROBABILITY",
-                "The hit chance is snapshotted at release from the ordnance base probability, release range, guidance mode, shooter capability, target ECM, and SAM track quality where applicable.",
+                probabilityExplanation,
                 "The current debug record stores the final probability and release context; it does not yet persist each intermediate modifier as a separate field.",
                 string.Empty,
                 "LAUNCHES AND RESOLUTION"
