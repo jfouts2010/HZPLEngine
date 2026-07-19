@@ -824,21 +824,34 @@ namespace Engine.Models
                         var result = roll < effect.HitProbability
                             ? OrdnanceShotResult.Hit
                             : OrdnanceShotResult.Miss;
+                        var targetWasAlreadyDamaged =
+                            selectedAircraft.Status
+                            == CampaignAircraftStatus.Damaged
+                            || damages.Contains(selectedAircraft.AircraftId);
+                        var destructionProbability = -1f;
+                        var destructionRoll = -1f;
                         if (result == OrdnanceShotResult.Hit
                             && target != null
                             && ordnanceTypes.TryGetValue(
                                 effect.OrdnanceTypeDefinitionId,
                                 out var impactOrdnance))
                         {
-                            var destructionProbability = Mathf.Clamp01(
-                                impactOrdnance.TerminalLethality
-                                * (1f - 0.55f * Mathf.Clamp01(
-                                    target.AircraftType.Survivability)));
-                            var damageRoll = (float)StableRoll(
-                                effect.PendingEffectId,
-                                missileIndex + 10000);
-                            if (damageRoll >= destructionProbability)
-                                result = OrdnanceShotResult.Damaged;
+                            if (targetWasAlreadyDamaged)
+                            {
+                                destructionProbability = 1f;
+                            }
+                            else
+                            {
+                                destructionProbability = Mathf.Clamp01(
+                                    impactOrdnance.TerminalLethality
+                                    * (1f - 0.55f * Mathf.Clamp01(
+                                        target.AircraftType.Survivability)));
+                                destructionRoll = (float)StableRoll(
+                                    effect.PendingEffectId,
+                                    missileIndex + 10000);
+                                if (destructionRoll >= destructionProbability)
+                                    result = OrdnanceShotResult.Damaged;
+                            }
                         }
                         shotDiagnostics.Add(new OrdnanceShotDiagnostic
                         {
@@ -847,6 +860,9 @@ namespace Engine.Models
                             TargetAircraftId = selectedAircraft.AircraftId,
                             Probability = effect.HitProbability,
                             Roll = roll,
+                            TargetWasAlreadyDamaged = targetWasAlreadyDamaged,
+                            DestructionProbability = destructionProbability,
+                            DestructionRoll = destructionRoll,
                             Result = result
                         });
                         if (result == OrdnanceShotResult.Hit)

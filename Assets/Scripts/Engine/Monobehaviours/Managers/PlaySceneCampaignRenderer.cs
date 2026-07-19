@@ -3254,7 +3254,11 @@ namespace Engine.Monobehaviours.Managers
                         : $"\nResolution: {resolution.Result}  |  "
                           + $"roll {resolution.Roll:0.000}  |  "
                           + $"target aircraft "
-                          + $"{ShortId(resolution.TargetAircraftId)}";
+                          + $"{ShortId(resolution.TargetAircraftId)}"
+                          + (resolution.Result == OrdnanceShotResult.Hit
+                             && resolution.TargetWasAlreadyDamaged
+                              ? "  |  prior damage made this hit fatal"
+                              : string.Empty);
                 AddFlightDetailMessage(
                     section,
                     $"Attack {GetFlightLabel(attack.SourceFlightId)} -> "
@@ -3540,10 +3544,20 @@ namespace Engine.Monobehaviours.Managers
             var roll = shot.Roll < 0f ? 0f : shot.Roll;
             return shot.Result switch
             {
+                OrdnanceShotResult.Hit when shot.TargetWasAlreadyDamaged =>
+                    $"Destroyed because hit roll {roll:0.000} was below "
+                    + $"terminal P(hit) {threshold:P1} and the aircraft was "
+                    + "already damaged.",
                 OrdnanceShotResult.Hit =>
-                    $"Destroyed after roll {roll:0.000} was below terminal P(hit) {threshold:P1}.",
+                    $"Destroyed after hit roll {roll:0.000} was below "
+                    + $"terminal P(hit) {threshold:P1} and lethality roll "
+                    + $"{shot.DestructionRoll:0.000} was below P(destroy | hit) "
+                    + $"{shot.DestructionProbability:P1}.",
                 OrdnanceShotResult.Damaged =>
-                    $"Damaged after roll {roll:0.000} was below terminal P(hit) {threshold:P1}, but the lethality check did not destroy the aircraft.",
+                    $"Damaged after hit roll {roll:0.000} was below terminal "
+                    + $"P(hit) {threshold:P1}, but lethality roll "
+                    + $"{shot.DestructionRoll:0.000} was at or above "
+                    + $"P(destroy | hit) {shot.DestructionProbability:P1}.",
                 OrdnanceShotResult.Miss =>
                     $"Miss because roll {roll:0.000} was at or above terminal P(hit) {threshold:P1}.",
                 _ => $"Result: {shot.Result}."

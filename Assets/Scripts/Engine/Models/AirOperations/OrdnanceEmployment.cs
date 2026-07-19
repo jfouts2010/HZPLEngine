@@ -35,6 +35,9 @@ namespace Models.Gameplay.Campaign
         public Guid TargetAircraftId;
         public float Probability;
         public float Roll;
+        public bool TargetWasAlreadyDamaged;
+        public float DestructionProbability = -1f;
+        public float DestructionRoll = -1f;
         public OrdnanceShotResult Result;
     }
 
