@@ -29,6 +29,7 @@ namespace Models.Module
         public float EcmQuality { get; }
         public float Survivability { get; }
         public float AirInterferenceCapability { get; }
+        public float WvrCombatRating { get; }
         public float OrdnanceCapacity { get; }
         public List<Guid> CompatibleOrdnanceTypeDefinitionIds { get; }
         public Guid InternalGunOrdnanceTypeDefinitionId { get; }
@@ -63,7 +64,8 @@ namespace Models.Module
             float ordnanceEmploymentEfficiency = 1f,
             float airInterferenceCapability = 0f,
             Guid internalGunOrdnanceTypeDefinitionId = default,
-            int internalGunBurstCount = 0)
+            int internalGunBurstCount = 0,
+            float wvrCombatRating = 0.5f)
         {
             if (aircraftTypeDefinitionId == Guid.Empty)
                 throw new ArgumentException("Aircraft type definition id is required.",
@@ -86,6 +88,7 @@ namespace Models.Module
             EcmQuality = Math.Max(0f, Math.Min(1f, ecmQuality));
             Survivability = Math.Max(0f, Math.Min(1f, survivability));
             AirInterferenceCapability = Math.Max(0f, airInterferenceCapability);
+            WvrCombatRating = Math.Max(0f, Math.Min(1f, wvrCombatRating));
             OrdnanceCapacity = Math.Max(0f, ordnanceCapacity);
             CompatibleOrdnanceTypeDefinitionIds =
                 compatibleOrdnanceTypeDefinitionIds == null

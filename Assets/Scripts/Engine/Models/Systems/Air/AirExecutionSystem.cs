@@ -21,6 +21,7 @@ namespace Engine.Models
         private readonly IReadOnlyDictionary<Guid, AircraftTypeDefinition> aircraftTypes;
         private readonly IReadOnlyDictionary<Guid, OrdnanceTypeDefinition> ordnanceTypes;
         private readonly AirLoadoutPlanner loadoutPlanner;
+        private readonly WvrEngagementSystem wvrEngagementSystem;
         private OrdnanceEmploymentSystem ordnanceEmploymentSystem;
 
         public AirExecutionSystem(
@@ -40,6 +41,18 @@ namespace Engine.Models
                     gameManager.OrdnanceAllowances.TryGetValue(alliance, out var allowed)
                         ? allowed
                         : Array.Empty<Guid>());
+            wvrEngagementSystem = new WvrEngagementSystem(
+                ordnanceTypes,
+                siteId => gameManager.airDefenseSiteSystem.TryGetSite(
+                              siteId,
+                              out var site)
+                    ? gameManager.airDefenseSiteSystem.GetEffectiveAlliance(site)
+                    : Alliance.Neutral,
+                (alliance, targetFlightId) =>
+                    gameManager.GetAllianceIADS(alliance)
+                        ?.CurrentEngagementAssignments.Any(assignment =>
+                            assignment.TargetFlightId == targetFlightId)
+                    == true);
         }
 
         public void AttachOrdnanceEmploymentSystem(
@@ -47,6 +60,20 @@ namespace Engine.Models
         {
             ordnanceEmploymentSystem = employmentSystem
                 ?? throw new ArgumentNullException(nameof(employmentSystem));
+        }
+
+        public bool IsFlightInWvrEngagement(Guid flightId)
+        {
+            return wvrEngagementSystem.IsFlightEngaged(flightId);
+        }
+
+        public bool TryGetLatestWvrRound(
+            Guid flightId,
+            out WvrRoundDiagnostic diagnostic)
+        {
+            return wvrEngagementSystem.TryGetLatestRound(
+                flightId,
+                out diagnostic);
         }
 
         public void GameTurn(DateTime previousTime, DateTime currentTime)
@@ -61,6 +88,7 @@ namespace Engine.Models
             {
                 ordnanceEmploymentSystem.UpdateOrdnanceGuidance(cursor);
                 ordnanceEmploymentSystem.AdvanceScheduledEvents(cursor);
+                ResolveDamageRecovery(cursor);
                 PrepareFlightsAt(cursor);
                 ReleaseReadyRendezvousFlights();
 
@@ -68,9 +96,21 @@ namespace Engine.Models
                     break;
 
                 var frame = BuildAirCombatFrame(cursor);
+                wvrEngagementSystem.AdvanceDueRounds(
+                    frame,
+                    GetDoctrine,
+                    ordnanceEmploymentSystem,
+                    cursor);
+                ordnanceEmploymentSystem.AdvanceScheduledEvents(cursor);
+                frame = BuildAirCombatFrame(cursor);
+                wvrEngagementSystem.Reconcile(frame, cursor);
+                ResolveDamageRecovery(cursor);
+
                 var commands = frame.Flights.Values
                     .Where(view => view.Flight.IsAirborne
-                                   && !view.Flight.IsWaitingAtRendezvous)
+                                   && !view.Flight.IsWaitingAtRendezvous
+                                   && !wvrEngagementSystem.IsFlightEngaged(
+                                       view.Flight.FlightId))
                     .OrderBy(view => view.Flight.FlightId)
                     .Select(view => AirCombatRules.Decide(
                         view,
@@ -106,12 +146,27 @@ namespace Engine.Models
                 {
                     ordnanceEmploymentSystem.TryStartAirToAirPass(proposal, cursor);
                 }
+                wvrEngagementSystem.ProcessRequests(commands, frame, cursor);
+                ordnanceEmploymentSystem.CancelAirToAirPasses(
+                    frame.Flights.Keys.Where(
+                        wvrEngagementSystem.IsFlightEngaged),
+                    cursor,
+                    "Employment preparation aborted when the source entered WVR combat.");
+                wvrEngagementSystem.AdvanceDueRounds(
+                    frame,
+                    GetDoctrine,
+                    ordnanceEmploymentSystem,
+                    cursor);
                 ordnanceEmploymentSystem.AdvanceScheduledEvents(cursor);
+                frame = BuildAirCombatFrame(cursor);
+                wvrEngagementSystem.Reconcile(frame, cursor);
+                ResolveDamageRecovery(cursor);
 
                 var next = NextTacticalBoundary(cursor, currentTime);
                 var elapsedSeconds = Math.Max(0d, (next - cursor).TotalSeconds);
                 foreach (var command in commands.OrderBy(command => command.FlightId))
                     AdvanceFlightCommand(command, cursor, elapsedSeconds);
+                BurnWvrFuel(frame, commands, elapsedSeconds);
                 cursor = next;
             }
 
@@ -161,6 +216,9 @@ namespace Engine.Models
                     }
 
                     if (!flight.IsAirborne)
+                        continue;
+
+                    if (wvrEngagementSystem.IsFlightEngaged(flight.FlightId))
                         continue;
 
                     flight.ContinueAbortRecovery(currentTime);
@@ -231,6 +289,12 @@ namespace Engine.Models
                                            && aircraft.Status != CampaignAircraftStatus.Damaged)
                         .OrderBy(aircraft => aircraft.AircraftId)
                         .ToList();
+                    var wvrAircraft = squadron.Aircraft
+                        .Where(aircraft => aircraft.AssignedFlightId == flight.FlightId
+                                           && aircraft.Status
+                                           != CampaignAircraftStatus.Lost)
+                        .OrderBy(aircraft => aircraft.AircraftId)
+                        .ToList();
                     flights[flight.FlightId] = new AirCombatFlightView
                     {
                         Alliance = package.Alliance,
@@ -238,7 +302,10 @@ namespace Engine.Models
                         Flight = flight,
                         Squadron = squadron,
                         AircraftType = aircraftType,
-                        LiveAircraft = liveAircraft
+                        LiveAircraft = liveAircraft,
+                        WvrAircraft = wvrAircraft,
+                        PreviousTargetFlightId =
+                            flight.TacticalState.TargetFlightId
                     };
                 }
             }
@@ -304,6 +371,9 @@ namespace Engine.Models
             var ordnanceEvent = ordnanceEmploymentSystem.GetNextScheduledEvent(cursor, next);
             if (ordnanceEvent.HasValue)
                 next = ordnanceEvent.Value;
+            var wvrEvent = wvrEngagementSystem.GetNextScheduledEvent(cursor, next);
+            if (wvrEvent.HasValue)
+                next = wvrEvent.Value;
             return next;
         }
 
@@ -320,7 +390,12 @@ namespace Engine.Models
             if (flight == null
                 || !flight.IsAirborne
                 || flight.IsWaitingAtRendezvous
-                || !TryGetFlightContext(flight, out _, out var aircraftType))
+                || command.RequestsWvrEngagement
+                || wvrEngagementSystem.IsFlightEngaged(flight.FlightId)
+                || !TryGetFlightContext(
+                    flight,
+                    out var squadron,
+                    out var aircraftType))
                 return;
 
             var remaining = elapsedSeconds;
@@ -334,6 +409,13 @@ namespace Engine.Models
                 var speedKnots = followingRoute
                     ? GetGuidanceSpeedKnots(package, flight, aircraftType)
                     : Math.Max(1f, command.DesiredSpeedKnots);
+                if (squadron.Aircraft.Any(aircraft =>
+                        aircraft.AssignedFlightId == flight.FlightId
+                        && aircraft.Status == CampaignAircraftStatus.Damaged))
+                {
+                    speedKnots *=
+                        WvrEngagementSystem.DamagedAircraftSpeedMultiplier;
+                }
 
                 if (followingRoute
                     && HasReached(flight.PositionFeet, target, aircraftType, speedKnots))
@@ -376,6 +458,57 @@ namespace Engine.Models
                 seconds);
             flight.TacticalState.FuelFraction = Mathf.Clamp01(
                 flight.TacticalState.FuelFraction - consumed);
+        }
+
+        private void ResolveDamageRecovery(DateTime currentTime)
+        {
+            foreach (var package in airTaskingSystem.GetPackages()
+                         .OrderBy(candidate => candidate.PackageId))
+            {
+                foreach (var flight in package.Flights
+                             .Where(candidate => candidate.IsAirborne)
+                             .OrderBy(candidate => candidate.FlightId))
+                {
+                    if (wvrEngagementSystem.IsFlightEngaged(flight.FlightId)
+                        || flight.ExecutionPhase == FlightExecutionPhase.Returning
+                        || flight.ExecutionPhase == FlightExecutionPhase.Landing
+                        || !TryGetFlightContext(flight, out var squadron, out _)
+                        || !squadron.Aircraft.Any(aircraft =>
+                            aircraft.AssignedFlightId == flight.FlightId
+                            && aircraft.Status
+                            == CampaignAircraftStatus.Damaged))
+                        continue;
+
+                    flight.Cancel(
+                        currentTime,
+                        "Aircraft damage required recovery after leaving combat.");
+                }
+            }
+        }
+
+        private void BurnWvrFuel(
+            AirCombatFrame frame,
+            IReadOnlyCollection<AirCombatCommand> commands,
+            double elapsedSeconds)
+        {
+            if (elapsedSeconds <= 0d)
+                return;
+            var requestedFlightIds = commands
+                .Where(command => command.RequestsWvrEngagement)
+                .Select(command => command.FlightId)
+                .ToHashSet();
+            foreach (var view in frame.Flights.Values
+                         .Where(view =>
+                             requestedFlightIds.Contains(view.Flight.FlightId)
+                             || wvrEngagementSystem.IsFlightEngaged(
+                                 view.Flight.FlightId)))
+            {
+                BurnFuel(
+                    view.Flight,
+                    view.AircraftType,
+                    AirCombatIntent.EngageTarget,
+                    elapsedSeconds);
+            }
         }
 
         private bool TryRefuelFromReservedTanker(

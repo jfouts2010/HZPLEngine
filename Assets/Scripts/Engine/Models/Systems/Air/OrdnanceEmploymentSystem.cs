@@ -94,7 +94,11 @@ namespace Engine.Models
                     out var launchQuality))
                 return false;
 
-            var preferredAircraft = source.LiveAircraft
+            var operationalSourceAircraft = source.LiveAircraft
+                .Where(aircraft =>
+                    aircraft.Status != CampaignAircraftStatus.Damaged)
+                .ToList();
+            var preferredAircraft = operationalSourceAircraft
                 .Where(aircraft => CountRounds(
                     aircraft,
                     proposal.OrdnanceTypeDefinitionId) > 0)
@@ -106,7 +110,7 @@ namespace Engine.Models
             if (preferredAircraft == null)
                 return false;
 
-            var available = source.LiveAircraft.Sum(aircraft => CountRounds(
+            var available = operationalSourceAircraft.Sum(aircraft => CountRounds(
                 aircraft,
                 proposal.OrdnanceTypeDefinitionId));
             var quantity = Math.Min(proposal.Quantity, available);
@@ -134,6 +138,115 @@ namespace Engine.Models
                 quantity,
                 $"{source.DisplayName} began preparing {quantity} "
                 + $"{ordnance.Name} against {target.DisplayName}.");
+            return true;
+        }
+
+        internal void CancelAirToAirPasses(
+            IEnumerable<Guid> sourceFlightIds,
+            DateTime currentTime,
+            string reason)
+        {
+            if (sourceFlightIds == null)
+                return;
+            var sources = sourceFlightIds.ToHashSet();
+            foreach (var pass in ActivePasses
+                         .Where(candidate => sources.Contains(
+                             candidate.SourceFlightId))
+                         .OrderBy(candidate => candidate.EmploymentPassId)
+                         .ToList())
+            {
+                ActivePasses.Remove(pass);
+                AddRecord(
+                    pass,
+                    OrdnanceEmploymentRecordStage.PreparationAborted,
+                    currentTime,
+                    0,
+                    reason);
+            }
+        }
+
+        internal bool TryReleaseWvrAttack(
+            Guid sourceFlightId,
+            Guid targetFlightId,
+            Guid ordnanceTypeDefinitionId,
+            float hitProbability,
+            DateTime currentTime,
+            Guid engagementId,
+            int roundNumber,
+            WvrAdvantageLevel advantage,
+            bool targetAware)
+        {
+            var contexts = BuildFlightContexts();
+            if (!contexts.TryGetValue(sourceFlightId, out var source)
+                || !contexts.TryGetValue(targetFlightId, out var target)
+                || source.Alliance == target.Alliance
+                || source.LiveAircraft.Count == 0
+                || target.LiveAircraft.Count == 0
+                || !source.Flight.IsAirborne
+                || !target.Flight.IsAirborne
+                || !ordnanceTypes.TryGetValue(
+                    ordnanceTypeDefinitionId,
+                    out var ordnance)
+                || !IsWvrWeapon(ordnance))
+                return false;
+
+            var preferredAircraft = source.LiveAircraft
+                .Where(aircraft => CountRounds(
+                    aircraft,
+                    ordnanceTypeDefinitionId) > 0)
+                .OrderBy(aircraft =>
+                    aircraft.Status == CampaignAircraftStatus.Damaged ? 1 : 0)
+                .ThenByDescending(aircraft => CountRounds(
+                    aircraft,
+                    ordnanceTypeDefinitionId))
+                .ThenBy(aircraft => aircraft.AircraftId)
+                .FirstOrDefault();
+            if (preferredAircraft == null)
+                return false;
+
+            var launches = SpendFlightRounds(
+                source,
+                target,
+                ordnanceTypeDefinitionId,
+                preferredAircraft.AircraftId,
+                1,
+                currentTime,
+                preferDamagedTargets: true,
+                allowDamagedSources: true);
+            if (launches.Count == 0)
+                return false;
+
+            var pending = CreatePendingOrdnanceEffect(new AuthorizedOrdnanceRelease
+            {
+                EmploymentPassId = engagementId,
+                SourceKind = OrdnanceEmploymentSourceKind.AircraftFlight,
+                SourceFlightId = sourceFlightId,
+                SourceAircraftId = launches[0].SourceAircraftId,
+                Target = target,
+                Ordnance = ordnance,
+                Quantity = 1,
+                ReleasedAt = currentTime,
+                SourcePositionFeet = source.Flight.PositionFeet,
+                Launches = launches,
+                MaximumRangeKm = ordnance.MaximumRangeKm,
+                ShooterSensorQuality = source.AircraftType.RadarQuality,
+                LaunchQuality = 1f,
+                ReleaseRangeKm = Vector3.Distance(
+                                     source.Flight.PositionFeet,
+                                     target.Flight.PositionFeet)
+                                 / AirspaceGeometry.FeetPerKilometer,
+                HitProbabilityOverride = Mathf.Clamp01(hitProbability),
+                ResolveImmediately = true
+            });
+            PendingEffects.Add(pending);
+            AddRecord(
+                pending,
+                OrdnanceEmploymentRecordStage.OrdnanceReleased,
+                currentTime,
+                1,
+                $"{source.DisplayName} used {ordnance.Name} against "
+                + $"{target.DisplayName} in WVR round {roundNumber} "
+                + $"({advantage}, target {(targetAware ? "aware" : "unaware")}).");
             return true;
         }
 
@@ -371,6 +484,8 @@ namespace Engine.Models
             if (!contexts.TryGetValue(pass.SourceFlightId, out var source)
                 || !contexts.TryGetValue(pass.TargetFlightId, out var target)
                 || source.LiveAircraft.Count == 0
+                || !source.LiveAircraft.Any(aircraft =>
+                    aircraft.Status != CampaignAircraftStatus.Damaged)
                 || target.LiveAircraft.Count == 0
                 || !ordnanceTypes.TryGetValue(
                     pass.OrdnanceTypeDefinitionId,
@@ -429,7 +544,7 @@ namespace Engine.Models
                 EmploymentPassId = pass.EmploymentPassId,
                 SourceKind = OrdnanceEmploymentSourceKind.AircraftFlight,
                 SourceFlightId = source.Flight.FlightId,
-                SourceAircraftId = pass.PreferredSourceAircraftId,
+                SourceAircraftId = launches[0].SourceAircraftId,
                 Target = target,
                 Ordnance = ordnance,
                 Quantity = released,
@@ -460,16 +575,31 @@ namespace Engine.Models
             Guid ordnanceTypeDefinitionId,
             Guid preferredAircraftId,
             int requested,
-            DateTime releaseAt)
+            DateTime releaseAt,
+            bool preferDamagedTargets = false,
+            bool allowDamagedSources = false)
         {
             var remaining = Math.Max(0, requested);
             var launches = new List<OrdnanceLaunchDiagnostic>();
             var targetAircraft = target.LiveAircraft
-                .OrderBy(aircraft => aircraft.AircraftId)
+                .OrderBy(aircraft => preferDamagedTargets
+                                     && aircraft.Status
+                                     == CampaignAircraftStatus.Damaged
+                    ? 0
+                    : 1)
+                .ThenBy(aircraft => aircraft.AircraftId)
                 .ToList();
             foreach (var aircraft in source.LiveAircraft
+                         .Where(aircraft =>
+                             allowDamagedSources
+                             || aircraft.Status
+                             != CampaignAircraftStatus.Damaged)
                          .OrderBy(aircraft =>
                              aircraft.AircraftId == preferredAircraftId ? 0 : 1)
+                         .ThenBy(aircraft =>
+                             aircraft.Status == CampaignAircraftStatus.Damaged
+                                 ? 1
+                                 : 0)
                          .ThenBy(aircraft => aircraft.AircraftId))
             {
                 var item = aircraft.Loadout.FirstOrDefault(candidate =>
@@ -541,9 +671,11 @@ namespace Engine.Models
         private static PendingOrdnanceEffect CreatePendingOrdnanceEffect(
             AuthorizedOrdnanceRelease release)
         {
-            var travelSeconds = AirspaceGeometry.HorizontalTravelSeconds(
-                release.ReleaseRangeKm * AirspaceGeometry.FeetPerKilometer,
-                release.Ordnance.EffectSpeedKnots);
+            var travelSeconds = release.ResolveImmediately
+                ? 0f
+                : AirspaceGeometry.HorizontalTravelSeconds(
+                    release.ReleaseRangeKm * AirspaceGeometry.FeetPerKilometer,
+                    release.Ordnance.EffectSpeedKnots);
             var isActiveRadar = release.Ordnance.GuidanceMode ==
                                 OrdnanceGuidanceMode.ActiveRadar;
             var isSemiActiveRadar = release.Ordnance.GuidanceMode ==
@@ -555,9 +687,11 @@ namespace Engine.Models
                 : isSemiActiveRadar
                     ? release.ReleasedAt.AddSeconds(travelSeconds)
                     : release.ReleasedAt;
-            var hitProbability = release.SourceKind ==
-                                 OrdnanceEmploymentSourceKind.SamLauncher
-                                 && IsRadarGuided(release.Ordnance.GuidanceMode)
+            var hitProbability = release.HitProbabilityOverride >= 0f
+                ? Mathf.Clamp01(release.HitProbabilityOverride)
+                : release.SourceKind ==
+                                  OrdnanceEmploymentSourceKind.SamLauncher
+                                  && IsRadarGuided(release.Ordnance.GuidanceMode)
                 ? CalculateSamReleaseHitProbability(
                     release.LaunchQuality)
                 : CalculateReleaseHitProbability(
@@ -758,7 +892,6 @@ namespace Engine.Models
                                             && !losses.Contains(aircraft.AircraftId)))
             {
                 aircraft.Status = CampaignAircraftStatus.Damaged;
-                aircraft.ClearLoadout();
             }
 
             foreach (var targetFlightId in effects
@@ -773,19 +906,6 @@ namespace Engine.Models
                 target.Flight.Fail(resolveAt, "All aircraft were lost to ordnance effects.");
             }
 
-
-            foreach (var targetFlightId in effects
-                         .Select(effect => effect.TargetFlightId)
-                         .Distinct())
-            {
-                if (!contexts.TryGetValue(targetFlightId, out var target)
-                    || !target.LiveAircraft.Any(aircraft =>
-                        damages.Contains(aircraft.AircraftId)))
-                    continue;
-                target.Flight.Cancel(
-                    resolveAt,
-                    "Aircraft damage forced the flight to disengage and recover.");
-            }
         }
 
         private static float CalculateTerminalHitProbability(
@@ -1326,8 +1446,7 @@ namespace Engine.Models
 
                     var liveAircraft = squadron.Aircraft
                         .Where(aircraft => aircraft.AssignedFlightId == flight.FlightId
-                                           && aircraft.Status != CampaignAircraftStatus.Lost
-                                           && aircraft.Status != CampaignAircraftStatus.Damaged)
+                                           && aircraft.Status != CampaignAircraftStatus.Lost)
                         .OrderBy(aircraft => aircraft.AircraftId)
                         .ToList();
                     contexts[flight.FlightId] = new FlightContext(
@@ -1410,6 +1529,16 @@ namespace Engine.Models
                    OrdnanceEmploymentCategory.AirToAirInfrared
                    || (definition.EmploymentCategory ==
                        OrdnanceEmploymentCategory.Gun
+                   && definition.GetEffectiveness(
+                           OrdnanceTargetCategory.Aircraft) > 0f);
+        }
+
+        private static bool IsWvrWeapon(OrdnanceTypeDefinition definition)
+        {
+            return definition.EmploymentCategory
+                       == OrdnanceEmploymentCategory.AirToAirInfrared
+                   || (definition.EmploymentCategory
+                       == OrdnanceEmploymentCategory.Gun
                        && definition.GetEffectiveness(
                            OrdnanceTargetCategory.Aircraft) > 0f);
         }
@@ -1482,6 +1611,8 @@ namespace Engine.Models
             public float ShooterSensorQuality;
             public float LaunchQuality;
             public float ReleaseRangeKm;
+            public float HitProbabilityOverride = -1f;
+            public bool ResolveImmediately;
         }
 
         private sealed class SamEngagementCandidate

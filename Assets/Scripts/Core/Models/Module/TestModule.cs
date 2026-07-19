@@ -113,7 +113,8 @@ namespace Models.Module
                     canReceiveAerialRefueling: true,
                     airInterferenceCapability: 1f,
                     internalGunOrdnanceTypeDefinitionId: M61GunOrdnanceTypeId,
-                    internalGunBurstCount: 6),
+                    internalGunBurstCount: 6,
+                    wvrCombatRating: 0.72f),
                 new AircraftTypeDefinition(
                     Mig29AircraftTypeId,
                     "MiG-29 Fulcrum",
@@ -139,7 +140,8 @@ namespace Models.Module
                     canReceiveAerialRefueling: true,
                     airInterferenceCapability: 0.95f,
                     internalGunOrdnanceTypeDefinitionId: Gsh301GunOrdnanceTypeId,
-                    internalGunBurstCount: 5),
+                    internalGunBurstCount: 5,
+                    wvrCombatRating: 0.74f),
                 new AircraftTypeDefinition(
                     E3AircraftTypeId,
                     "E-3 Sentry",
@@ -157,7 +159,8 @@ namespace Models.Module
                     ecmQuality: 0.6f,
                     survivability: 0.35f,
                     supportCapability: AirSupportCapability.AirborneC2,
-                    supportSlotCapacity: 12),
+                    supportSlotCapacity: 12,
+                    wvrCombatRating: 0.10f),
                 new AircraftTypeDefinition(
                     Kc135AircraftTypeId,
                     "KC-135 Stratotanker",
@@ -175,7 +178,8 @@ namespace Models.Module
                     ecmQuality: 0.35f,
                     survivability: 0.3f,
                     supportCapability: AirSupportCapability.AerialRefueling,
-                    supportSlotCapacity: 8),
+                    supportSlotCapacity: 8,
+                    wvrCombatRating: 0.05f),
                 new AircraftTypeDefinition(
                     A50AircraftTypeId,
                     "A-50 Mainstay",
@@ -193,7 +197,8 @@ namespace Models.Module
                     ecmQuality: 0.5f,
                     survivability: 0.35f,
                     supportCapability: AirSupportCapability.AirborneC2,
-                    supportSlotCapacity: 10),
+                    supportSlotCapacity: 10,
+                    wvrCombatRating: 0.10f),
                 new AircraftTypeDefinition(
                     Il78AircraftTypeId,
                     "Il-78 Midas",
@@ -211,7 +216,8 @@ namespace Models.Module
                     ecmQuality: 0.3f,
                     survivability: 0.3f,
                     supportCapability: AirSupportCapability.AerialRefueling,
-                    supportSlotCapacity: 8)
+                    supportSlotCapacity: 8,
+                    wvrCombatRating: 0.05f)
             };
         }
 

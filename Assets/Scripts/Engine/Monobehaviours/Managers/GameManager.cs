@@ -257,6 +257,25 @@ namespace Engine.Monobehaviours.Managers
             return _ordnanceEmploymentSystem.Records;
         }
 
+        public bool IsFlightInWvrEngagement(Guid flightId)
+        {
+            return _airExecutionSystem?.IsFlightInWvrEngagement(flightId)
+                   == true;
+        }
+
+        public bool TryGetLatestWvrRound(
+            Guid flightId,
+            out WvrRoundDiagnostic diagnostic)
+        {
+            if (_airExecutionSystem != null)
+                return _airExecutionSystem.TryGetLatestWvrRound(
+                    flightId,
+                    out diagnostic);
+
+            diagnostic = null;
+            return false;
+        }
+
 
         public void PauseCampaign()
         {

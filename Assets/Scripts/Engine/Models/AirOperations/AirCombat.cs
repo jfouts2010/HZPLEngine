@@ -24,7 +24,8 @@ namespace Models.Gameplay.Campaign
         BeamRight = 7,
         Drag = 8,
         Extend = 9,
-        Recommit = 10
+        Recommit = 10,
+        Dogfight = 11
     }
 
     public enum AirCombatManeuverSide
@@ -140,6 +141,7 @@ namespace Models.Gameplay.Campaign
         public DateTime MinimumManeuverEndAt;
         public string Reason = string.Empty;
         public bool ExhaustProactiveEngagement;
+        public bool RequestsWvrEngagement;
         public AirCombatEmploymentProposal Employment;
     }
 }

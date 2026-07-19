@@ -16,6 +16,8 @@ namespace Engine.Models
         public Squadron Squadron;
         public AircraftTypeDefinition AircraftType;
         public List<CampaignAircraft> LiveAircraft;
+        public List<CampaignAircraft> WvrAircraft;
+        public Guid PreviousTargetFlightId;
     }
 
     internal sealed class AirCombatFrame
@@ -255,6 +257,44 @@ namespace Engine.Models
                 return disengage;
             }
 
+            var distanceKm = DistanceKm(flight.PositionFeet, target.Flight.PositionFeet);
+            var isInsideWvrDecisionRange = distanceKm <= WvrDecisionRangeKm;
+            if (isInsideWvrDecisionRange)
+            {
+                if (!ShouldContinueIntoWvr(
+                        source,
+                        target,
+                        frame,
+                        ordnanceTypes,
+                        out var wvrReason))
+                {
+                    return AimAtTargetCommand(
+                        source,
+                        target,
+                        AirCombatIntent.Disengage,
+                        AirCombatManeuver.Extend,
+                        frame.Time,
+                        frame.Time.AddSeconds(45),
+                        target.Flight.FlightId,
+                        Guid.Empty,
+                        wvrReason,
+                        awayFromTarget: true);
+                }
+
+                var merge = AimAtTargetCommand(
+                    source,
+                    target,
+                    AirCombatIntent.EngageTarget,
+                    AirCombatManeuver.Dogfight,
+                    frame.Time,
+                    frame.Time.AddSeconds(20),
+                    target.Flight.FlightId,
+                    Guid.Empty,
+                    wvrReason);
+                merge.RequestsWvrEngagement = true;
+                return merge;
+            }
+
             var weapon = SelectWeapon(
                 source,
                 target,
@@ -328,30 +368,6 @@ namespace Engine.Models
                 }
             }
 
-            var distanceKm = DistanceKm(flight.PositionFeet, target.Flight.PositionFeet);
-            var isInsideWvrDecisionRange = distanceKm <= WvrDecisionRangeKm;
-            var wvrReason = string.Empty;
-            if (isInsideWvrDecisionRange
-                && !ShouldContinueIntoWvr(
-                    source,
-                    target,
-                    frame,
-                    ordnanceTypes,
-                    out wvrReason))
-            {
-                return AimAtTargetCommand(
-                    source,
-                    target,
-                    AirCombatIntent.Disengage,
-                    AirCombatManeuver.Extend,
-                    frame.Time,
-                    frame.Time.AddSeconds(45),
-                    target.Flight.FlightId,
-                    Guid.Empty,
-                    wvrReason,
-                    awayFromTarget: true);
-            }
-
             var maximumRange = EffectiveMaximumRangeKm(weapon, flight);
             var preferredRange = Math.Max(1f, maximumRange * PreferredRangeFraction);
             var interceptPoint = PredictStandoffIntercept(
@@ -371,11 +387,9 @@ namespace Engine.Models
                 AirCombatManeuverSide.None,
                 interceptPoint,
                 Math.Max(1f, source.AircraftType.CombatSpeedKnots),
-                isInsideWvrDecisionRange
-                    ? wvrReason
-                    : distanceKm > maximumRange
-                        ? "Closing toward a predicted standoff intercept."
-                        : "Pressing to improve launch geometry.");
+                distanceKm > maximumRange
+                    ? "Closing toward a predicted standoff intercept."
+                    : "Pressing to improve launch geometry.");
         }
 
         public static bool EvaluateLaunch(

@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
+using Engine.Models;
 using Engine.Models.Ground;
 using Engine.Service;
 using Models.Gameplay.Campaign;
@@ -2773,6 +2774,8 @@ namespace Engine.Monobehaviours.Managers
                 $"Fuel remaining: {tactical.FuelFraction:P0}",
                 $"Recommits: {tactical.RecommitCount}");
 
+            AddWvrCombatSection(flight, squadron);
+
             AddFlightDetailSection(
                 "POSITION & SCHEDULE",
                 flight.HasPosition
@@ -3120,6 +3123,247 @@ namespace Engine.Monobehaviours.Managers
                                           + records.Sum(record => record.Launches?.Count ?? 0)
                                           + records.Sum(record => record.Shots.Count)) * 45f;
             flightDetailContent.Add(section);
+        }
+
+        private void AddWvrCombatSection(
+            AirFlight flight,
+            Squadron squadron)
+        {
+            var active = gameManager.IsFlightInWvrEngagement(
+                flight.FlightId);
+            if (!gameManager.TryGetLatestWvrRound(
+                    flight.FlightId,
+                    out var round))
+            {
+                if (active)
+                {
+                    AddFlightDetailSection(
+                        "WVR COMBAT - LAST ROUND",
+                        "Status: ACTIVE - first round is pending.");
+                }
+                return;
+            }
+
+            var section = CreateFlightDetailSection(
+                "WVR COMBAT - LAST ROUND");
+            AddFlightDetailMessage(
+                section,
+                $"Status: {(active ? "ACTIVE" : "ENDED")}  |  "
+                + $"Round {round.RoundNumber} at "
+                + $"{round.ResolvedAt:MM-dd HH:mm:ss}  |  "
+                + $"Engagement {ShortId(round.EngagementId)}");
+            AddFlightDetailMessage(
+                section,
+                "Starting advantage: "
+                + FormatWvrAdvantage(
+                    round.StartingAdvantageAlliance,
+                    round.StartingAdvantageLevel)
+                + "  |  Ending advantage: "
+                + FormatWvrAdvantage(
+                    round.EndingAdvantageAlliance,
+                    round.EndingAdvantageLevel));
+            AddFlightDetailMessage(
+                section,
+                "BLUE flights: "
+                + FormatFlightIds(round.BlueFlightIds)
+                + "\nRED flights: "
+                + FormatFlightIds(round.RedFlightIds));
+            AddFlightDetailMessage(
+                section,
+                "Round input snapshot after disengagement and before attacks"
+                + $"\nBLUE {round.BlueAircraftCount} aircraft "
+                + $"({round.BlueDamagedAircraftCount} damaged) / "
+                + $"weight {round.BlueEffectiveCombatWeight:0.00} / "
+                + $"rating {round.BlueEffectiveWvrRating:0.000}  |  "
+                + $"RED {round.RedAircraftCount} aircraft "
+                + $"({round.RedDamagedAircraftCount} damaged) / "
+                + $"weight {round.RedEffectiveCombatWeight:0.00} / "
+                + $"rating {round.RedEffectiveWvrRating:0.000}");
+            AddCurrentWvrState(
+                section,
+                flight,
+                squadron,
+                active);
+            if (round.UsedControlContest)
+            {
+                var controlMargin = Math.Abs(
+                    round.BlueControlScore - round.RedControlScore);
+                AddFlightDetailMessage(
+                    section,
+                    $"Control scores: BLUE {round.BlueControlScore:0.000} / "
+                    + $"RED {round.RedControlScore:0.000} / "
+                    + $"margin {controlMargin:0.000}");
+            }
+            else
+            {
+                AddFlightDetailMessage(
+                    section,
+                    "Control scores: Not rolled; an opening or retained "
+                    + "advantage forced the opportunity.");
+            }
+            AddFlightDetailMessage(
+                section,
+                $"Opportunity: {round.OpportunityReason}");
+
+            if (round.Disengagements.Count == 0)
+            {
+                AddFlightDetailMessage(
+                    section,
+                    "Disengagement attempts: None required this round.");
+            }
+            foreach (var attempt in round.Disengagements)
+            {
+                var ratingContribution = 0.2f
+                                         * (attempt.EffectiveWvrRating
+                                            - attempt.EnemyAverageWvrRating);
+                var speedContribution = 0.2f
+                                        * (attempt.SpeedRatio - 1f);
+                AddFlightDetailMessage(
+                    section,
+                    $"Disengage {GetFlightLabel(attempt.FlightId)}"
+                    + (attempt.Damaged ? " [DAMAGED]" : string.Empty)
+                    + $"  |  P {attempt.Probability:P1}  |  "
+                    + $"roll {attempt.Roll:0.000}  |  "
+                    + (attempt.Succeeded ? "SUCCESS" : "FAILED")
+                    + "\n"
+                    + $"Base 30.0% / rating {ratingContribution:+0.0%;-0.0%;0.0%} "
+                    + $"({attempt.EffectiveWvrRating:0.000} vs "
+                    + $"{attempt.EnemyAverageWvrRating:0.000}) / "
+                    + $"speed {speedContribution:+0.0%;-0.0%;0.0%} "
+                    + $"({attempt.SpeedRatio:P0}) / "
+                    + $"cover {attempt.CoverBonus:+0.0%;-0.0%;0.0%} "
+                    + $"({attempt.CoveringFlightCount}) / "
+                    + $"outside pressure "
+                    + $"{attempt.ExternalPressureBonus:+0.0%;-0.0%;0.0%} / "
+                    + $"advantage "
+                    + $"{attempt.AdvantageModifier:+0.0%;-0.0%;0.0%}");
+            }
+
+            if (round.Attacks.Count == 0)
+                AddFlightDetailMessage(section, "Attacks: None.");
+            var damageAppliedAfterRolls = false;
+            foreach (var attack in round.Attacks)
+            {
+                var resolution = FindWvrShot(round, attack);
+                damageAppliedAfterRolls |= resolution?.Result
+                                           == OrdnanceShotResult.Damaged;
+                var resolutionText = !attack.Released
+                    ? string.Empty
+                    : resolution == null
+                        ? "\nResolution: Not available in retained ordnance records."
+                        : $"\nResolution: {resolution.Result}  |  "
+                          + $"roll {resolution.Roll:0.000}  |  "
+                          + $"target aircraft "
+                          + $"{ShortId(resolution.TargetAircraftId)}";
+                AddFlightDetailMessage(
+                    section,
+                    $"Attack {GetFlightLabel(attack.SourceFlightId)} -> "
+                    + $"{GetFlightLabel(attack.TargetFlightId)}  |  "
+                    + $"{GetOrdnanceName(attack.OrdnanceTypeDefinitionId)}  |  "
+                    + $"{attack.Advantage}  |  target "
+                    + (attack.TargetAware ? "aware" : "unaware")
+                    + $"  |  P(hit) {attack.HitProbability:P1}  |  "
+                    + (attack.Released ? "RELEASED" : "NO RELEASE")
+                    + resolutionText);
+            }
+            if (damageAppliedAfterRolls)
+            {
+                AddFlightDetailMessage(
+                    section,
+                    "Timing: Damage caused by this round was applied after "
+                    + "the displayed round inputs and rolls. Its penalties "
+                    + "appear in the current state above and are used from "
+                    + "the next WVR round onward.");
+            }
+
+            AddFlightDetailMessage(section, round.Outcome);
+            var lineUnits = 8
+                            + round.Disengagements.Count * 3
+                            + round.Attacks.Count * 2;
+            section.style.minHeight = 43f + lineUnits * 23f;
+            flightDetailContent.Add(section);
+        }
+
+        private void AddCurrentWvrState(
+            VisualElement section,
+            AirFlight flight,
+            Squadron squadron,
+            bool active)
+        {
+            var aircraft = squadron.Aircraft
+                .Where(candidate =>
+                    candidate.AssignedFlightId == flight.FlightId
+                    && candidate.Status != CampaignAircraftStatus.Lost)
+                .ToList();
+            var damagedCount = aircraft.Count(candidate =>
+                candidate.Status == CampaignAircraftStatus.Damaged);
+            var undamagedCount = aircraft.Count - damagedCount;
+            var combatWeight = undamagedCount
+                               + damagedCount
+                               * WvrEngagementSystem.DamagedCombatWeight;
+            var aircraftType = ModuleSingleton.Instance?.ActiveModule
+                ?.AircraftTypeDefinitions.FirstOrDefault(definition =>
+                    definition.AircraftTypeDefinitionId
+                    == squadron.AircraftTypeDefinitionId);
+            var effectiveRating = aircraft.Count == 0
+                                  || aircraftType == null
+                ? 0f
+                : aircraftType.WvrCombatRating
+                  * (undamagedCount
+                     + damagedCount
+                     * WvrEngagementSystem.DamagedWvrRatingMultiplier)
+                  / aircraft.Count;
+            var speedMultiplier = damagedCount > 0
+                ? WvrEngagementSystem.DamagedAircraftSpeedMultiplier
+                : 1f;
+            AddFlightDetailMessage(
+                section,
+                $"{(active ? "Current next-round" : "Current post-round")} "
+                + $"state for FLT {ShortId(flight.FlightId)}: "
+                + $"{undamagedCount} undamaged / {damagedCount} damaged / "
+                + $"weight {combatWeight:0.00} / "
+                + $"rating {effectiveRating:0.000} / "
+                + $"speed {speedMultiplier:P0}");
+        }
+
+        private OrdnanceShotDiagnostic FindWvrShot(
+            WvrRoundDiagnostic round,
+            WvrAttackDiagnostic attack)
+        {
+            return gameManager.GetOrdnanceEmploymentRecords()
+                .Where(record =>
+                    record.EmploymentPassId == round.EngagementId
+                    && record.Stage
+                    == OrdnanceEmploymentRecordStage.EffectResolved
+                    && record.OccurredAt == round.ResolvedAt
+                    && record.SourceFlightId == attack.SourceFlightId
+                    && record.TargetFlightId == attack.TargetFlightId
+                    && record.OrdnanceTypeDefinitionId
+                    == attack.OrdnanceTypeDefinitionId)
+                .SelectMany(record => record.Shots)
+                .OrderBy(shot => shot.Sequence)
+                .FirstOrDefault();
+        }
+
+        private string FormatFlightIds(IEnumerable<Guid> flightIds)
+        {
+            var labels = flightIds?
+                .Distinct()
+                .Select(GetFlightLabel)
+                .ToList();
+            return labels == null || labels.Count == 0
+                ? "None"
+                : string.Join(", ", labels);
+        }
+
+        private static string FormatWvrAdvantage(
+            Alliance alliance,
+            WvrAdvantageLevel level)
+        {
+            return alliance == Alliance.Neutral
+                   || level == WvrAdvantageLevel.Neutral
+                ? "Neutral"
+                : $"{GetAllianceLabel(alliance)} {level}";
         }
 
         private VisualElement CreateFlightDetailSection(string title)
