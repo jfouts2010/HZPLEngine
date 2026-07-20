@@ -68,7 +68,7 @@ namespace Engine.Models
         private const float WvrDecisionRangeKm = 8f;
         private const float TacticalAimDistanceKm = 80f;
         private const float CrankOffsetDegrees = 55f;
-        private const float TerminalDefenseSeconds = 45f;
+        internal const float TerminalDefenseSeconds = 45f;
         private const float HotThreatAspectDegrees = 30f;
         private const float BarcapThreatLookaheadMinutes = 20f;
         private const float BarcapResponsePaddingTiles = 2f;
@@ -126,8 +126,14 @@ namespace Engine.Models
                 var secondsToImpact = Math.Max(
                     0d,
                     (incoming.ResolveAt - frame.Time).TotalSeconds);
+                ordnanceTypes.TryGetValue(
+                    incoming.OrdnanceTypeDefinitionId,
+                    out var incomingOrdnance);
                 if (IsCounterAirMission(flight.MissionType)
-                    || secondsToImpact <= TerminalDefenseSeconds)
+                    || secondsToImpact <= TerminalDefenseSeconds
+                    || IsOutsideNoEscapeRange(
+                        incoming,
+                        incomingOrdnance))
                 {
                     var threatFlightId = Guid.Empty;
                     var threatPosition = incoming.SourcePositionFeet;
@@ -139,9 +145,6 @@ namespace Engine.Models
                         threatFlightId = attacker.Flight.FlightId;
                         threatPosition = attacker.Flight.PositionFeet;
                     }
-                    ordnanceTypes.TryGetValue(
-                        incoming.OrdnanceTypeDefinitionId,
-                        out var incomingOrdnance);
                     return DefensiveCommand(
                         source,
                         threatPosition,
@@ -1903,9 +1906,16 @@ namespace Engine.Models
             DateTime currentTime)
         {
             var secondsToImpact = Math.Max(0d, (effect.ResolveAt - currentTime).TotalSeconds);
-            if (secondsToImpact > TerminalDefenseSeconds)
+            var outsideNoEscapeRange =
+                IsOutsideNoEscapeRange(effect, ordnance);
+            if (outsideNoEscapeRange
+                || secondsToImpact > TerminalDefenseSeconds)
             {
-                var direction = source.Flight.PositionFeet - threatPositionFeet;
+                var dragReferencePosition = outsideNoEscapeRange
+                    ? effect.SourcePositionFeet
+                    : threatPositionFeet;
+                var direction =
+                    source.Flight.PositionFeet - dragReferencePosition;
                 direction.y = 0f;
                 if (direction.sqrMagnitude <= 1f)
                     direction = Direction(source.Flight.HeadingDegrees + 180f);
@@ -1924,7 +1934,11 @@ namespace Engine.Models
                     AirCombatManeuverSide.None,
                     dragAim,
                     Math.Max(1f, source.AircraftType.CombatSpeedKnots),
-                    $"Dragging an incoming missile with {secondsToImpact:0} seconds to impact.");
+                    outsideNoEscapeRange
+                        ? $"Dragging a radar missile released outside its no-escape range "
+                          + $"with {secondsToImpact:0} seconds to impact."
+                        : $"Dragging an incoming missile with "
+                          + $"{secondsToImpact:0} seconds to impact.");
             }
 
             var side = StableSide(source.Flight.FlightId, effect.PendingEffectId);
@@ -1969,6 +1983,29 @@ namespace Engine.Models
             return isInfrared
                 ? AirCombatManeuver.BreakRight
                 : AirCombatManeuver.BeamRight;
+        }
+
+        private static bool IsRadarGuided(OrdnanceTypeDefinition ordnance)
+        {
+            return ordnance != null
+                   && (ordnance.GuidanceMode == OrdnanceGuidanceMode.Radar
+                       || ordnance.GuidanceMode == OrdnanceGuidanceMode.ActiveRadar
+                       || ordnance.GuidanceMode == OrdnanceGuidanceMode.SemiActiveRadar);
+        }
+
+        private static bool IsOutsideNoEscapeRange(
+            PendingOrdnanceEffect effect,
+            OrdnanceTypeDefinition ordnance)
+        {
+            if (effect == null || !IsRadarGuided(ordnance))
+                return false;
+
+            var maximumRangeKm = effect.MaximumRangeKmAtRelease > 0f
+                ? effect.MaximumRangeKmAtRelease
+                : ordnance.MaximumRangeKm;
+            return maximumRangeKm > 0f
+                   && effect.ReleaseRangeKm
+                   > maximumRangeKm * ordnance.NoEscapeRangeFraction;
         }
 
         private static AirCombatCommand CrankCommand(

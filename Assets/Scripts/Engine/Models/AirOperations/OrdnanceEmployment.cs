@@ -24,7 +24,15 @@ namespace Models.Gameplay.Campaign
         Hit = 0,
         Miss = 1,
         Ineffective = 2,
-        Damaged = 3
+        Damaged = 3,
+        Defeated = 4
+    }
+
+    public enum OrdnanceDefeatReason
+    {
+        None = 0,
+        KinematicRangeExceeded = 1,
+        RadarLockBroken = 2
     }
 
     [Serializable]
@@ -39,6 +47,7 @@ namespace Models.Gameplay.Campaign
         public float DestructionProbability = -1f;
         public float DestructionRoll = -1f;
         public OrdnanceShotResult Result;
+        public OrdnanceDefeatReason DefeatReason;
     }
 
     [Serializable]
@@ -82,6 +91,7 @@ namespace Models.Gameplay.Campaign
         public DateTime ReleasedAt;
         public DateTime ResolveAt;
         public float ReleaseRangeKm;
+        public float MaximumRangeKmAtRelease;
         public UnityEngine.Vector3 SourcePositionFeet;
         public UnityEngine.Vector3 TargetPositionFeet;
         public List<OrdnanceLaunchDiagnostic> Launches = new List<OrdnanceLaunchDiagnostic>();
@@ -97,6 +107,9 @@ namespace Models.Gameplay.Campaign
         public float SupportedSeconds;
         public float DefensiveSeconds;
         public float PrincipalThreatBearingDegrees;
+        public OrdnanceDefeatReason DefeatReason;
+
+        public bool IsDefeated => DefeatReason != OrdnanceDefeatReason.None;
     }
 
     [Serializable]

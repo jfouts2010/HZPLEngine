@@ -12,6 +12,7 @@ namespace Engine.Models
     public sealed class OrdnanceEmploymentSystem
     {
         private const int MaximumEmploymentRecords = 5000;
+        private const int RadarLockBreakRollSequence = -1;
 
         private readonly GameManager gameManager;
         private readonly AirTaskingSystem airTaskingSystem;
@@ -259,6 +260,8 @@ namespace Engine.Models
             {
                 if (!ordnanceTypes.TryGetValue(effect.OrdnanceTypeDefinitionId, out var ordnance))
                     continue;
+                if (effect.IsDefeated)
+                    continue;
 
                 var previous = effect.LastGuidanceUpdateAt == default
                     ? effect.ReleasedAt
@@ -269,6 +272,25 @@ namespace Engine.Models
                 var seconds = Math.Max(0d, (boundedCurrent - previous).TotalSeconds);
                 if (seconds <= 0d)
                     continue;
+
+                contexts.TryGetValue(effect.TargetFlightId, out var defendedTarget);
+                var maximumRangeKm = effect.MaximumRangeKmAtRelease > 0f
+                    ? effect.MaximumRangeKmAtRelease
+                    : ordnance.MaximumRangeKm;
+                if (defendedTarget != null
+                    && IsRadarGuided(ordnance.GuidanceMode)
+                    && maximumRangeKm > 0f
+                    && Vector3.Distance(
+                           effect.SourcePositionFeet,
+                           defendedTarget.Flight.PositionFeet)
+                       / AirspaceGeometry.FeetPerKilometer
+                    > maximumRangeKm)
+                {
+                    effect.DefeatReason =
+                        OrdnanceDefeatReason.KinematicRangeExceeded;
+                    effect.LastGuidanceUpdateAt = boundedCurrent;
+                    continue;
+                }
 
                 if (effect.GuidanceStage == OrdnanceGuidanceStage.Midcourse
                     && effect.AutonomousAt != default
@@ -309,7 +331,7 @@ namespace Engine.Models
                 if (supported)
                     effect.SupportedSeconds += (float)supportIntervalSeconds;
 
-                if (contexts.TryGetValue(effect.TargetFlightId, out var defendedTarget))
+                if (defendedTarget != null)
                 {
                     if (TryGetGuidanceSourcePosition(
                             effect,
@@ -320,11 +342,52 @@ namespace Engine.Models
                             defendedTarget.Flight.PositionFeet,
                             threatSourcePosition);
                     }
-                    var defensiveStrength = CalculateDefensiveManeuverStrength(
-                        defendedTarget.Flight.TacticalState.Maneuver,
-                        defendedTarget.Flight.HeadingDegrees,
-                        effect.PrincipalThreatBearingDegrees);
-                    effect.DefensiveSeconds += (float)seconds * defensiveStrength;
+                    if (IsRadarGuided(ordnance.GuidanceMode))
+                    {
+                        var secondsToImpact =
+                            (effect.ResolveAt - boundedCurrent).TotalSeconds;
+                        if (secondsToImpact
+                            <= AirCombatRules.TerminalDefenseSeconds)
+                        {
+                            var beamStrength = CalculateRadarBeamStrength(
+                                defendedTarget.Flight.TacticalState.Maneuver,
+                                defendedTarget.Flight.HeadingDegrees,
+                                effect.PrincipalThreatBearingDegrees);
+                            effect.DefensiveSeconds +=
+                                (float)seconds * beamStrength;
+                            var flightSeconds = Math.Max(
+                                1d,
+                                (effect.ResolveAt - effect.ReleasedAt)
+                                .TotalSeconds);
+                            var lockBreakWindowSeconds = Math.Min(
+                                AirCombatRules.TerminalDefenseSeconds,
+                                flightSeconds);
+                            var lockBreakChance =
+                                defendedTarget.AircraftType.GetDefenseAgainst(
+                                    ordnance)
+                                * Mathf.Clamp01(
+                                    effect.DefensiveSeconds
+                                    / (float)lockBreakWindowSeconds);
+                            if (StableRoll(
+                                    effect.PendingEffectId,
+                                    RadarLockBreakRollSequence)
+                                < lockBreakChance)
+                            {
+                                effect.DefeatReason =
+                                    OrdnanceDefeatReason.RadarLockBroken;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        var defensiveStrength =
+                            CalculateDefensiveManeuverStrength(
+                                defendedTarget.Flight.TacticalState.Maneuver,
+                                defendedTarget.Flight.HeadingDegrees,
+                                effect.PrincipalThreatBearingDegrees);
+                        effect.DefensiveSeconds +=
+                            (float)seconds * defensiveStrength;
+                    }
                 }
                 effect.LastGuidanceUpdateAt = boundedCurrent;
             }
@@ -434,6 +497,22 @@ namespace Engine.Models
                 AirCombatManeuver.Extend => 0.4f,
                 _ => 0f
             };
+        }
+
+        internal static float CalculateRadarBeamStrength(
+            AirCombatManeuver maneuver,
+            float headingDegrees,
+            float threatBearingDegrees)
+        {
+            if (maneuver != AirCombatManeuver.BeamLeft
+                && maneuver != AirCombatManeuver.BeamRight)
+                return 0f;
+
+            var relativeBearing = Math.Abs(Mathf.DeltaAngle(
+                headingDegrees,
+                threatBearingDegrees));
+            return 1f - Mathf.Clamp01(
+                Math.Abs(relativeBearing - 90f) / 90f);
         }
 
         public void RefreshTacticalState(DateTime currentTime)
@@ -737,6 +816,7 @@ namespace Engine.Models
                 ReleasedAt = release.ReleasedAt,
                 ResolveAt = release.ReleasedAt.AddSeconds(travelSeconds),
                 ReleaseRangeKm = release.ReleaseRangeKm,
+                MaximumRangeKmAtRelease = release.MaximumRangeKm,
                 SourcePositionFeet = release.SourcePositionFeet,
                 TargetPositionFeet = release.Target.Flight.PositionFeet,
                 Launches = release.Launches,
@@ -775,7 +855,8 @@ namespace Engine.Models
 
                 foreach (var effect in targetGroup.OrderBy(item => item.PendingEffectId))
                 {
-                    if (target != null
+                    if (!effect.IsDefeated
+                        && target != null
                         && ordnanceTypes.TryGetValue(
                             effect.OrdnanceTypeDefinitionId,
                             out var resolvingOrdnance))
@@ -790,9 +871,30 @@ namespace Engine.Models
                     var damaged = 0;
                     var misses = 0;
                     var ineffective = 0;
+                    var defeated = 0;
                     var shotDiagnostics = new List<OrdnanceShotDiagnostic>();
                     for (var missileIndex = 0; missileIndex < effect.Quantity; missileIndex++)
                     {
+                        if (effect.IsDefeated)
+                        {
+                            defeated++;
+                            shotDiagnostics.Add(new OrdnanceShotDiagnostic
+                            {
+                                Sequence = missileIndex + 1,
+                                SourceAircraftId = GetLaunchSourceAircraftId(
+                                    effect,
+                                    missileIndex),
+                                TargetAircraftId = GetLaunchTargetAircraftId(
+                                    effect,
+                                    missileIndex),
+                                Probability = 0f,
+                                Roll = -1f,
+                                Result = OrdnanceShotResult.Defeated,
+                                DefeatReason = effect.DefeatReason
+                            });
+                            continue;
+                        }
+
                         if (batchTargets.Count == 0)
                         {
                             ineffective++;
@@ -908,8 +1010,9 @@ namespace Engine.Models
                         OrdnanceEmploymentRecordStage.EffectResolved,
                         resolveAt,
                         effect.Quantity,
-                        $"Effect resolved: {hits} hit ({damaged} damaged), {misses} missed, " +
-                        $"{ineffective} became ineffective.",
+                        $"Effect resolved: {hits} hit ({damaged} damaged), "
+                        + $"{misses} missed, {defeated} defeated, "
+                        + $"{ineffective} became ineffective.",
                         shotDiagnostics);
                     PendingEffects.Remove(effect);
                 }
@@ -959,6 +1062,12 @@ namespace Engine.Models
             var supportMultiplier = effect.SupportRequired
                 ? 0.3f + 0.7f * supportRatio
                 : 1f;
+            if (IsRadarGuided(ordnance.GuidanceMode))
+            {
+                return Mathf.Clamp01(
+                    effect.HitProbability * supportMultiplier);
+            }
+
             var defenseRatio = Mathf.Clamp01(
                 effect.DefensiveSeconds / (float)totalSeconds);
             var defenseAuthority = 0.35f
@@ -1412,6 +1521,7 @@ namespace Engine.Models
         {
             return PendingEffects.Where(effect =>
                 effect != null
+                && !effect.IsDefeated
                 && effect.SourceKind == OrdnanceEmploymentSourceKind.SamLauncher
                 && effect.ResolveAt > currentTime
                 && (effect.SupportSourceSiteId == siteId
@@ -1427,6 +1537,7 @@ namespace Engine.Models
             DateTime currentTime)
         {
             if (effect == null
+                || effect.IsDefeated
                 || effect.SourceKind != OrdnanceEmploymentSourceKind.SamLauncher
                 || effect.ResolveAt <= currentTime
                 || effect.TargetFlightId == Guid.Empty)

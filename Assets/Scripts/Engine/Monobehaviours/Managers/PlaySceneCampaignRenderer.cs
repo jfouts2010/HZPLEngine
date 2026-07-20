@@ -2414,6 +2414,7 @@ namespace Engine.Monobehaviours.Managers
                 var hits = shots.Count(shot => shot.Result == OrdnanceShotResult.Hit);
                 var damaged = shots.Count(shot => shot.Result == OrdnanceShotResult.Damaged);
                 var misses = shots.Count(shot => shot.Result == OrdnanceShotResult.Miss);
+                var defeated = shots.Count(shot => shot.Result == OrdnanceShotResult.Defeated);
                 var ineffective = shots.Count(shot => shot.Result == OrdnanceShotResult.Ineffective);
                 var launches = GetRecordLaunches(record).ToList();
                 var title =
@@ -2423,7 +2424,7 @@ namespace Engine.Monobehaviours.Managers
                 {
                     new AirCardField("Ordnance", $"{record.Quantity}× {GetOrdnanceName(record.OrdnanceTypeDefinitionId)}"),
                     new AirCardField("Launches", $"{launches.Count} launches / {shots.Count} resolved shots"),
-                    new AirCardField("Outcome", $"Destroyed {hits} / Damaged {damaged} / Miss {misses} / Ineffective {ineffective}"),
+                    new AirCardField("Outcome", $"Destroyed {hits} / Damaged {damaged} / Miss {misses} / Defeated {defeated} / Ineffective {ineffective}"),
                     new AirCardField("Snapshot", $"Range {record.ReleaseRangeKm:0.0} km / P(hit) {record.HitProbability:P1}"),
                     new AirCardField("Source", GetSourceLabel(record)),
                     new AirCardField("Target", GetFlightLabel(record.TargetFlightId))
@@ -3538,6 +3539,19 @@ namespace Engine.Monobehaviours.Managers
                 return shot.TargetAircraftId == Guid.Empty
                     ? "Ineffective: no target aircraft was available for this store."
                     : $"Ineffective: selected target aircraft {ShortId(shot.TargetAircraftId)} was not a valid survivor when the effect resolved.";
+            }
+            if (shot.Result == OrdnanceShotResult.Defeated)
+            {
+                return shot.DefeatReason switch
+                {
+                    OrdnanceDefeatReason.KinematicRangeExceeded =>
+                        "Defeated: the target exceeded the missile's maximum "
+                        + "range from its launch position.",
+                    OrdnanceDefeatReason.RadarLockBroken =>
+                        "Defeated: the target's achieved beam geometry and "
+                        + "radar defenses broke guidance lock.",
+                    _ => "Defeated before reaching a valid terminal engagement."
+                };
             }
 
             var threshold = shot.Probability > 0f ? shot.Probability : record.HitProbability;

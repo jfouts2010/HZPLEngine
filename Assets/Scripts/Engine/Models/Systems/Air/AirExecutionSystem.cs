@@ -376,7 +376,9 @@ namespace Engine.Models
                     { Alliance.Redfor, GetCurrentTracks(Alliance.Redfor) }
                 },
                 ActivePasses = ordnanceEmploymentSystem.ActivePasses.ToList(),
-                PendingEffects = ordnanceEmploymentSystem.PendingEffects.ToList(),
+                PendingEffects = ordnanceEmploymentSystem.PendingEffects
+                    .Where(effect => !effect.IsDefeated)
+                    .ToList(),
                 BarcapTargetByFlightId = new Dictionary<Guid, Guid>(),
                 KnownSamThreatsByAlliance =
                     new Dictionary<Alliance, IReadOnlyList<KnownSamThreatEnvelope>>
