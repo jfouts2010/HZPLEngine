@@ -313,6 +313,32 @@ namespace Models.Gameplay.Campaign
             return TryValidateRoute(route, out reason);
         }
 
+        internal bool TryShiftPlannedRoute(
+            TimeSpan shift,
+            out string reason)
+        {
+            reason = string.Empty;
+            if (shift == TimeSpan.Zero)
+                return true;
+            if (executionPhase != FlightExecutionPhase.AwaitingTakeoff
+                || route.Count == 0
+                || executionEvents?.Count > 0)
+            {
+                reason =
+                    "Only an unexecuted materialized route may be shifted.";
+                return false;
+            }
+
+            foreach (var waypoint in route)
+                waypoint.ShiftPlannedTime(shift);
+            if (TryValidateRoute(route, out reason))
+                return true;
+
+            foreach (var waypoint in route)
+                waypoint.ShiftPlannedTime(-shift);
+            return false;
+        }
+
         public bool TryTakeOff(DateTime occurredAt)
         {
             if (lifecycleState != AirTaskingLifecycleState.Committed
@@ -509,7 +535,8 @@ namespace Models.Gameplay.Campaign
         public void ReplaceRecoveryRoute(IEnumerable<AirWaypoint> recoveryWaypoints)
         {
             if (!IsAirborne
-                || executionPhase != FlightExecutionPhase.Returning
+                || (executionPhase != FlightExecutionPhase.Returning
+                    && executionPhase != FlightExecutionPhase.Landing)
                 || currentWaypointIndex < 0
                 || currentWaypointIndex > route.Count)
             {
@@ -534,6 +561,7 @@ namespace Models.Gameplay.Campaign
 
             route = amendedRoute;
             routeView = null;
+            executionPhase = FlightExecutionPhase.Returning;
         }
 
         public FlightCancellationResult AbortAndReplaceRecoveryRoute(

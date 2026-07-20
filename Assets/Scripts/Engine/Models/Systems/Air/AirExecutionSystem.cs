@@ -23,6 +23,7 @@ namespace Engine.Models
         private readonly AirLoadoutPlanner loadoutPlanner;
         private readonly WvrEngagementSystem wvrEngagementSystem;
         private readonly KnownSamThreatAssessment knownSamThreatAssessment;
+        private readonly AirportOperationsService airportOperations;
         private readonly Dictionary<Alliance, IReadOnlyList<KnownSamThreatEnvelope>>
             knownSamThreatCache =
                 new Dictionary<Alliance, IReadOnlyList<KnownSamThreatEnvelope>>();
@@ -35,6 +36,7 @@ namespace Engine.Models
         {
             this.gameManager = gameManager;
             this.airTaskingSystem = airTaskingSystem;
+            airportOperations = airTaskingSystem.AirportOperations;
             aircraftTypes = module.AircraftTypeDefinitions
                 .ToDictionary(definition => definition.AircraftTypeDefinitionId);
             ordnanceTypes = module.OrdnanceTypeDefinitions
@@ -250,12 +252,26 @@ namespace Engine.Models
                             airTaskingSystem.CancelPackage(
                                 package.Alliance,
                                 package.PackageId,
+                                currentTime,
                                 "Reserved tanker coverage became unavailable before takeoff.");
                             continue;
                         }
-                        if (!IsAirportFriendly(flight.LaunchAirportBuildingId, package.Alliance))
+                        if (!IsAirportControlledBy(
+                                flight.LaunchAirportBuildingId,
+                                package.Alliance))
                         {
                             LoseGroundedFlight(flight, squadron, currentTime);
+                            continue;
+                        }
+                        if (!CanAirportConductAirOperations(
+                                flight.LaunchAirportBuildingId,
+                                package.Alliance))
+                        {
+                            airTaskingSystem.CancelPackage(
+                                package.Alliance,
+                                package.PackageId,
+                                currentTime,
+                                "Launch airport runway system closed before takeoff.");
                             continue;
                         }
                         if (!flight.TryTakeOff(flight.PlannedTakeoffTime))
@@ -267,6 +283,25 @@ namespace Engine.Models
 
                     if (!flight.IsAirborne)
                         continue;
+
+                    if ((flight.ExecutionPhase
+                         == FlightExecutionPhase.Returning
+                         || flight.ExecutionPhase
+                         == FlightExecutionPhase.Landing)
+                        && !CanAirportConductAirOperations(
+                            flight.RecoveryAirportBuildingId,
+                            package.Alliance)
+                        && !EnsureRecoveryRoute(
+                            package,
+                            flight,
+                            currentTime))
+                    {
+                        LoseAirborneFlight(
+                            flight,
+                            currentTime,
+                            "No operational friendly recovery airport remains.");
+                        continue;
+                    }
 
                     if (wvrEngagementSystem.IsFlightEngaged(flight.FlightId))
                         continue;
@@ -778,6 +813,8 @@ namespace Engine.Models
                         + " No threat-safe recovery route was available; "
                         + "continuing toward the best friendly airport.",
                         recoveryRoute);
+                    airTaskingSystem.RevalidateAirportOperations(
+                        occurredAt);
                     return;
                 }
 
@@ -806,6 +843,7 @@ namespace Engine.Models
                 return false;
 
             flight.AbortAndReplaceRecoveryRoute(occurredAt, reason, recoveryRoute);
+            airTaskingSystem.RevalidateAirportOperations(occurredAt);
             return true;
         }
 
@@ -893,7 +931,9 @@ namespace Engine.Models
             AirFlight flight,
             DateTime currentTime)
         {
-            if (IsAirportFriendly(flight.RecoveryAirportBuildingId, package.Alliance))
+            if (CanAirportConductAirOperations(
+                    flight.RecoveryAirportBuildingId,
+                    package.Alliance))
                 return true;
             if (!TryGetFlightContext(flight, out var squadron, out var aircraftType))
             {
@@ -920,6 +960,7 @@ namespace Engine.Models
             }
 
             flight.ReplaceRecoveryRoute(recoveryTail);
+            airTaskingSystem.RevalidateAirportOperations(currentTime);
             return true;
         }
 
@@ -1047,7 +1088,9 @@ namespace Engine.Models
             Squadron squadron)
         {
             var yielded = new HashSet<Guid>();
-            if (IsAirportFriendly(flight.RecoveryAirportBuildingId, package.Alliance)
+            if (CanAirportConductAirOperations(
+                    flight.RecoveryAirportBuildingId,
+                    package.Alliance)
                 && TryGetAirportPosition(
                     flight.RecoveryAirportBuildingId,
                     out var assignedPosition))
@@ -1058,7 +1101,9 @@ namespace Engine.Models
                     assignedPosition);
             }
 
-            if (IsAirportFriendly(squadron.AirportBuildingId, package.Alliance)
+            if (CanAirportConductAirOperations(
+                    squadron.AirportBuildingId,
+                    package.Alliance)
                 && yielded.Add(squadron.AirportBuildingId)
                 && TryGetAirportPosition(
                     squadron.AirportBuildingId,
@@ -1169,7 +1214,9 @@ namespace Engine.Models
             foreach (var squadron in gameManager.squadronSystem.Squadrons)
             {
                 var alliance = gameManager.GetCountryAlliance(squadron.CountryId);
-                if (IsAirportFriendly(squadron.AirportBuildingId, alliance))
+                if (IsAirportControlledBy(
+                        squadron.AirportBuildingId,
+                        alliance))
                     continue;
 
                 foreach (var flight in flights.Where(flight =>
@@ -1192,16 +1239,22 @@ namespace Engine.Models
             }
         }
 
-        private bool IsAirportFriendly(Guid airportId, Alliance alliance)
+        private bool CanAirportConductAirOperations(
+            Guid airportId,
+            Alliance alliance)
         {
-            if (airportId == Guid.Empty
-                || !gameManager.buildingSystem.TryGetBuilding(airportId, out var building)
-                || building is not Airport)
-                return false;
-            var landTile = gameManager.Tiles
-                .OfType<LandTileData>()
-                .FirstOrDefault(tile => tile.TileId == building.TileId);
-            return landTile != null && landTile.Controller == alliance;
+            return airportOperations.CanConductAirOperations(
+                airportId,
+                alliance);
+        }
+
+        private bool IsAirportControlledBy(
+            Guid airportId,
+            Alliance alliance)
+        {
+            return airportOperations.IsAirportControlledBy(
+                airportId,
+                alliance);
         }
 
         private IEnumerable<Airport> GetFriendlyAirports(Alliance alliance)
@@ -1212,7 +1265,9 @@ namespace Engine.Models
                     var landTile = gameManager.Tiles
                         .OfType<LandTileData>()
                         .FirstOrDefault(tile => tile.TileId == airport.TileId);
-                    return landTile != null && landTile.Controller == alliance;
+                    return landTile != null
+                           && landTile.Controller == alliance
+                           && AirportOperationsRules.IsOperational(airport);
                 });
         }
 

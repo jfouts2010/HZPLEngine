@@ -117,5 +117,35 @@ namespace Models.Gameplay.Campaign
                 return Flights.All(flight => flight.HasPhysicallyEnded);
             }
         }
+
+        internal bool TryShiftPlannedRoutes(
+            TimeSpan shift,
+            out string reason)
+        {
+            reason = string.Empty;
+            if (shift < TimeSpan.Zero)
+            {
+                reason = "A planned package cannot be shifted earlier.";
+                return false;
+            }
+            if (shift == TimeSpan.Zero)
+                return true;
+
+            var shifted = new List<AirFlight>();
+            foreach (var flight in Flights)
+            {
+                if (flight.TryShiftPlannedRoute(shift, out reason))
+                {
+                    shifted.Add(flight);
+                    continue;
+                }
+
+                foreach (var completed in shifted)
+                    completed.TryShiftPlannedRoute(-shift, out _);
+                return false;
+            }
+
+            return true;
+        }
     }
 }

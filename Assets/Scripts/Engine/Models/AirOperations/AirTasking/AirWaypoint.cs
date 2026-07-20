@@ -81,5 +81,12 @@ namespace Models.Gameplay.Campaign
             this.repeatUntil = repeatUntil;
             this.airportBuildingId = airportBuildingId;
         }
+
+        internal void ShiftPlannedTime(TimeSpan shift)
+        {
+            plannedArrivalTime += shift;
+            if (hasRepeat)
+                repeatUntil += shift;
+        }
     }
 }

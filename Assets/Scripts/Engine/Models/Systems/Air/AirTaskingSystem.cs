@@ -21,6 +21,7 @@ namespace Engine.Models
         private readonly AirPackageBuilder packageBuilder;
         private readonly ProjectedAirEffectService projectedEffects;
         private readonly AircraftReservationService aircraftReservations;
+        private readonly AirportOperationsService airportOperations;
         private readonly AllianceAirTaskingCommander blueforCommander;
         private readonly AllianceAirTaskingCommander redforCommander;
         private readonly GameManager gameManager;
@@ -30,7 +31,10 @@ namespace Engine.Models
             ModuleDefinition module)
         {
             this.gameManager = gameManager;
-            planningIntelligence = new AirPlanningIntelligence(gameManager);
+            airportOperations = new AirportOperationsService(gameManager);
+            planningIntelligence = new AirPlanningIntelligence(
+                gameManager,
+                airportOperations);
             projectedEffects = new ProjectedAirEffectService(
                 gameManager,
                 module);
@@ -49,7 +53,8 @@ namespace Engine.Models
                 gameManager,
                 module,
                 projectedEffects,
-                priorityService);
+                priorityService,
+                airportOperations);
             aircraftReservations = new AircraftReservationService(
                 gameManager.squadronSystem,
                 module,
@@ -89,6 +94,18 @@ namespace Engine.Models
                 .Where(flight => flight.IsAirborne && !flight.HasPhysicallyEnded);
         }
 
+        internal AirportOperationsService AirportOperations =>
+            airportOperations;
+
+        public AirportOperationsSnapshot GetAirportOperationsSnapshot(
+            Guid airportId)
+        {
+            return airportOperations.CreateSnapshot(
+                airportId,
+                gameManager.CurrentTime,
+                GetPackages());
+        }
+
         public bool RetainsProjectedBarcapCoverage(AirFlight flight)
         {
             var coverage = flight?.PlannedBarcapCoverage;
@@ -124,6 +141,9 @@ namespace Engine.Models
         {
             foreach (var commander in GetCommanders())
             {
+                RevalidateAirportOperations(
+                    commander,
+                    gameManager.CurrentTime);
                 commander.ValidatePackageIntegrity(
                     aircraftReservations,
                     gameManager.CurrentTime);
@@ -138,12 +158,31 @@ namespace Engine.Models
             Guid packageId,
             string reason)
         {
+            return CancelPackage(
+                alliance,
+                packageId,
+                gameManager.CurrentTime,
+                reason);
+        }
+
+        internal bool CancelPackage(
+            Alliance alliance,
+            Guid packageId,
+            DateTime occurredAt,
+            string reason)
+        {
             var commander = GetCommander(alliance);
             return commander != null && commander.CancelPackage(
                 packageId,
                 aircraftReservations,
-                gameManager.CurrentTime,
+                occurredAt,
                 reason);
+        }
+
+        internal void RevalidateAirportOperations(DateTime occurredAt)
+        {
+            foreach (var commander in GetCommanders())
+                RevalidateAirportOperations(commander, occurredAt);
         }
 
         private void RebuildGlobalPlan(AllianceAirTaskingCommander commander)
@@ -315,6 +354,19 @@ namespace Engine.Models
                     continue;
                 }
 
+                if (!airportOperations.CanSchedulePackage(
+                        package,
+                        commander.Packages,
+                        TimeSpan.Zero,
+                        out var capacityReason))
+                {
+                    commander.RecordRequestDeferred(
+                        request.MissionRequestId,
+                        gameManager.CurrentTime,
+                        capacityReason);
+                    continue;
+                }
+
                 if (commander.TryCommitPackage(
                         package,
                         aircraftReservations,
@@ -329,6 +381,45 @@ namespace Engine.Models
                     request.MissionRequestId,
                     gameManager.CurrentTime,
                     commitReason);
+            }
+        }
+
+        private void RevalidateAirportOperations(
+            AllianceAirTaskingCommander commander,
+            DateTime occurredAt)
+        {
+            foreach (var package in commander.Packages
+                         .Where(package =>
+                             package != null
+                             && package.Flights.Any(flight =>
+                                 !flight.HasPhysicallyEnded))
+                         .OrderBy(package => package.EarliestTakeoffTime)
+                         .ThenBy(package => package.PackageId)
+                         .ToList())
+            {
+                if (!airportOperations.HasUnusablePendingLaunch(
+                        package,
+                        out var airportId))
+                {
+                    continue;
+                }
+
+                commander.CancelPackage(
+                    package.PackageId,
+                    aircraftReservations,
+                    occurredAt,
+                    $"Launch airport {ShortId(airportId)} is closed or no longer friendly.");
+            }
+
+            foreach (var package in airportOperations
+                         .FindInvalidGroundedPackages(commander.Packages)
+                         .ToList())
+            {
+                commander.CancelPackage(
+                    package.PackageId,
+                    aircraftReservations,
+                    occurredAt,
+                    "Current runway capacity can no longer support the committed package.");
             }
         }
 
@@ -416,6 +507,13 @@ namespace Engine.Models
         {
             yield return blueforCommander;
             yield return redforCommander;
+        }
+
+        private static string ShortId(Guid id)
+        {
+            return id == Guid.Empty
+                ? "none"
+                : id.ToString("N").Substring(0, 8);
         }
     }
 

@@ -5,6 +5,7 @@ using System.Linq;
 using Engine.Models;
 using Engine.Models.Ground;
 using Engine.Models.Systems.Ground;
+using Engine.Service;
 using Models.Gameplay.Campaign;
 using Models.Module;
 using Monobehaviours.Singletons;
@@ -201,6 +202,13 @@ namespace Engine.Monobehaviours.Managers
         {
             return _airTaskingSystem != null
                    && _airTaskingSystem.RetainsProjectedBarcapCoverage(flight);
+        }
+
+        public AirportOperationsSnapshot GetAirportOperationsSnapshot(
+            Guid airportId)
+        {
+            return _airTaskingSystem?.GetAirportOperationsSnapshot(airportId)
+                   ?? default;
         }
 
         public AllianceIADS GetAllianceIADS(Alliance alliance)

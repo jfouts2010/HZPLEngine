@@ -10,6 +10,9 @@ namespace Models.Gameplay.Campaign
             get { return BuildingType.Airport; }
         }
 
+        public int MaximumRunwayIntegrity => Level?.BuildLevel ?? 0;
+        public int RunwayIntegrity => Level?.FunctionalLevel ?? 0;
+
         public Airport()
         {
         }

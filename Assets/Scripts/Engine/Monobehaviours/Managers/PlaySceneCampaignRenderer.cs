@@ -1382,7 +1382,7 @@ namespace Engine.Monobehaviours.Managers
                         .FirstOrDefault(candidate => candidate.BuildingId == building.BuildingId);
                     if (current == null)
                         return new[] { "STALE", "Building no longer exists." };
-                    return new[]
+                    var lines = new List<string>
                     {
                         $"Building ID  {current.BuildingId:N}",
                         $"Tile  {FormatTile(current.TileId)}",
@@ -1392,6 +1392,24 @@ namespace Engine.Monobehaviours.Managers
                         $"Functional level  {current.FunctionalLevel}",
                         $"Target toughness  {current.TargetToughness}"
                     };
+                    if (current is Airport airport)
+                    {
+                        var operations =
+                            gameManager.GetAirportOperationsSnapshot(
+                                airport.BuildingId);
+                        lines.Add(
+                            $"Runway integrity  {operations.RunwayIntegrity}/{operations.MaximumRunwayIntegrity}");
+                        lines.Add(
+                            $"Runway capacity  {operations.EffectiveCapacityChannels}/{operations.NominalCapacityChannels} channels");
+                        lines.Add(
+                            $"Movement capacity  {operations.AircraftMovementCapacity} aircraft/{AirportOperationsRules.MovementWindow.TotalMinutes:0} min");
+                        lines.Add(
+                            $"Reserved now  {operations.ReservedChannelSlots}/{operations.EffectiveCapacityChannels} channels");
+                        lines.Add(
+                            $"Air operations  {FormatAirportOperationsStatus(operations)}");
+                    }
+
+                    return lines;
                 },
                 () => FocusTile(building.TileId));
         }
@@ -3946,6 +3964,16 @@ namespace Engine.Monobehaviours.Managers
                 ApplyRuntimeFont(button);
                 buildingsList.Add(button);
             }
+        }
+
+        private static string FormatAirportOperationsStatus(
+            AirportOperationsSnapshot operations)
+        {
+            if (!operations.IsOperational)
+                return "Closed";
+            if (operations.IsSaturated)
+                return "Saturated";
+            return operations.IsReduced ? "Reduced" : "Full";
         }
 
         private void UpdateNeighborsList()

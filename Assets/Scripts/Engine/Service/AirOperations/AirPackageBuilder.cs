@@ -41,6 +41,7 @@ namespace Engine.Service
         private readonly AirLoadoutPlanner loadoutPlanner;
         private readonly IAirRouteGeometryPlanner routeGeometryPlanner;
         private readonly KnownSamThreatAssessment knownSamThreatAssessment;
+        private readonly AirportOperationsService airportOperations;
         private readonly Dictionary<Alliance, IReadOnlyList<KnownSamThreatEnvelope>>
             knownSamThreatCache =
                 new Dictionary<Alliance, IReadOnlyList<KnownSamThreatEnvelope>>();
@@ -51,11 +52,15 @@ namespace Engine.Service
             ModuleDefinition module,
             ProjectedAirEffectService projectedEffects,
             AirMissionPriorityService priorityService,
+            AirportOperationsService airportOperations,
             IAirRouteGeometryPlanner routeGeometryPlanner = null)
         {
             this.gameManager = gameManager;
             this.projectedEffects = projectedEffects;
             this.priorityService = priorityService;
+            this.airportOperations = airportOperations
+                                     ?? throw new ArgumentNullException(
+                                         nameof(airportOperations));
             this.routeGeometryPlanner = routeGeometryPlanner ?? new SeparatedIngressEgressRouteGeometryPlanner();
             knownSamThreatAssessment = new KnownSamThreatAssessment(
                 module.SamComponentDefinitions,
@@ -871,7 +876,10 @@ namespace Engine.Service
         {
             return gameManager.squadronSystem.Squadrons
                 .Where(squadron =>
-                    gameManager.GetCountryAlliance(squadron.CountryId) == alliance)
+                    gameManager.GetCountryAlliance(squadron.CountryId) == alliance
+                    && airportOperations.CanConductAirOperations(
+                        squadron.AirportBuildingId,
+                        alliance))
                 .OrderBy(squadron => squadron.SquadronId)
                 .ToList();
         }
@@ -1201,6 +1209,79 @@ namespace Engine.Service
                     rendezvousTime,
                     coordinatedSpeed,
                     barcapCoverage);
+            }
+
+            IReadOnlyList<AirSupportReservation>
+                shiftedSupportReservations = null;
+            IReadOnlyList<TimeSpan> additionalShiftCandidates = null;
+            var supportSchedulingReason = string.Empty;
+            Func<TimeSpan, bool> additionalConstraint = null;
+            if (package.SupportingFlightIds.Count > 0)
+            {
+                var receiverArea = CreateSustainedEffectArea(
+                    request,
+                    plans[0],
+                    barcapCoverage);
+                additionalShiftCandidates =
+                    projectedEffects.GetAerialRefuelingShiftCandidates(
+                        commander,
+                        receiverArea,
+                        package.EffectStart,
+                        package.SupportWindowEnd,
+                        request.EffectEnd - package.EffectEnd);
+                additionalConstraint = candidate =>
+                {
+                    var shiftedEffectStart =
+                        package.EffectStart + candidate;
+                    var shiftedEffectEnd =
+                        package.SupportWindowEnd + candidate;
+                    var reservations =
+                        projectedEffects.PlanAerialRefuelingCoverage(
+                            commander,
+                            receiverArea,
+                            package.PackageId,
+                            plans[0].Flight.AircraftIds.Count,
+                            shiftedEffectStart,
+                            shiftedEffectEnd,
+                            out var supportedUntil);
+                    if (supportedUntil < shiftedEffectEnd)
+                    {
+                        supportSchedulingReason =
+                            "No runway-capacity window with required tanker "
+                            + "coverage is available before the requested effect ends.";
+                        return false;
+                    }
+
+                    shiftedSupportReservations = reservations;
+                    return true;
+                };
+            }
+
+            if (!airportOperations.TryFindFeasibleShift(
+                    package,
+                    commander.Packages,
+                    request.EffectEnd,
+                    additionalShiftCandidates,
+                    additionalConstraint,
+                    out var airportShift,
+                    out reason))
+            {
+                if (!string.IsNullOrEmpty(supportSchedulingReason))
+                    reason = supportSchedulingReason;
+                return false;
+            }
+            if (!package.TryShiftPlannedRoutes(airportShift, out reason))
+                return false;
+
+            if (shiftedSupportReservations != null)
+            {
+                package.SupportingFlightIds.Clear();
+                package.SupportingFlightIds.AddRange(
+                    shiftedSupportReservations
+                        .Select(reservation =>
+                            reservation.SupportingFlightId)
+                        .Distinct()
+                        .OrderBy(id => id));
             }
 
             return true;

@@ -237,7 +237,82 @@ namespace Engine.Service
                 DateTime requestedEnd,
                 out DateTime coveredUntil)
         {
-            var candidates = commander.Packages
+            var candidates = GetAerialRefuelingCandidates(
+                commander,
+                receiverArea,
+                start,
+                requestedEnd);
+            return AirSupportCoveragePlanner.PlanContinuousCoverage(
+                candidates,
+                consumingPackageId,
+                requiredSlots,
+                start,
+                requestedEnd,
+                out coveredUntil);
+        }
+
+        internal IReadOnlyList<TimeSpan>
+            GetAerialRefuelingShiftCandidates(
+                AllianceAirTaskingCommander commander,
+                AirMissionArea receiverArea,
+                DateTime effectStart,
+                DateTime effectEnd,
+                TimeSpan maximumShift)
+        {
+            if (maximumShift < TimeSpan.Zero)
+                return Array.Empty<TimeSpan>();
+
+            var searchEnd = effectEnd + maximumShift;
+            var eventTimes = GetAerialRefuelingCandidates(
+                    commander,
+                    receiverArea,
+                    effectStart,
+                    searchEnd)
+                .SelectMany(flight =>
+                    new[] { flight.EffectStart, flight.EffectEnd }
+                        .Concat(flight.SupportReservations.SelectMany(
+                            reservation => new[]
+                            {
+                                reservation.StartTime,
+                                reservation.EndTime
+                            })))
+                .Distinct();
+            var candidates = new SortedSet<TimeSpan>();
+            foreach (var eventTime in eventTimes)
+            {
+                AddShiftCandidate(
+                    candidates,
+                    eventTime - effectStart,
+                    maximumShift);
+                AddShiftCandidate(
+                    candidates,
+                    eventTime - effectEnd,
+                    maximumShift);
+            }
+
+            return candidates.ToList();
+        }
+
+        private static void AddShiftCandidate(
+            ISet<TimeSpan> candidates,
+            TimeSpan candidate,
+            TimeSpan maximumShift)
+        {
+            if (candidate >= TimeSpan.Zero
+                && candidate <= maximumShift)
+            {
+                candidates.Add(candidate);
+            }
+        }
+
+        private static IReadOnlyList<AirFlight>
+            GetAerialRefuelingCandidates(
+                AllianceAirTaskingCommander commander,
+                AirMissionArea receiverArea,
+                DateTime start,
+                DateTime requestedEnd)
+        {
+            return commander.Packages
                 .Where(package => !package.IsTerminal)
                 .SelectMany(package => package.Flights)
                 .Where(flight => !flight.IsTerminal
@@ -256,13 +331,6 @@ namespace Engine.Service
                 .OrderBy(flight => flight.EffectStart)
                 .ThenBy(flight => flight.FlightId)
                 .ToList();
-            return AirSupportCoveragePlanner.PlanContinuousCoverage(
-                candidates,
-                consumingPackageId,
-                requiredSlots,
-                start,
-                requestedEnd,
-                out coveredUntil);
         }
 
         private IEnumerable<AirFlight> GetProjectedFlights(

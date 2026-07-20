@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Engine.Monobehaviours.Managers;
+using Engine.Service;
 using Models.Gameplay.Campaign;
 using UnityEngine;
 
@@ -81,10 +82,16 @@ namespace Engine.Models
     public sealed class AirPlanningIntelligence
     {
         private readonly GameManager gameManager;
+        private readonly AirportOperationsService airportOperations;
 
-        public AirPlanningIntelligence(GameManager gameManager)
+        public AirPlanningIntelligence(
+            GameManager gameManager,
+            AirportOperationsService airportOperations)
         {
             this.gameManager = gameManager;
+            this.airportOperations = airportOperations
+                                     ?? throw new ArgumentNullException(
+                                         nameof(airportOperations));
         }
 
         public AirPlanningSnapshot CreateSnapshot(Alliance alliance)
@@ -102,7 +109,9 @@ namespace Engine.Models
                         squadron.AirportBuildingId,
                         out var airportBuilding)
                     || airportBuilding is not Airport
-                    || airportBuilding.FunctionalLevel <= 0)
+                    || !airportOperations.CanConductAirOperations(
+                        squadron.AirportBuildingId,
+                        alliance))
                     continue;
 
                 var snapshot = new AirPlanningSquadronSnapshot(
@@ -210,7 +219,9 @@ namespace Engine.Models
                 if (squadronAlliance != alliance
                     || !gameManager.buildingSystem.TryGetBuilding(squadron.AirportBuildingId, out var building)
                     || building is not Airport
-                    || building.FunctionalLevel <= 0)
+                    || !airportOperations.CanConductAirOperations(
+                        squadron.AirportBuildingId,
+                        alliance))
                     continue;
 
                 airportTiles.Add(building.TileId);

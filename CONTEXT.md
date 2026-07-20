@@ -515,6 +515,16 @@ Each building is tracked with two persisted integers:
 - **Damage** — runtime wear from bombing and similar effects. Damage is per building. Capped at build level and never goes negative.
 - **Functional level** — derived, not persisted: `max(0, buildLevel - damage)`. Used for supply throughput, production, combat modifiers, strike targeting, and export when the building is a **mappable entity**.
 
+For an **airport**, the inherited building level is the integrity of its aggregate runway system in v1. It does not count physical runways. Build levels 1–5 provide one nominal runway-capacity channel and build levels 6–10 provide two. The airport's effective channel count is the nominal count multiplied by its integrity fraction (`functionalLevel / buildLevel`) and rounded up: a two-channel airport retains two channels above fifty-percent integrity, falls to one channel at or below fifty percent, and closes at functional level zero.
+
+An **aircraft movement** is one aircraft taking off or landing. Airport throughput is planned in fixed fifteen-minute **movement windows** that do not depend on simulation tick length. Each effective channel supplies one abstract capacity slot per window, and one slot represents up to four aircraft in the same flight movement. Larger flight movements occupy capacity in consecutive windows. Takeoffs and planned recoveries share the same capacity.
+
+Airport movement reservations are derived from the takeoff and landing waypoints of committed flights rather than persisted on the airport. Cancelling a flight releases its capacity, and replacing a recovery route moves its projected landing demand without synchronizing a second schedule. Package planning shifts the whole package to the earliest capacity-feasible time so rendezvous and effect timing remain coordinated.
+
+An airport can conduct normal air operations only when its tile is friendly-controlled and it has at least one effective capacity channel. Runway closure cancels or aborts packages with aircraft still awaiting takeoff and removes the airport from normal recovery selection. Closure does not destroy grounded aircraft; hostile capture remains the airbase-overrun condition. Airborne recoveries take priority over future departures when reduced capacity invalidates earlier plans, and an open airport accepts an emergency recovery rather than destroying aircraft because its abstract schedule is saturated.
+
+_Avoid_: treating a capacity channel as a physical runway, persisting a competing airport schedule, or adding runway headings, taxi queues, parking, weather limits, and aircraft-specific runway requirements before a rule needs them.
+
 `cityType` is not a leveled property in v1. Whether a tile reads as urban is inferred from tile infrastructure level and building mix, not a separate persisted flag.
 
 Supply hubs are a **building type** when explicitly placed on a tile. Hub effectiveness may still degrade through supply-line damage rather than direct hub bombing in v1 — specific rules TBD.
@@ -697,7 +707,7 @@ _Avoid_: a committed flight without a complete materialized route, competing pac
 
 An airborne flight preserves its owning squadron even if that squadron loses its previous airport. A squadron is eliminated only when it has no surviving campaign aircraft, not merely because its base was captured or disabled.
 
-In the initial air-execution model, airport damage and functional level do not affect launch, landing, recovery selection, or diversion. Hostile tile capture is the only airport-state change that invalidates air operations; damage-based closure and repair are deferred.
+Airport runway integrity affects package timing, launch eligibility, recovery selection, and diversion. A friendly airport at functional level zero is closed but not overrun: grounded aircraft remain present while unlaunched packages cancel or abort, and airborne flights use the normal recovery-airport fallback hierarchy. Airport repair remains deferred.
 
 **Approach waypoint** — the final generated navigation waypoint before recovery, placed on the inbound line using the flight's cruise speed, descent rate, and current altitude so descent begins late enough to avoid ground-level transit and reaches the airport near zero altitude. Reaching the following airport landing waypoint ends the flight without runway, pattern, or ATC simulation.
 
@@ -756,7 +766,7 @@ _Avoid_: continuing a coordinated package after a required flight becomes unavai
 
 **Package preparation delay** — in v1, a newly created package requires a fixed 30 minutes of campaign time before any assigned flight may take off. Aircraft are reserved when the package is committed; the delay is a minimum launch lead time, after which route timing may schedule takeoff later.
 
-The fixed delay is separate from transit time and does not introduce detailed arming, taxi, runway, or airport-throughput simulation.
+The fixed delay is separate from transit time and does not introduce detailed arming, taxi, runway, or ATC simulation. Aggregate airport movement capacity may move the whole package later after the preparation boundary.
 
 **Package effect window** — the time interval during which a package's coordinated flights are intended to produce the requested effect at their mission location. Effect start is planned time on station, never takeoff time; each flight calculates its takeoff time from its operating base, route, cruise speed, and the package's timing so required flights can synchronize.
 
@@ -892,7 +902,12 @@ These four requests form the initial air-tasking backbone. OCA counter-air calcu
 
 **DEAD target set** is the known, undamaged component inventory of the targeted SAM site that the assigned package can meaningfully attack with its planned ordnance. Permanently removing the site's shooter capability achieves the minimum DEAD effect, but surviving components remain authorized targets while the attacking flight retains a valid attack opportunity and suitable mission-useful ordnance.
 
+**DEAD attack sequence** is the bounded series of sequential employment passes a DEAD flight may conduct during its authorized target-area opportunity. After each resolved pass, the flight reassesses the surviving DEAD target set and may continue while suitable ordnance remains and package integrity, fuel, timing, and doctrine permit; once it begins egress, a later attack requires another package.
+
+**DEAD attack flight** is a required combat flight assigned all or part of a DEAD target set with a target-driven mix of compatible anti-radiation and conventional air-to-ground ordnance. A DEAD package contains one or more DEAD attack flights and adapts their aircraft allocation, loadouts, and division of targets to the known site, available aircraft, expected opposition, and acceptable risk rather than requiring separate fixed anti-radar and cleanup roles.
+
 _Avoid_: using DEAD for temporary suppression or localized escort protection; SEAD escort is a separate future supporting mission.
+_Avoid_: fixed DEAD aircraft-role labels or a mandatory anti-radar-flight plus conventional-attack-flight pairing.
 
 ### Air mission area
 
