@@ -308,7 +308,7 @@ namespace Engine.Monobehaviours.Managers
             if (!_campaignStarted || !IsGamePaused || GameTurnCoroutine != null)
                 return false;
 
-            AdvancePlaybackIncrement();
+            GameTurnCoroutine = StartCoroutine(AdvancePlaybackIncrement());
             return true;
         }
 
@@ -318,8 +318,7 @@ namespace Engine.Monobehaviours.Managers
                 return false;
 
             var turnEnd = _nextGameTurnAt;
-            while (CurrentTime < turnEnd)
-                AdvanceAirTacticalStep(false);
+            GameTurnCoroutine = StartCoroutine(AdvanceGameTurn(turnEnd));
             return true;
         }
 
@@ -341,27 +340,51 @@ namespace Engine.Monobehaviours.Managers
                 return;
 
             if (GameTurnCoroutine == null)
-                GameTurnCoroutine = StartCoroutine(FastPlaybackStep());
+                GameTurnCoroutine = StartCoroutine(AdvancePlaybackIncrement());
         }
 
-        private IEnumerator FastPlaybackStep()
+        private IEnumerator AdvancePlaybackIncrement()
         {
-            yield return null;
-            AdvancePlaybackIncrement();
-            GameTurnCoroutine = null;
+            try
+            {
+                yield return null;
+                var seconds =
+                    PlaybackIncrement == CampaignPlaybackIncrement.FiveMinutes
+                        ? FastPlaybackIncrementSeconds
+                        : AirTacticalStepSeconds;
+                var incrementEnd = CurrentTime.AddSeconds(seconds);
+
+                while (CurrentTime < incrementEnd)
+                {
+                    AdvanceAirTacticalStep(false, incrementEnd);
+                    if (CurrentTime < incrementEnd)
+                        yield return null;
+                }
+
+                AirTacticalStepCompleted?.Invoke();
+            }
+            finally
+            {
+                GameTurnCoroutine = null;
+            }
         }
 
-        private void AdvancePlaybackIncrement()
+        private IEnumerator AdvanceGameTurn(DateTime turnEnd)
         {
-            var seconds = PlaybackIncrement == CampaignPlaybackIncrement.FiveMinutes
-                ? FastPlaybackIncrementSeconds
-                : AirTacticalStepSeconds;
-            var incrementEnd = CurrentTime.AddSeconds(seconds);
-
-            while (CurrentTime < incrementEnd)
-                AdvanceAirTacticalStep(false, incrementEnd);
-
-            AirTacticalStepCompleted?.Invoke();
+            try
+            {
+                yield return null;
+                while (CurrentTime < turnEnd)
+                {
+                    AdvanceAirTacticalStep(false, turnEnd);
+                    if (CurrentTime < turnEnd)
+                        yield return null;
+                }
+            }
+            finally
+            {
+                GameTurnCoroutine = null;
+            }
         }
 
         private void AdvanceAirTacticalStep(bool notifyTacticalStep, DateTime? maximumTime = null)

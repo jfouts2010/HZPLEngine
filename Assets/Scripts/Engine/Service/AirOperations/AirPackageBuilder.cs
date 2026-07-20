@@ -28,6 +28,7 @@ namespace Engine.Service
         private const float MeaningfulBarcapPressure = 0.10f;
         private const float FuelPlanningMarginSeconds = 60f;
         private const float BarcapPreferredLaunchRangeFraction = 0.78f;
+        private const int MaximumBarcapRouteChoices = 32;
         private static readonly TimeSpan BarcapHandoffOverlap = TimeSpan.FromMinutes(10);
 
         private readonly GameManager gameManager;
@@ -39,6 +40,11 @@ namespace Engine.Service
             radarDefinitions;
         private readonly AirLoadoutPlanner loadoutPlanner;
         private readonly IAirRouteGeometryPlanner routeGeometryPlanner;
+        private readonly KnownSamThreatAssessment knownSamThreatAssessment;
+        private readonly Dictionary<Alliance, IReadOnlyList<KnownSamThreatEnvelope>>
+            knownSamThreatCache =
+                new Dictionary<Alliance, IReadOnlyList<KnownSamThreatEnvelope>>();
+        private DateTime knownSamThreatCacheTime = DateTime.MinValue;
 
         public AirPackageBuilder(
             GameManager gameManager,
@@ -51,6 +57,9 @@ namespace Engine.Service
             this.projectedEffects = projectedEffects;
             this.priorityService = priorityService;
             this.routeGeometryPlanner = routeGeometryPlanner ?? new SeparatedIngressEgressRouteGeometryPlanner();
+            knownSamThreatAssessment = new KnownSamThreatAssessment(
+                module.SamComponentDefinitions,
+                module.OrdnanceTypeDefinitions);
             aircraftTypes = module.AircraftTypeDefinitions
                 .ToDictionary(definition => definition.AircraftTypeDefinitionId);
             ordnanceTypes = module.OrdnanceTypeDefinitions
@@ -76,6 +85,11 @@ namespace Engine.Service
         {
             package = null;
             reason = string.Empty;
+            if (knownSamThreatCacheTime != currentTime)
+            {
+                knownSamThreatCache.Clear();
+                knownSamThreatCacheTime = currentTime;
+            }
 
             return request.IsSupportRequest
                 ? TryBuildSupportPackage(commander, request, currentTime, out package, out reason)
@@ -469,6 +483,7 @@ namespace Engine.Service
                 .ThenByDescending(candidate => candidate.RadiusKm)
                 .ThenBy(candidate => candidate.Candidate.DistanceTiles)
                 .ThenBy(candidate => candidate.Candidate.Squadron.SquadronId)
+                .Take(MaximumBarcapRouteChoices)
                 .ToList();
         }
 
@@ -877,6 +892,19 @@ namespace Engine.Service
             return AirMissionArea.HexDistance(building.TileId, targetTile);
         }
 
+        private IReadOnlyList<KnownSamThreatEnvelope> GetKnownSamThreats(
+            Alliance alliance)
+        {
+            if (knownSamThreatCache.TryGetValue(alliance, out var cached))
+                return cached;
+
+            var threats = knownSamThreatAssessment.BuildKnownThreats(
+                gameManager.intelligenceSystem?.GetPicture(alliance),
+                gameManager.SimulationSettings.TileDistanceKM);
+            knownSamThreatCache[alliance] = threats;
+            return threats;
+        }
+
         private static bool TrySelectSupportStationTile(
             AllianceAirTaskingCommander commander,
             AirMissionRequest request,
@@ -954,6 +982,7 @@ namespace Engine.Service
                 missionAltitude);
             var tileDistanceFeet = gameManager.SimulationSettings.TileDistanceKM
                                    * AirspaceGeometry.FeetPerKilometer;
+            var knownSamThreats = GetKnownSamThreats(package.Alliance);
             var combat = request.RequestType == AirMissionRequestType.BarrierCombatAirPatrol
                          || request.RequestType == AirMissionRequestType.OffensiveCounterAirSweep;
             var hasRendezvous = combat && plans.Count > 1;
@@ -970,6 +999,10 @@ namespace Engine.Service
 
             foreach (var plan in plans)
             {
+                var maneuverClearanceFeet =
+                    AirspaceGeometry.SamManeuverClearanceFeet(
+                        plan.AircraftType,
+                        plan.AircraftType.CruiseSpeedKnots);
                 var missionOrigin = hasRendezvous ? rendezvousPosition : plan.BasePositionFeet;
                 SetMissionGeometry(
                     plan,
@@ -979,13 +1012,55 @@ namespace Engine.Service
                     missionCenter,
                     tileDistanceFeet,
                     barcapCoverage);
+                if (!TryValidateMissionGeometry(
+                        plan,
+                        request,
+                        knownSamThreats,
+                        maneuverClearanceFeet,
+                        out reason))
+                    return false;
+
+                if (hasRendezvous)
+                {
+                    if (!KnownSamThreatGeometry.TryBuildAvoidingWaypoints(
+                            plan.BasePositionFeet,
+                            rendezvousPosition,
+                            knownSamThreats,
+                            package.PackageId,
+                            maneuverClearanceFeet,
+                            out var assemblyPath))
+                    {
+                        reason =
+                            "No continuous-airspace route to the package rendezvous avoids known SAM coverage.";
+                        return false;
+                    }
+
+                    plan.AssemblyWaypoints = assemblyPath
+                        .Take(Math.Max(0, assemblyPath.Count - 1))
+                        .ToList();
+                }
+
                 plan.RouteGeometry = routeGeometryPlanner.Plan(new AirRouteGeometryPlanningContext(
                     missionOrigin,
                     plan.MissionEntryPosition,
                     plan.MissionExitPosition,
                     plan.BasePositionFeet,
                     tileDistanceFeet,
-                    package.PackageId));
+                    package.PackageId,
+                    knownSamThreats,
+                    maneuverClearanceFeet));
+                if (!plan.RouteGeometry.IsThreatSafe)
+                {
+                    reason =
+                        "No continuous-airspace ingress and egress route avoids known SAM coverage.";
+                    return false;
+                }
+                if (!TryValidateRecoveryGeometry(
+                        plan,
+                        knownSamThreats,
+                        maneuverClearanceFeet,
+                        out reason))
+                    return false;
             }
 
             var plannedEffectStart = proposedEffectStart;
@@ -1007,8 +1082,9 @@ namespace Engine.Service
             {
                 var takeoff = hasRendezvous
                     ? rendezvousTime - TimeSpan.FromSeconds(
-                        AirspaceGeometry.TravelSeconds(
+                        TravelSecondsAlong(
                             plan.BasePositionFeet,
+                            plan.AssemblyWaypoints,
                             rendezvousPosition,
                             plan.AircraftType.CruiseSpeedKnots,
                             plan.AircraftType.ClimbRateFeetPerMinute,
@@ -1128,6 +1204,78 @@ namespace Engine.Service
             }
 
             return true;
+        }
+
+        private static bool TryValidateMissionGeometry(
+            RoutePlan plan,
+            AirMissionRequest request,
+            IReadOnlyList<KnownSamThreatEnvelope> knownSamThreats,
+            float maneuverClearanceFeet,
+            out string reason)
+        {
+            reason = string.Empty;
+            IReadOnlyList<Vector3> missionPath;
+            if (request.RequestType == AirMissionRequestType.OffensiveCounterAirSweep)
+            {
+                missionPath = new[]
+                {
+                    plan.MissionEntryPosition,
+                    plan.MissionPushPosition,
+                    plan.MissionExitPosition
+                };
+            }
+            else
+            {
+                missionPath = new[]
+                {
+                    plan.MissionEntryPosition,
+                    plan.MissionExitPosition
+                };
+            }
+
+            if (KnownSamThreatGeometry.IsPathSafe(
+                    missionPath,
+                    knownSamThreats,
+                    maneuverClearanceFeet,
+                    out var blockingSiteId))
+                return true;
+
+            reason = $"Mission geometry enters known SAM coverage from site "
+                     + $"{blockingSiteId.ToString("N").Substring(0, 8)}.";
+            return false;
+        }
+
+        private static bool TryValidateRecoveryGeometry(
+            RoutePlan plan,
+            IReadOnlyList<KnownSamThreatEnvelope> knownSamThreats,
+            float maneuverClearanceFeet,
+            out string reason)
+        {
+            reason = string.Empty;
+            var recoveryStart = plan.RouteGeometry.EgressWaypoints.Count > 0
+                ? plan.RouteGeometry.EgressWaypoints[
+                    plan.RouteGeometry.EgressWaypoints.Count - 1]
+                : plan.MissionExitPosition;
+            var recoveryPath = new List<Vector3> { recoveryStart };
+            recoveryPath.AddRange(
+                AirRecoveryRouteBuilder.Build(
+                        recoveryStart,
+                        plan.AircraftType,
+                        plan.Squadron.AirportBuildingId,
+                        plan.BasePositionFeet,
+                        new DateTime(2000, 1, 1))
+                    .Select(waypoint => waypoint.PositionFeet));
+
+            if (KnownSamThreatGeometry.IsPathSafe(
+                    recoveryPath,
+                    knownSamThreats,
+                    maneuverClearanceFeet,
+                    out var blockingSiteId))
+                return true;
+
+            reason = $"Recovery approach enters known SAM coverage from site "
+                     + $"{blockingSiteId.ToString("N").Substring(0, 8)}.";
+            return false;
         }
 
         private static void SetMissionGeometry(
@@ -1334,7 +1482,16 @@ namespace Engine.Service
                 plan.PlannedTakeoff,
                 airportBuildingId: plan.Squadron.AirportBuildingId));
             if (hasRendezvous)
+            {
+                AppendTransitRoute(
+                    route,
+                    plan.BasePositionFeet,
+                    plan.PlannedTakeoff,
+                    plan.AssemblyWaypoints,
+                    plan.AircraftType,
+                    plan.AircraftType.CruiseSpeedKnots);
                 route.Add(NewWaypoint(rendezvousPosition, AirWaypointAction.Rendezvous, rendezvousTime));
+            }
 
             AppendTransitRoute(
                 route,
@@ -1629,6 +1786,8 @@ namespace Engine.Service
             public readonly Vector3 BasePositionFeet;
             public DateTime PlannedTakeoff;
             public AirRouteGeometry RouteGeometry;
+            public IReadOnlyList<Vector3> AssemblyWaypoints =
+                Array.Empty<Vector3>();
             public Vector3 MissionEntryPosition;
             public Vector3 MissionPushPosition;
             public Vector3 MissionExitPosition;
@@ -1680,6 +1839,8 @@ namespace Engine.Service
         public Vector3 RecoveryDestination { get; }
         public float TileDistanceFeet { get; }
         public Guid RouteKey { get; }
+        public IReadOnlyList<KnownSamThreatEnvelope> KnownSamThreats { get; }
+        public float ManeuverClearanceFeet { get; }
 
         public AirRouteGeometryPlanningContext(
             Vector3 ingressOrigin,
@@ -1687,14 +1848,19 @@ namespace Engine.Service
             Vector3 missionExit,
             Vector3 recoveryDestination,
             float tileDistanceFeet,
-            Guid routeKey)
+            Guid routeKey,
+            IReadOnlyList<KnownSamThreatEnvelope> knownSamThreats = null,
+            float maneuverClearanceFeet = 0f)
         {
             IngressOrigin = ingressOrigin;
             MissionEntry = missionEntry;
             MissionExit = missionExit;
             RecoveryDestination = recoveryDestination;
-            TileDistanceFeet = tileDistanceFeet;
+            TileDistanceFeet = Math.Max(0f, tileDistanceFeet);
             RouteKey = routeKey;
+            KnownSamThreats =
+                knownSamThreats ?? Array.Empty<KnownSamThreatEnvelope>();
+            ManeuverClearanceFeet = Math.Max(0f, maneuverClearanceFeet);
         }
     }
 
@@ -1702,13 +1868,16 @@ namespace Engine.Service
     {
         public IReadOnlyList<Vector3> IngressWaypoints { get; }
         public IReadOnlyList<Vector3> EgressWaypoints { get; }
+        public bool IsThreatSafe { get; }
 
         public AirRouteGeometry(
             IReadOnlyList<Vector3> ingressWaypoints,
-            IReadOnlyList<Vector3> egressWaypoints)
+            IReadOnlyList<Vector3> egressWaypoints,
+            bool isThreatSafe = true)
         {
             IngressWaypoints = ingressWaypoints ?? Array.Empty<Vector3>();
             EgressWaypoints = egressWaypoints ?? Array.Empty<Vector3>();
+            IsThreatSafe = isThreatSafe;
         }
     }
 
@@ -1729,9 +1898,44 @@ namespace Engine.Service
                 context.RecoveryDestination,
                 context.TileDistanceFeet,
                 side);
+            var ingressControlPoints = new List<Vector3>
+            {
+                context.IngressOrigin
+            };
+            if (ingress.HasValue)
+                ingressControlPoints.Add(ingress.Value);
+            ingressControlPoints.Add(context.MissionEntry);
+
+            var egressControlPoints = new List<Vector3>
+            {
+                context.MissionExit
+            };
+            if (egress.HasValue)
+                egressControlPoints.Add(egress.Value);
+            egressControlPoints.Add(context.RecoveryDestination);
+
+            if (!KnownSamThreatGeometry.TryBuildAvoidingPath(
+                    ingressControlPoints,
+                    context.KnownSamThreats,
+                    context.RouteKey,
+                    context.ManeuverClearanceFeet,
+                    out var safeIngress)
+                || !KnownSamThreatGeometry.TryBuildAvoidingPath(
+                    egressControlPoints,
+                    context.KnownSamThreats,
+                    context.RouteKey,
+                    context.ManeuverClearanceFeet,
+                    out var safeEgress))
+            {
+                return new AirRouteGeometry(
+                    Array.Empty<Vector3>(),
+                    Array.Empty<Vector3>(),
+                    false);
+            }
+
             return new AirRouteGeometry(
-                ingress.HasValue ? new[] { ingress.Value } : Array.Empty<Vector3>(),
-                egress.HasValue ? new[] { egress.Value } : Array.Empty<Vector3>());
+                safeIngress.Skip(1).Take(Math.Max(0, safeIngress.Count - 2)).ToList(),
+                safeEgress.Skip(1).Take(Math.Max(0, safeEgress.Count - 2)).ToList());
         }
 
         private static Vector3? CreateOffsetMidpoint(

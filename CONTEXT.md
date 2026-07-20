@@ -886,6 +886,12 @@ _Avoid_: recalculating interference when an AI asks for it, recording an unbound
 
 These four requests form the initial air-tasking backbone. OCA counter-air calculations remain pending its planned rewrite. DEAD is the next target-attack capability intended to build on that backbone.
 
+**Destruction of enemy air defenses (DEAD)** is a discrete target-attack request to permanently render one known hostile SAM site combat ineffective. The SAM site is the operational target; when intelligence permits, the request identifies a target set of one or more known SAM components whose destruction is expected to achieve that site-level effect rather than reducing DEAD to an attack against one preselected component.
+
+**DEAD target set** is the known, undamaged component inventory of the targeted SAM site that the assigned package can meaningfully attack with its planned ordnance. Permanently removing the site's shooter capability achieves the minimum DEAD effect, but surviving components remain authorized targets while the attacking flight retains a valid attack opportunity and suitable mission-useful ordnance.
+
+_Avoid_: using DEAD for temporary suppression or localized escort protection; SEAD escort is a separate future supporting mission.
+
 ### Air mission area
 
 An **air mission area** is the dynamic geographic area affected by an area-based mission request, defined in v1 by a center campaign tile and a radius. Offensive sweeps operate within an air mission area. BARCAP retains a bounding mission area for shared routing and compatibility, but its planning and engagement truth is the materialized barrier and aircraft-specific covered segments.

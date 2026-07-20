@@ -31,6 +31,8 @@ namespace Engine.Models
         public IReadOnlyList<ActiveOrdnanceEmploymentPass> ActivePasses;
         public IReadOnlyList<PendingOrdnanceEffect> PendingEffects;
         public IReadOnlyDictionary<Guid, Guid> BarcapTargetByFlightId;
+        public IReadOnlyDictionary<Alliance, IReadOnlyList<KnownSamThreatEnvelope>>
+            KnownSamThreatsByAlliance;
 
         public bool TryGetCurrentTrack(
             Alliance observingAlliance,
@@ -47,6 +49,17 @@ namespace Engine.Models
                    && track != null
                    && !track.IsStale;
         }
+
+        public IReadOnlyList<KnownSamThreatEnvelope> GetKnownSamThreats(
+            Alliance observingAlliance)
+        {
+            return KnownSamThreatsByAlliance != null
+                   && KnownSamThreatsByAlliance.TryGetValue(
+                       observingAlliance,
+                       out var threats)
+                ? threats
+                : Array.Empty<KnownSamThreatEnvelope>();
+        }
     }
 
     internal static class AirCombatRules
@@ -62,6 +75,8 @@ namespace Engine.Models
         private const float BarcapCommitMarginMinutes = 1.5f;
         private const float BarcapBoundaryToleranceTiles = 0.1f;
         private const float BarcapDefensiveBufferTiles = 0.15f;
+        private const double LaunchSupportPredictionStepSeconds = 2d;
+        private const int MaximumLaunchSupportPredictionSteps = 256;
 
         public static AirCombatCommand Decide(
             AirCombatFlightView source,
@@ -74,7 +89,12 @@ namespace Engine.Models
                 frame,
                 ordnanceTypes,
                 doctrine);
-            return EnforceBarcapDefensiveBoundary(source, frame, command);
+            command = EnforceBarcapDefensiveBoundary(source, frame, command);
+            return EnforceKnownSamAvoidance(
+                source,
+                frame,
+                command,
+                ordnanceTypes);
         }
 
         private static AirCombatCommand DecideCore(
@@ -1206,6 +1226,381 @@ namespace Engine.Models
             return command;
         }
 
+        private static AirCombatCommand EnforceKnownSamAvoidance(
+            AirCombatFlightView source,
+            AirCombatFrame frame,
+            AirCombatCommand command,
+            IReadOnlyDictionary<Guid, OrdnanceTypeDefinition> ordnanceTypes)
+        {
+            if (source?.Flight == null
+                || command == null
+                || command.Intent == AirCombatIntent.Defend)
+                return command;
+
+            var threats = frame.GetKnownSamThreats(source.Alliance);
+            if (threats.Count == 0)
+                return command;
+
+            var currentPosition = source.Flight.PositionFeet;
+            var maneuverClearanceFeet =
+                AirspaceGeometry.SamManeuverClearanceFeet(
+                    source.AircraftType,
+                    source.AircraftType.CombatSpeedKnots);
+            var activePass = frame.ActivePasses
+                .Where(pass => pass.SourceFlightId == source.Flight.FlightId)
+                .OrderBy(pass => pass.ReleaseAt)
+                .ThenBy(pass => pass.EmploymentPassId)
+                .FirstOrDefault();
+            var currentlyInsideThreat = threats.Any(threat =>
+                threat != null && threat.Contains(currentPosition));
+            if (KnownSamThreatGeometry.TryCreateEgressAimPoint(
+                    currentPosition,
+                    threats,
+                    source.Flight.FlightId,
+                    maneuverClearanceFeet,
+                    out var egressAimPoint))
+            {
+                var egress = Command(
+                    source,
+                    AirCombatIntent.Disengage,
+                    AirCombatManeuver.AvoidSurfaceThreat,
+                    Guid.Empty,
+                    Guid.Empty,
+                    frame.Time,
+                    frame.Time.AddSeconds(15),
+                    AirCombatManeuverSide.None,
+                    egressAimPoint,
+                    Math.Max(1f, source.AircraftType.CombatSpeedKnots),
+                    "Leaving a known SAM engagement envelope.");
+                egress.RequestsAirToAirPassCancellation = activePass != null;
+                return egress;
+            }
+            if (currentlyInsideThreat)
+            {
+                command.RequestsSurfaceThreatRecovery = true;
+                command.RequestsWvrEngagement = false;
+                command.Employment = null;
+                command.RequestsAirToAirPassCancellation = activePass != null;
+                command.Reason =
+                    "Unable to find a safe egress from overlapping known SAM coverage; recovering.";
+                return command;
+            }
+
+            var desiredAimPoint = command.Maneuver == AirCombatManeuver.FollowRoute
+                ? source.Flight.CurrentWaypoint?.PositionFeet
+                  ?? command.AimPointFeet
+                : command.AimPointFeet;
+            if (!command.HasAimPoint && source.Flight.CurrentWaypoint == null)
+                return command;
+
+            var desiredInsideThreat = threats.Any(threat =>
+                threat != null && threat.Contains(desiredAimPoint));
+            if (desiredInsideThreat
+                && command.Intent != AirCombatIntent.EngageTarget)
+            {
+                command.RequestsSurfaceThreatRecovery = true;
+                command.RequestsWvrEngagement = false;
+                command.Employment = null;
+                command.RequestsAirToAirPassCancellation = activePass != null;
+                command.Reason =
+                    "Assigned route now terminates inside known SAM coverage; recovering.";
+                return command;
+            }
+
+            var hasPendingEmployment =
+                command.Employment != null || activePass != null;
+            var blockingLaunchSiteId = Guid.Empty;
+            var launchSupportPlanSafe = !hasPendingEmployment
+                                        || IsLaunchSupportPlanSafe(
+                                            source,
+                                            frame,
+                                            command,
+                                            activePass,
+                                            threats,
+                                            ordnanceTypes,
+                                            out blockingLaunchSiteId);
+            if (hasPendingEmployment && launchSupportPlanSafe)
+                return command;
+            if (hasPendingEmployment)
+            {
+                command = RouteCommand(
+                    source,
+                    frame.Time,
+                    AirCombatIntent.FollowMission,
+                    $"Withholding air-to-air employment because the required "
+                    + $"launch-support maneuver would enter known SAM coverage "
+                    + $"from site {ShortId(blockingLaunchSiteId)}.");
+                command.RequestsAirToAirPassCancellation = activePass != null;
+                desiredAimPoint = source.Flight.CurrentWaypoint?.PositionFeet
+                                  ?? command.AimPointFeet;
+                desiredInsideThreat = threats.Any(threat =>
+                    threat != null && threat.Contains(desiredAimPoint));
+            }
+
+            if (KnownSamThreatGeometry.TryCreateAvoidanceAimPoint(
+                    currentPosition,
+                    desiredAimPoint,
+                    threats,
+                    source.Flight.FlightId,
+                    maneuverClearanceFeet,
+                    out var avoidanceAimPoint,
+                    out var blockingSiteId))
+            {
+                var avoidance = Command(
+                    source,
+                    command.Intent == AirCombatIntent.Recover
+                        ? AirCombatIntent.Recover
+                        : AirCombatIntent.FollowMission,
+                    AirCombatManeuver.AvoidSurfaceThreat,
+                    command.TargetFlightId,
+                    Guid.Empty,
+                    frame.Time,
+                    frame.Time.AddSeconds(10),
+                    AirCombatManeuverSide.None,
+                    avoidanceAimPoint,
+                    Math.Max(1f, source.AircraftType.CombatSpeedKnots),
+                    command.Intent == AirCombatIntent.EngageTarget
+                        ? $"Declining pursuit through known SAM coverage from site "
+                          + $"{ShortId(blockingSiteId)} while preserving a safe intercept."
+                        : $"Routing around known SAM coverage from site "
+                          + $"{ShortId(blockingSiteId)}.");
+                avoidance.RequestsAirToAirPassCancellation =
+                    command.RequestsAirToAirPassCancellation;
+                return avoidance;
+            }
+
+            if (KnownSamThreatGeometry.IsPathSafe(
+                    new[] { currentPosition, desiredAimPoint },
+                    threats,
+                    maneuverClearanceFeet,
+                    out _))
+                return command;
+
+            command.RequestsSurfaceThreatRecovery = true;
+            command.RequestsWvrEngagement = false;
+            command.Employment = null;
+            command.RequestsAirToAirPassCancellation =
+                command.RequestsAirToAirPassCancellation || activePass != null;
+            command.Reason =
+                "No flyable route around known SAM coverage could be found; recovering.";
+            return command;
+        }
+
+        private static bool IsLaunchSupportPlanSafe(
+            AirCombatFlightView source,
+            AirCombatFrame frame,
+            AirCombatCommand command,
+            ActiveOrdnanceEmploymentPass activePass,
+            IReadOnlyList<KnownSamThreatEnvelope> threats,
+            IReadOnlyDictionary<Guid, OrdnanceTypeDefinition> ordnanceTypes,
+            out Guid blockingSiteId)
+        {
+            blockingSiteId = Guid.Empty;
+            var ordnanceId = command.Employment?.OrdnanceTypeDefinitionId
+                             ?? activePass?.OrdnanceTypeDefinitionId
+                             ?? Guid.Empty;
+            var targetFlightId = command.Employment?.TargetFlightId
+                                 ?? activePass?.TargetFlightId
+                                 ?? command.TargetFlightId;
+            if (ordnanceId == Guid.Empty
+                || targetFlightId == Guid.Empty
+                || !ordnanceTypes.TryGetValue(ordnanceId, out var ordnance)
+                || !frame.Flights.TryGetValue(
+                    targetFlightId,
+                    out var target))
+                return true;
+
+            var preparationSeconds = Math.Max(
+                0d,
+                activePass != null
+                    ? (activePass.ReleaseAt - frame.Time).TotalSeconds
+                    : ordnance.PreparationSeconds
+                      / Math.Max(
+                          0.01f,
+                          source.AircraftType.OrdnanceEmploymentEfficiency));
+            if (double.IsNaN(preparationSeconds)
+                || double.IsInfinity(preparationSeconds))
+                return false;
+
+            var sourceFeetPerSecond =
+                Math.Max(1f, source.AircraftType.CombatSpeedKnots)
+                * AirspaceGeometry.FeetPerNauticalMile / 3600f;
+            var maneuverClearanceFeet =
+                AirspaceGeometry.SamManeuverClearanceFeet(
+                    source.AircraftType,
+                    source.AircraftType.CombatSpeedKnots);
+            var predictedSource = source.Flight.PositionFeet;
+            var predictedHeading = source.Flight.HeadingDegrees;
+            var predictionSeconds = 0d;
+            while (predictionSeconds < preparationSeconds)
+            {
+                var stepSeconds = GetLaunchSupportPredictionStepSeconds(
+                    preparationSeconds,
+                    predictionSeconds);
+                var predictedTarget = PredictPosition(
+                    target.Flight,
+                    (float)(predictionSeconds + stepSeconds));
+                var desiredHeading = HeadingTo(
+                    predictedSource,
+                    predictedTarget);
+                var nextSource = PredictManeuverStep(
+                    predictedSource,
+                    ref predictedHeading,
+                    desiredHeading,
+                    predictedTarget.y,
+                    source.AircraftType,
+                    sourceFeetPerSecond,
+                    stepSeconds);
+                if (TryGetBlockingThreat(
+                        predictedSource,
+                        nextSource,
+                        threats,
+                        maneuverClearanceFeet,
+                        out blockingSiteId))
+                    return false;
+
+                predictedSource = nextSource;
+                predictionSeconds += stepSeconds;
+            }
+
+            if (!ordnance.RequiresSupportUntilAutonomous
+                && ordnance.GuidanceMode
+                != OrdnanceGuidanceMode.SemiActiveRadar)
+                return true;
+
+            var predictedTargetAtRelease = PredictPosition(
+                target.Flight,
+                (float)preparationSeconds);
+            var side = StableSide(
+                source.Flight.FlightId,
+                target.Flight.FlightId);
+            var missileTravelSeconds =
+                AirspaceGeometry.HorizontalTravelSeconds(
+                    Vector3.Distance(
+                        predictedSource,
+                        predictedTargetAtRelease),
+                    ordnance.EffectSpeedKnots);
+            var supportSeconds = ordnance.GuidanceMode
+                                 == OrdnanceGuidanceMode.SemiActiveRadar
+                ? missileTravelSeconds
+                : Math.Min(
+                    missileTravelSeconds,
+                    ordnance.SecondsUntilAutonomous);
+            if (double.IsNaN(supportSeconds)
+                || double.IsInfinity(supportSeconds))
+                return false;
+
+            var supportElapsedSeconds = 0d;
+            while (supportElapsedSeconds < supportSeconds)
+            {
+                var stepSeconds = GetLaunchSupportPredictionStepSeconds(
+                    supportSeconds,
+                    supportElapsedSeconds);
+                var predictedTarget = PredictPosition(
+                    target.Flight,
+                    (float)preparationSeconds
+                    + (float)supportElapsedSeconds
+                    + stepSeconds);
+                var crankHeading = HeadingTo(
+                                       predictedSource,
+                                       predictedTarget)
+                                   + (side == AirCombatManeuverSide.Left
+                                       ? -CrankOffsetDegrees
+                                       : CrankOffsetDegrees);
+                var nextSource = PredictManeuverStep(
+                    predictedSource,
+                    ref predictedHeading,
+                    crankHeading,
+                    predictedSource.y,
+                    source.AircraftType,
+                    sourceFeetPerSecond,
+                    stepSeconds);
+                if (TryGetBlockingThreat(
+                        predictedSource,
+                        nextSource,
+                        threats,
+                        maneuverClearanceFeet,
+                        out blockingSiteId))
+                    return false;
+
+                predictedSource = nextSource;
+                supportElapsedSeconds += stepSeconds;
+            }
+
+            return true;
+        }
+
+        private static float GetLaunchSupportPredictionStepSeconds(
+            double totalSeconds,
+            double elapsedSeconds)
+        {
+            var remainingSeconds = Math.Max(0d, totalSeconds - elapsedSeconds);
+            var boundedStepSeconds = Math.Max(
+                LaunchSupportPredictionStepSeconds,
+                totalSeconds / MaximumLaunchSupportPredictionSteps);
+            return (float)Math.Min(remainingSeconds, boundedStepSeconds);
+        }
+
+        private static Vector3 PredictPosition(
+            AirFlight flight,
+            float seconds)
+        {
+            var feetPerSecond = Math.Max(0f, flight.SpeedKnots)
+                                * AirspaceGeometry.FeetPerNauticalMile / 3600f;
+            var predicted = flight.PositionFeet
+                            + Direction(flight.HeadingDegrees)
+                            * feetPerSecond
+                            * Math.Max(0f, seconds);
+            predicted.y = flight.PositionFeet.y;
+            return predicted;
+        }
+
+        private static Vector3 PredictManeuverStep(
+            Vector3 position,
+            ref float headingDegrees,
+            float desiredHeadingDegrees,
+            float desiredAltitudeFeet,
+            AircraftTypeDefinition aircraftType,
+            float feetPerSecond,
+            float seconds)
+        {
+            headingDegrees = Mathf.MoveTowardsAngle(
+                headingDegrees,
+                desiredHeadingDegrees,
+                aircraftType.TurnRateDegreesPerSecond * seconds);
+            var next = position
+                       + Direction(headingDegrees)
+                       * feetPerSecond
+                       * seconds;
+            var verticalRate = (desiredAltitudeFeet >= position.y
+                                   ? aircraftType.ClimbRateFeetPerMinute
+                                   : aircraftType.DescentRateFeetPerMinute) / 60f;
+            next.y = Mathf.MoveTowards(
+                position.y,
+                desiredAltitudeFeet,
+                Math.Max(1f, verticalRate) * seconds);
+            return next;
+        }
+
+        private static bool TryGetBlockingThreat(
+            Vector3 startFeet,
+            Vector3 endFeet,
+            IReadOnlyList<KnownSamThreatEnvelope> threats,
+            float maneuverClearanceFeet,
+            out Guid blockingSiteId)
+        {
+            var blocking = threats
+                .Where(threat => threat != null
+                                 && threat.IntersectsSegment(
+                                     startFeet,
+                                     endFeet,
+                                     maneuverClearanceFeet))
+                .OrderBy(threat => threat.SiteId)
+                .FirstOrDefault();
+            blockingSiteId = blocking?.SiteId ?? Guid.Empty;
+            return blocking != null;
+        }
+
         private static float DistanceToBarrierKm(
             Vector3 positionFeet,
             IReadOnlyList<Vector3Int> coveredBarrierTiles,
@@ -1775,6 +2170,13 @@ namespace Engine.Models
         {
             return first == Alliance.Bluefor && second == Alliance.Redfor
                    || first == Alliance.Redfor && second == Alliance.Bluefor;
+        }
+
+        private static string ShortId(Guid id)
+        {
+            return id == Guid.Empty
+                ? "none"
+                : id.ToString("N").Substring(0, 8);
         }
     }
 }

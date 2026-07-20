@@ -27,7 +27,8 @@ namespace Models.Gameplay.Campaign
         Recommit = 10,
         Dogfight = 11,
         BreakLeft = 12,
-        BreakRight = 13
+        BreakRight = 13,
+        AvoidSurfaceThreat = 14
     }
 
     public enum AirCombatManeuverSide
@@ -144,6 +145,8 @@ namespace Models.Gameplay.Campaign
         public string Reason = string.Empty;
         public bool ExhaustProactiveEngagement;
         public bool RequestsWvrEngagement;
+        public bool RequestsSurfaceThreatRecovery;
+        public bool RequestsAirToAirPassCancellation;
         public AirCombatEmploymentProposal Employment;
     }
 }
