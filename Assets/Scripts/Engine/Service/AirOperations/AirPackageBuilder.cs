@@ -566,8 +566,7 @@ namespace Engine.Service
             Vector3Int threatTile,
             Alliance alliance)
         {
-            var friendlyTiles = gameManager.Tiles
-                .OfType<LandTileData>()
+            var friendlyTiles = gameManager.tileSystem.LandTiles
                 .Where(tile => tile.Controller == alliance)
                 .Select(tile => tile.TileId)
                 .ToHashSet();

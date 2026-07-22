@@ -277,11 +277,6 @@ namespace Engine.Models
             airborneAircraftIds ??= new HashSet<Guid>();
             EnsurePictures();
 
-            var controllersByTileId = gameManager.Tiles
-                .OfType<LandTileData>()
-                .GroupBy(tile => tile.TileId)
-                .ToDictionary(group => group.Key, group => group.First().Controller);
-
             foreach (var picture in Pictures)
             {
                 if (picture == null || picture.ObserverAlliance == Alliance.Neutral)
@@ -294,8 +289,7 @@ namespace Engine.Models
                 picture.HostileBuildings = BuildBuildingReports(
                     gameManager,
                     picture.ObserverAlliance,
-                    observedAt,
-                    controllersByTileId);
+                    observedAt);
                 picture.HostileAirDefenseSites = BuildAirDefenseSiteReports(
                     gameManager,
                     picture.ObserverAlliance,
@@ -304,8 +298,7 @@ namespace Engine.Models
                     gameManager,
                     picture.ObserverAlliance,
                     observedAt,
-                    airborneAircraftIds,
-                    controllersByTileId);
+                    airborneAircraftIds);
                 picture.RebuildIndex();
             }
 
@@ -394,15 +387,14 @@ namespace Engine.Models
         private static List<BuildingIntelligenceReport> BuildBuildingReports(
             GameManager gameManager,
             Alliance observerAlliance,
-            DateTime observedAt,
-            IReadOnlyDictionary<Vector3Int, Alliance> controllersByTileId)
+            DateTime observedAt)
         {
             return gameManager.buildingSystem.Buildings
                 .Where(building => building != null
-                                   && controllersByTileId.TryGetValue(
+                                   && gameManager.tileSystem.TryGetLand(
                                        building.TileId,
-                                       out var controller)
-                                   && IsHostile(observerAlliance, controller))
+                                       out var landTile)
+                                   && IsHostile(observerAlliance, landTile.Controller))
                 .Select(building => new BuildingIntelligenceReport
                 {
                     BuildingId = building.BuildingId,
@@ -487,16 +479,15 @@ namespace Engine.Models
                 GameManager gameManager,
                 Alliance observerAlliance,
                 DateTime observedAt,
-                ISet<Guid> airborneAircraftIds,
-                IReadOnlyDictionary<Vector3Int, Alliance> controllersByTileId)
+                ISet<Guid> airborneAircraftIds)
         {
             return gameManager.buildingSystem
                 .GetBuildings<Airport>()
                 .Where(airport =>
-                    controllersByTileId.TryGetValue(
+                    gameManager.tileSystem.TryGetLand(
                         airport.TileId,
-                        out var controller)
-                    && IsHostile(observerAlliance, controller))
+                        out var landTile)
+                    && IsHostile(observerAlliance, landTile.Controller))
                 .Select(airport => new ObservedEnemyAirportSnapshot
                 {
                     AirportBuildingId = airport.BuildingId,

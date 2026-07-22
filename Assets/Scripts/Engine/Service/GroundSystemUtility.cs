@@ -1,9 +1,7 @@
 using System;
-using System.Collections.Generic;
 using System.Linq;
 using Engine.Monobehaviours.Managers;
 using Models.Gameplay.Campaign;
-using UnityEngine;
 
 namespace Engine.Models.Ground
 {
@@ -45,36 +43,5 @@ namespace Engine.Models.Ground
             return division?.CurrentOrder is MoveGroundOrder { Purpose: MoveGroundOrderPurpose.Retreat };
         }
 
-        public static bool IsLandTile(GameManager gameManager, Vector3Int tileId)
-        {
-            return gameManager?.Tiles != null
-                   && gameManager.Tiles.Any(tileData => tileData is LandTileData && tileData.TileId == tileId);
-        }
-
-        public static bool TryGetLandTileData(GameManager gameManager, Vector3Int tileId, out LandTileData landTileData)
-        {
-            landTileData = null;
-            if (gameManager?.Tiles == null)
-                return false;
-
-            landTileData = gameManager.Tiles
-                .OfType<LandTileData>()
-                .FirstOrDefault(tileData => tileData.TileId == tileId);
-            return landTileData != null;
-        }
-
-        public static bool AreNeighbors(GameManager gameManager, Vector3Int firstTileId, Vector3Int secondTileId)
-        {
-            var tile = gameManager?.CampaignTiles?
-                .FirstOrDefault(candidate => candidate != null && candidate.Coordinates == firstTileId);
-            return tile?.NeighborTileIds != null && tile.NeighborTileIds.Contains(secondTileId);
-        }
-
-        public static IEnumerable<Vector3Int> GetNeighborTileIds(GameManager gameManager, Vector3Int tileId)
-        {
-            var tile = gameManager?.CampaignTiles?
-                .FirstOrDefault(candidate => candidate != null && candidate.Coordinates == tileId);
-            return tile?.NeighborTileIds;
-        }
     }
 }

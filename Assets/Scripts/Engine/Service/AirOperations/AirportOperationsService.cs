@@ -143,10 +143,8 @@ namespace Engine.Service
             if (!TryGetAirport(airportId, out var airport))
                 return false;
 
-            var landTile = gameManager.Tiles
-                .OfType<LandTileData>()
-                .FirstOrDefault(tile => tile.TileId == airport.TileId);
-            return landTile != null && landTile.Controller == alliance;
+            return gameManager.tileSystem.TryGetLand(airport.TileId, out var landTile)
+                   && landTile.Controller == alliance;
         }
 
         public bool CanConductAirOperations(

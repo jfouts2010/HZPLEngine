@@ -47,7 +47,7 @@ namespace Engine.Models.Ground
                 }
 
                 foreach (var neighborTileId in OrderTileIds(
-                             GroundSystemUtility.GetNeighborTileIds(gameManager, currentTileId)))
+                             gameManager.tileSystem.Get(currentTileId).NeighborTileIds))
                 {
                     if (visitedTileIds.Contains(neighborTileId))
                         continue;
@@ -91,7 +91,7 @@ namespace Engine.Models.Ground
                 return false;
             }
 
-            if (GroundSystemUtility.AreNeighbors(gameManager, fromTileId, destinationTileId))
+            if (gameManager.tileSystem.Get(fromTileId).IsNeighbor(destinationTileId))
             {
                 moveOrder.Path = GroundPath.FromDirectStep(fromTileId, destinationTileId);
                 moveOrder.CurrentDestinationTileId = destinationTileId;
@@ -114,7 +114,7 @@ namespace Engine.Models.Ground
 
         private static bool IsFriendlyLandTile(GameManager gameManager, Vector3Int tileId, Alliance alliance)
         {
-            return GroundSystemUtility.TryGetLandTileData(gameManager, tileId, out var landTileData)
+            return gameManager.tileSystem.TryGetLand(tileId, out var landTileData)
                    && landTileData.Controller == alliance;
         }
 

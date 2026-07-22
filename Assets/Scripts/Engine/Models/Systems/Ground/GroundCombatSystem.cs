@@ -55,7 +55,7 @@ namespace Engine.Models.Ground
                 if (!TryGetOrderTargetTileId(division, out var defendingTileId))
                     continue;
 
-                if (!GroundSystemUtility.TryGetLandTileData(gameManager, defendingTileId, out var landTileData))
+                if (!gameManager.tileSystem.TryGetLand(defendingTileId, out var landTileData))
                     continue;
 
                 var defendingAlliance = landTileData.Controller;
@@ -199,9 +199,7 @@ namespace Engine.Models.Ground
         private bool TryGetDefendingTerrain(GroundCombat combat, out TileTerrain terrain)
         {
             terrain = TileTerrain.Plains;
-            var tile = gameManager.CampaignTiles?
-                .FirstOrDefault(candidate => candidate.Coordinates == combat.DefendingTileId);
-            if (tile == null)
+            if (!gameManager.tileSystem.TryGet(combat.DefendingTileId, out var tile))
                 return false;
 
             terrain = tile.Terrain;
@@ -348,12 +346,11 @@ namespace Engine.Models.Ground
 
         private GroundOrderAIIntent GetHoldIntentForTile(Vector3Int tileId)
         {
-            if (!GroundSystemUtility.TryGetLandTileData(gameManager, tileId, out var landTileData))
+            if (!gameManager.tileSystem.TryGetLand(tileId, out var landTileData))
                 return GroundOrderAIIntent.None;
 
-            var adjacentHostileTileCount = GroundSystemUtility.GetNeighborTileIds(gameManager, tileId)
-                .Count(neighborTileId => GroundSystemUtility.TryGetLandTileData(
-                                             gameManager,
+            var adjacentHostileTileCount = gameManager.tileSystem.Get(tileId).NeighborTileIds
+                .Count(neighborTileId => gameManager.tileSystem.TryGetLand(
                                              neighborTileId,
                                              out var neighborTileData)
                                          && GroundSystemUtility.AreHostile(

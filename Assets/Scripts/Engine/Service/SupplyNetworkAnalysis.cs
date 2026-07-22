@@ -21,8 +21,8 @@ namespace Engine.Models
 
         private SupplyNetworkAnalysis(
             GameManager gameManager,
-            IReadOnlyDictionary<Vector3Int, LandTileData> landTilesById,
-            IReadOnlyDictionary<Vector3Int, List<Vector3Int>> neighborsByTileId,
+            IReadOnlyDictionary<Vector3Int, RuntimeLandTile> landTilesById,
+            IReadOnlyDictionary<Vector3Int, IReadOnlyList<Vector3Int>> neighborsByTileId,
             IReadOnlyDictionary<Alliance, Vector3Int> supplyCapitalByAlliance,
             IReadOnlyList<HubSupplyOption> hubOptions,
             IReadOnlyDictionary<Vector3Int, SupplyHub> hubsByTileId,
@@ -39,8 +39,8 @@ namespace Engine.Models
             DivisionsByHubId = divisionsByHubId;
         }
 
-        public IReadOnlyDictionary<Vector3Int, LandTileData> LandTilesById { get; }
-        public IReadOnlyDictionary<Vector3Int, List<Vector3Int>> NeighborsByTileId { get; }
+        public IReadOnlyDictionary<Vector3Int, RuntimeLandTile> LandTilesById { get; }
+        public IReadOnlyDictionary<Vector3Int, IReadOnlyList<Vector3Int>> NeighborsByTileId { get; }
         public IReadOnlyDictionary<Alliance, Vector3Int> SupplyCapitalByAlliance { get; }
         public IReadOnlyList<HubSupplyOption> HubOptions { get; }
         public IReadOnlyDictionary<Vector3Int, SupplyHub> HubsByTileId { get; }
@@ -49,8 +49,12 @@ namespace Engine.Models
 
         public static SupplyNetworkAnalysis Build(GameManager gameManager)
         {
-            var landTilesById = BuildLandTileLookup(gameManager);
-            var neighborsByTileId = BuildNeighborLookup(gameManager);
+            var landTilesById = gameManager.tileSystem.LandTiles
+                .ToDictionary(tile => tile.TileId);
+            var neighborsByTileId = gameManager.tileSystem.Tiles
+                .ToDictionary(
+                    tile => tile.TileId,
+                    tile => tile.NeighborTileIds);
             var supplyCapitalByAlliance = BuildSupplyCapitalLookup(gameManager, landTilesById);
             var analysis = new SupplyNetworkAnalysis(
                 gameManager,
@@ -213,26 +217,9 @@ namespace Engine.Models
             return 0f;
         }
 
-        private static Dictionary<Vector3Int, LandTileData> BuildLandTileLookup(GameManager gameManager)
-        {
-            return (gameManager.Tiles)
-                .OfType<LandTileData>()
-                .GroupBy(tileData => tileData.TileId)
-                .ToDictionary(group => group.Key, group => group.First());
-        }
-
-        private static Dictionary<Vector3Int, List<Vector3Int>> BuildNeighborLookup(GameManager gameManager)
-        {
-            return (gameManager.CampaignTiles)
-                .GroupBy(tile => tile.Coordinates)
-                .ToDictionary(
-                    group => group.Key,
-                    group => group.First().NeighborTileIds);
-        }
-
         private static Dictionary<Alliance, Vector3Int> BuildSupplyCapitalLookup(
             GameManager gameManager,
-            IReadOnlyDictionary<Vector3Int, LandTileData> landTilesById)
+            IReadOnlyDictionary<Vector3Int, RuntimeLandTile> landTilesById)
         {
             var result = new Dictionary<Alliance, Vector3Int>();
             foreach (var capital in gameManager.SupplyCapitals)

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Engine.Models;
 using Models.Gameplay.Campaign;
 using UnityEngine;
 
@@ -32,29 +33,26 @@ namespace Engine.Service
         private bool initialized;
 
         public AirControlAssessmentService(
-            IReadOnlyList<Tile> campaignTiles,
+            TileSystem tileSystem,
             float tileDistanceKm,
             IReadOnlyCollection<Vector3Int> neutralTerritoryTileIds)
         {
-            var tiles = campaignTiles ?? Array.Empty<Tile>();
+            if (tileSystem == null)
+                throw new ArgumentNullException(nameof(tileSystem));
+
+            var tiles = tileSystem.Tiles;
             var neutralTerritory = neutralTerritoryTileIds == null
                 ? new HashSet<Vector3Int>()
                 : new HashSet<Vector3Int>(neutralTerritoryTileIds);
             this.tileDistanceKm = Mathf.Max(0.001f, tileDistanceKm);
             tileIds = new HashSet<Vector3Int>(tiles
-                .Where(tile => tile != null
-                               && !neutralTerritory.Contains(tile.Coordinates))
-                .Select(tile => tile.Coordinates));
+                .Where(tile => !neutralTerritory.Contains(tile.TileId))
+                .Select(tile => tile.TileId));
             neighborTileIdsByTileId = tiles
-                .Where(tile => tile != null
-                               && tileIds.Contains(tile.Coordinates))
-                .GroupBy(tile => tile.Coordinates)
-                .Where(group => group.Count() == 1)
-                .Select(group => group.First())
+                .Where(tile => tileIds.Contains(tile.TileId))
                 .ToDictionary(
-                    tile => tile.Coordinates,
-                    tile => (IReadOnlyList<Vector3Int>)(tile.NeighborTileIds
-                            ?? new List<Vector3Int>())
+                    tile => tile.TileId,
+                    tile => (IReadOnlyList<Vector3Int>)tile.NeighborTileIds
                         .Where(tileIds.Contains)
                         .Distinct()
                         .ToList());

@@ -70,7 +70,7 @@ namespace Engine.Models.Ground
             if (!TryGetDefendingTerrain(gameManager, defendingTileId, out var terrain))
                 return false;
 
-            if (!GroundSystemUtility.TryGetLandTileData(gameManager, defendingTileId, out var landTileData))
+            if (!gameManager.tileSystem.TryGetLand(defendingTileId, out var landTileData))
                 return false;
 
             var defenders = gameManager.divisionSystem
@@ -269,9 +269,7 @@ namespace Engine.Models.Ground
         private static bool TryGetDefendingTerrain(GameManager gameManager, Vector3Int tileId, out TileTerrain terrain)
         {
             terrain = TileTerrain.Plains;
-            var tile = gameManager.CampaignTiles?
-                .FirstOrDefault(candidate => candidate != null && candidate.Coordinates == tileId);
-            if (tile == null)
+            if (!gameManager.tileSystem.TryGet(tileId, out var tile))
                 return false;
 
             terrain = tile.Terrain;

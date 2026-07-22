@@ -59,8 +59,7 @@ namespace Engine.Monobehaviours.Managers
         public CampaignTemplate CampaignTemplate { get; private set; }
         public Dictionary<Alliance, List<Guid>> OrdnanceAllowances = new Dictionary<Alliance, List<Guid>>();
         public Dictionary<Alliance, List<Guid>> SamSiteTemplateAllowances = new Dictionary<Alliance, List<Guid>>();
-        public List<Tile> CampaignTiles = new List<Tile>();
-        [SerializeReference] public List<TileData> Tiles = new List<TileData>();
+        public TileSystem tileSystem { get; private set; }
         public List<SupplyCapitalStartingCondition> SupplyCapitals = new List<SupplyCapitalStartingCondition>();
         private GroundTaskingSystem _groundTaskingSystem;
         private AirTaskingSystem _airTaskingSystem;
@@ -102,8 +101,6 @@ namespace Engine.Monobehaviours.Managers
 
         public void StartCampaign(CampaignTemplate template)
         {
-            template.RebuildDerivedData();
-
             TemplateName = template.Name;
             ModuleId = template.ModuleId;
             var activeModule = ModuleSingleton.Instance.ActiveModule;
@@ -121,8 +118,7 @@ namespace Engine.Monobehaviours.Managers
             SimulationSettings = CopySimulationSettings(template.SimulationSettings);
             OrdnanceAllowances = CopyOrdnanceAllowances(template.OrdnanceAllowances);
             SamSiteTemplateAllowances = CopyGuidAllowances(template.SamSiteTemplateAllowances);
-            CampaignTiles = CopyTiles(template.Tiles);
-            Tiles = CopyTileData(template.StartingTileData);
+            tileSystem = TileSystem.Create(template.Tiles, template.StartingTileData);
             SupplyCapitals = CopySupplyCapitals(template.SupplyCapitals);
             buildingSystem = new BuildingSystem
             {
@@ -497,8 +493,7 @@ namespace Engine.Monobehaviours.Managers
                         division.Organization,
                         division.CurrentOrder?.GetType().Name ?? "None",
                         division.CurrentOrder is MoveGroundOrder move ? move.MovementProgress : 0f)),
-                TileControllers = Tiles
-                    .OfType<LandTileData>()
+                TileControllers = tileSystem.LandTiles
                     .ToDictionary(tile => tile.TileId, tile => tile.Controller),
                 Buildings = buildingSystem.Buildings.ToDictionary(
                     building => building.BuildingId,
@@ -560,7 +555,7 @@ namespace Engine.Monobehaviours.Managers
                 }
             }
 
-            foreach (var tile in Tiles.OfType<LandTileData>())
+            foreach (var tile in tileSystem.LandTiles)
             {
                 if (before.TileControllers.TryGetValue(tile.TileId, out var controller)
                     && controller != tile.Controller)
@@ -684,13 +679,6 @@ namespace Engine.Monobehaviours.Managers
             }
         }
 
-        private static List<TileData> CopyTileData(List<TileData> startingTileData)
-        {
-            return (startingTileData)
-                .Select(CopyTileData)
-                .ToList();
-        }
-
         private static List<CountryAllianceAssignment> CopyCountryAllianceAssignments(
             List<CountryAllianceAssignment> assignments)
         {
@@ -728,54 +716,6 @@ namespace Engine.Monobehaviours.Managers
                     TileId = supplyCapital.TileId
                 })
                 .ToList();
-        }
-
-        private static List<Tile> CopyTiles(List<Tile> tiles)
-        {
-            return (tiles)
-                .Select(CopyTile)
-                .ToList();
-        }
-
-        private static Tile CopyTile(Tile tile)
-        {
-            return new Tile
-            {
-                Coordinates = tile.Coordinates,
-                NeighborTileIds = new List<Vector3Int>(tile.NeighborTileIds),
-                RiverNeighborTileIds = new List<Vector3Int>(tile.RiverNeighborTileIds),
-                Surface = tile.Surface,
-                Terrain = tile.Terrain,
-                Urbanization = tile.Urbanization,
-                ForestCover = tile.ForestCover
-            };
-        }
-
-        private static TileData CopyTileData(TileData data)
-        {
-            if (data is LandTileData landData)
-            {
-                return new LandTileData
-                {
-                    TileId = landData.TileId,
-                    Controller = landData.Controller,
-                    Infrastructure = CopyBuildingLevel(landData.Infrastructure),
-                    InfrastructureTargetToughness = Math.Max(1, landData.InfrastructureTargetToughness)
-                };
-            }
-
-            if (data is OceanTileData oceanData)
-            {
-                return new OceanTileData
-                {
-                    TileId = oceanData.TileId
-                };
-            }
-
-            throw new ArgumentOutOfRangeException(
-                nameof(data),
-                data,
-                $"Unsupported tile data type {data.GetType().Name}.");
         }
 
         private static List<Building> CreateRuntimeBuildings(
@@ -978,13 +918,6 @@ namespace Engine.Monobehaviours.Managers
             }
 
             return new Squadron(startingCondition);
-        }
-
-        private static BuildingLevel CopyBuildingLevel(BuildingLevel level)
-        {
-            return level == null
-                ? new BuildingLevel()
-                : new BuildingLevel(level.BuildLevel, level.Damage);
         }
 
         private static SimulationSettings CopySimulationSettings(SimulationSettings settings)

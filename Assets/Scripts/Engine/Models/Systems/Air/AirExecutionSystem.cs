@@ -1262,10 +1262,9 @@ namespace Engine.Models
             return gameManager.buildingSystem.GetBuildings<Airport>()
                 .Where(airport =>
                 {
-                    var landTile = gameManager.Tiles
-                        .OfType<LandTileData>()
-                        .FirstOrDefault(tile => tile.TileId == airport.TileId);
-                    return landTile != null
+                    return gameManager.tileSystem.TryGetLand(
+                               airport.TileId,
+                               out var landTile)
                            && landTile.Controller == alliance
                            && AirportOperationsRules.IsOperational(airport);
                 });

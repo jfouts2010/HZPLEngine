@@ -31,8 +31,7 @@ namespace Engine.Models.Ground
                 if (!GroundSystemUtility.TryGetDivisionAlliance(gameManager, division, out var divisionAlliance))
                     continue;
 
-                if (!GroundSystemUtility.TryGetLandTileData(
-                        gameManager,
+                if (!gameManager.tileSystem.TryGetLand(
                         retreatOrder.DestinationTileId,
                         out var destinationTileData))
                     continue;
@@ -48,10 +47,8 @@ namespace Engine.Models.Ground
                 if (division?.CurrentOrder is not MoveGroundOrder moveOrder)
                     continue;
 
-                if (!GroundSystemUtility.AreNeighbors(
-                        gameManager,
-                        division.TileId,
-                        moveOrder.CurrentDestinationTileId))
+                if (!gameManager.tileSystem.Get(division.TileId)
+                        .IsNeighbor(moveOrder.CurrentDestinationTileId))
                     continue;
 
                 var tileDistanceKm = Mathf.Max(
@@ -126,7 +123,7 @@ namespace Engine.Models.Ground
         {
             if (moveOrder.Path != null
                 && moveOrder.Path.TryGetNextStep(arrivedTileId, out var pathNextStep)
-                && GroundSystemUtility.AreNeighbors(gameManager, arrivedTileId, pathNextStep)
+                && gameManager.tileSystem.Get(arrivedTileId).IsNeighbor(pathNextStep)
                 && IsNextStepAllowed(division, moveOrder, pathNextStep))
             {
                 moveOrder.CurrentDestinationTileId = pathNextStep;
@@ -150,7 +147,7 @@ namespace Engine.Models.Ground
                 return true;
             }
 
-            if (GroundSystemUtility.AreNeighbors(gameManager, arrivedTileId, moveOrder.DestinationTileId)
+            if (gameManager.tileSystem.Get(arrivedTileId).IsNeighbor(moveOrder.DestinationTileId)
                 && IsNextStepAllowed(division, moveOrder, moveOrder.DestinationTileId))
             {
                 moveOrder.Path = GroundPath.FromDirectStep(arrivedTileId, moveOrder.DestinationTileId);
@@ -172,7 +169,7 @@ namespace Engine.Models.Ground
             if (moveOrder.IsRetreat)
                 return GroundPathfindingService.IsSafeFriendlyWaypoint(gameManager, nextTileId, alliance);
 
-            if (GroundSystemUtility.TryGetLandTileData(gameManager, nextTileId, out var landTileData)
+            if (gameManager.tileSystem.TryGetLand(nextTileId, out var landTileData)
                 && GroundSystemUtility.AreHostile(alliance, landTileData.Controller))
                 return true;
 
@@ -181,7 +178,7 @@ namespace Engine.Models.Ground
 
         private void ResolveCapture(Division division, Vector3Int tileId)
         {
-            if (!GroundSystemUtility.TryGetLandTileData(gameManager, tileId, out var landTileData))
+            if (!gameManager.tileSystem.TryGetLand(tileId, out var landTileData))
                 return;
 
             if (!GroundSystemUtility.TryGetDivisionAlliance(gameManager, division, out var divisionAlliance))
@@ -193,7 +190,7 @@ namespace Engine.Models.Ground
                                   && GroundSystemUtility.TryGetDivisionAlliance(gameManager, candidate, out var alliance)
                                   && GroundSystemUtility.AreHostile(divisionAlliance, alliance));
             if (!hasHostileNonRetreatingDivision)
-                landTileData.Controller = divisionAlliance;
+                gameManager.tileSystem.ChangeControl(tileId, divisionAlliance);
         }
          public bool TryAssignRetreat(Division division, Vector3Int fromTileId, string rationale)
         {
@@ -203,7 +200,7 @@ namespace Engine.Models.Ground
             if (!GroundSystemUtility.TryGetDivisionAlliance(gameManager, division, out var alliance))
                 return DestroyDivision(division);
 
-            foreach (var neighborTileId in GroundSystemUtility.GetNeighborTileIds(gameManager, fromTileId))
+            foreach (var neighborTileId in gameManager.tileSystem.Get(fromTileId).NeighborTileIds)
             {
                 if (!GroundPathfindingService.IsSafeFriendlyWaypoint(gameManager, neighborTileId, alliance))
                     continue;

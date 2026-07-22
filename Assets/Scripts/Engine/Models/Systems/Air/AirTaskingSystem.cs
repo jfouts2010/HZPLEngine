@@ -40,10 +40,9 @@ namespace Engine.Models
                 module);
             priorityService = new AirMissionPriorityService(module);
             airControlAssessmentService = new AirControlAssessmentService(
-                gameManager.CampaignTiles,
+                gameManager.tileSystem,
                 gameManager.SimulationSettings.TileDistanceKM,
-                gameManager.Tiles
-                    .OfType<LandTileData>()
+                gameManager.tileSystem.LandTiles
                     .Where(tile => tile.Controller == Alliance.Neutral)
                     .Select(tile => tile.TileId)
                     .Distinct()

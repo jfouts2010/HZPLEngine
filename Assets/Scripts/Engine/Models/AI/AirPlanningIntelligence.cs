@@ -164,8 +164,7 @@ namespace Engine.Models
         private IReadOnlyList<Vector3Int> GetControlledLandTiles(
             Alliance alliance)
         {
-            return gameManager.Tiles
-                .OfType<LandTileData>()
+            return gameManager.tileSystem.LandTiles
                 .Where(tile => tile.Controller == alliance)
                 .Select(tile => tile.TileId)
                 .Distinct()
@@ -178,8 +177,7 @@ namespace Engine.Models
         private IReadOnlyList<Vector3Int> GetHostileControlledLandTiles(
             Alliance alliance)
         {
-            return gameManager.Tiles
-                .OfType<LandTileData>()
+            return gameManager.tileSystem.LandTiles
                 .Where(tile => IsHostile(alliance, tile.Controller))
                 .Select(tile => tile.TileId)
                 .Distinct()
@@ -192,16 +190,12 @@ namespace Engine.Models
         private IReadOnlyList<Vector3Int> GetFriendlyAirfieldTiles(
             Alliance alliance)
         {
-            var controllersByTileId = gameManager.Tiles
-                .OfType<LandTileData>()
-                .GroupBy(tile => tile.TileId)
-                .ToDictionary(group => group.Key, group => group.First().Controller);
             return gameManager.buildingSystem
                 .GetBuildings<Airport>()
-                .Where(airport => controllersByTileId.TryGetValue(
+                .Where(airport => gameManager.tileSystem.TryGetLand(
                                       airport.TileId,
-                                      out var controller)
-                                  && controller == alliance)
+                                      out var landTile)
+                                  && landTile.Controller == alliance)
                 .Select(airport => airport.TileId)
                 .Distinct()
                 .OrderBy(tile => tile.x)

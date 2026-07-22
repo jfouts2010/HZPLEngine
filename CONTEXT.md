@@ -906,8 +906,31 @@ These four requests form the initial air-tasking backbone. OCA counter-air calcu
 
 **DEAD attack flight** is a required combat flight assigned all or part of a DEAD target set with a target-driven mix of compatible anti-radiation and conventional air-to-ground ordnance. A DEAD package contains one or more DEAD attack flights and adapts their aircraft allocation, loadouts, and division of targets to the known site, available aircraft, expected opposition, and acceptable risk rather than requiring separate fixed anti-radar and cleanup roles.
 
+**Initial DEAD objective** is the nearest observed-functional hostile airport to any friendly functional airport hosting ready combat-capable aircraft, with stable airport identity breaking equal distances. The objective is retained until the airport becomes nonfunctional, is captured, is no longer known, or a feasible attack corridor has been opened; only then does the alliance select another hostile airport.
+
+**Initial DEAD demand** selects known hostile SAM sites that block attack access to the initial DEAD objective and have no equivalent projected DEAD effect. The provisional planner sequences the nearest blocking site first so DEAD packages progressively open the corridor; future objective-driven air-campaign planning may replace this rule and select DEAD alongside other mission types as one tool for achieving higher-level operational goals.
+
+**Initial DEAD attack corridor** is an acceptable threat-safe ingress from the friendly combat-air base used to select the initial DEAD objective to that hostile airport, together with a threat-safe egress to recovery. Corridor feasibility uses the alliance's known SAM engagement envelopes and shared route-safety rules; when overlapping sites block every acceptable route, the nearest blocking site to the friendly origin is targeted first and the corridor is reassessed after its projected destruction.
+
+**Self-escorting DEAD package** is the initial DEAD package policy in which the required DEAD attack flights carry situation-appropriate air-to-air self-defense ordnance but receive no dedicated fighter-escort flight. The attack flights defend themselves without adopting an offensive counter-air hunting task; if their self-protection and available shared support cannot make the attack acceptably feasible, the request remains unfulfilled until future dedicated-escort capability or a safer situation exists.
+
+**DEAD loadout feasibility** requires a proposed package to carry both enough target-suitable air-to-ground ordnance for the minimum DEAD effect and enough air-to-air ordnance for its situation-dependent self-defense need. Aircraft and DEAD attack flights are added adaptively until both needs are met; remaining useful capacity may carry cleanup ordnance assigned to known surviving components, but unrelated stores and aircraft are not added merely to fill capacity.
+
+**DEAD component priority** ranks viable components by the operational value of destroying them rather than by raw component count: first collapse the site's immediate engagement chain, then remove remaining shooter capability, wider IADS sensor or command contribution, and finally other useful site equipment. Within the same operational tier, the attacking flight prefers the component for which its suitable carried ordnance has the best expected effect and recalculates the ordering after each resolved employment pass.
+
+**DEAD component allocation** keeps the package's hostile SAM site target locked after activation while allowing its flights to reassign individual components within that site as execution unfolds. Flights credit components and weapon quantities already covered by preparing, released, or unresolved employment effects, permit deliberate redundancy only when needed for the planned effect, and redirect later passes when another attack destroys or fails to destroy an allocated component.
+
+**DEAD minimum effect** is permanent component damage that removes every functional engagement chain through which the targeted SAM site could fire surface-to-air ordnance. Temporary suppression, radar shutdown, or ammunition depletion alone does not achieve the minimum effect.
+
+**DEAD result** records how much of the target site was permanently destroyed. A package succeeds when it achieves the DEAD minimum effect and may continue its bounded attack sequence for a stronger result; destruction of every known viable component is total site destruction, while damage that leaves a functional engagement chain is an unsuccessful partial effect that remains part of campaign state.
+
+**DEAD attack window** is the maximum period during which a DEAD package may conduct its sequential employment passes after the first required DEAD flight enters the target area. The initial doctrine ceiling is fifteen campaign minutes and may end earlier for fuel, risk, package integrity, lack of suitable targets, or mission-useful ordnance exhaustion; when it ends, surviving flights egress and any achieved component damage remains.
+
+**DEAD attack sequencing** uses suitable standoff ordnance first against the highest-priority engagement-chain components and reassesses resolved effects before accepting closer exposure. Conventional close-in cleanup attacks occur only when the remaining target-site threat and surrounding known air-defense risk are acceptable under doctrine; carrying cleanup ordnance does not by itself authorize overflight of an operational SAM site.
+
 _Avoid_: using DEAD for temporary suppression or localized escort protection; SEAD escort is a separate future supporting mission.
 _Avoid_: fixed DEAD aircraft-role labels or a mandatory anti-radar-flight plus conventional-attack-flight pairing.
+_Avoid_: treating an offensive counter-air sweep as if it were a dedicated fighter escort.
 
 ### Air mission area
 

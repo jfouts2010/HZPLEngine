@@ -14,8 +14,6 @@ using UnityEngine.InputSystem.UI;
 using UnityEngine.Tilemaps;
 using UnityEngine.UIElements;
 using Monobehaviours.Singletons;
-using CampaignTile = Models.Gameplay.Campaign.Tile;
-using TileData = Models.Gameplay.Campaign.TileData;
 
 namespace Engine.Monobehaviours.Managers
 {
@@ -36,10 +34,9 @@ namespace Engine.Monobehaviours.Managers
         private const string CampaignHudResourcePath = "UI/PlaySceneCampaignHud";
         private const string PanelSettingsResourcePath = "UI/PlayScenePanelSettings";
 
-        private readonly Dictionary<Vector3Int, CampaignTile> tilesByCell = new Dictionary<Vector3Int, CampaignTile>();
+        private readonly Dictionary<Vector3Int, RuntimeTile> tilesByCell = new Dictionary<Vector3Int, RuntimeTile>();
         private readonly Dictionary<Vector3Int, Vector3> hexCentersByCell = new Dictionary<Vector3Int, Vector3>();
-        private readonly Dictionary<Vector3Int, CampaignTile> tilesById = new Dictionary<Vector3Int, CampaignTile>();
-        private readonly Dictionary<Vector3Int, TileData> tileDataById = new Dictionary<Vector3Int, TileData>();
+        private readonly Dictionary<Vector3Int, RuntimeTile> tilesById = new Dictionary<Vector3Int, RuntimeTile>();
         private readonly Dictionary<string, UnityEngine.Tilemaps.Tile> renderTilesByKey = new Dictionary<string, UnityEngine.Tilemaps.Tile>();
         private readonly Dictionary<string, Sprite> spritesByKey = new Dictionary<string, Sprite>();
         private readonly Dictionary<string, Sprite> unitCounterSpritesByKey = new Dictionary<string, Sprite>();
@@ -351,13 +348,9 @@ namespace Engine.Monobehaviours.Managers
             tilesByCell.Clear();
             hexCentersByCell.Clear();
             tilesById.Clear();
-            tileDataById.Clear();
 
-            foreach (var tileData in gameManager.Tiles)
-                tileDataById[tileData.TileId] = tileData;
-
-            foreach (var campaignTile in gameManager.CampaignTiles)
-                tilesById[campaignTile.Coordinates] = campaignTile;
+            foreach (var campaignTile in gameManager.tileSystem.Tiles)
+                tilesById[campaignTile.TileId] = campaignTile;
 
             ClearLabels();
             ClearUnitCounters();
@@ -371,10 +364,10 @@ namespace Engine.Monobehaviours.Managers
             flightPickTargets.Clear();
             combatPickTargets.Clear();
 
-            foreach (var campaignTile in gameManager.CampaignTiles)
+            foreach (var campaignTile in gameManager.tileSystem.Tiles)
             {
-                var cell = GetCell(campaignTile.Coordinates);
-                var hexCenter = GetHexCenter(campaignTile.Coordinates);
+                var cell = GetCell(campaignTile.TileId);
+                var hexCenter = GetHexCenter(campaignTile.TileId);
                 tilesByCell[cell] = campaignTile;
                 hexCentersByCell[cell] = hexCenter;
                 tilemap.SetTile(cell, GetRenderTile(campaignTile));
@@ -1024,7 +1017,7 @@ namespace Engine.Monobehaviours.Managers
                 return;
 
             foreach (var campaignTile in tilesById.Values)
-                tilemap.SetTile(GetCell(campaignTile.Coordinates), GetRenderTile(campaignTile));
+                tilemap.SetTile(GetCell(campaignTile.TileId), GetRenderTile(campaignTile));
 
             tilemap.RefreshAllTiles();
         }
@@ -1055,12 +1048,12 @@ namespace Engine.Monobehaviours.Managers
             {
                 var hasBlueEstimate = TryGetAirInterferencePicture(
                     blueCommander,
-                    campaignTile.Coordinates,
+                    campaignTile.TileId,
                     out var blueBalance,
                     out var blueInterference);
                 var hasRedEstimate = TryGetAirInterferencePicture(
                     redCommander,
-                    campaignTile.Coordinates,
+                    campaignTile.TileId,
                     out var redBalance,
                     out var redInterference);
                 var estimateCount = (hasBlueEstimate ? 1 : 0) + (hasRedEstimate ? 1 : 0);
@@ -1073,7 +1066,7 @@ namespace Engine.Monobehaviours.Managers
                        + (hasRedEstimate ? redInterference : 0f)) / estimateCount
                     : 0f;
                 airControlTilemap.SetColor(
-                    GetCell(campaignTile.Coordinates),
+                    GetCell(campaignTile.TileId),
                     GetAirInterferenceOverlayColor(
                         combinedBlueBalance,
                         combinedInterference));
@@ -1333,9 +1326,9 @@ namespace Engine.Monobehaviours.Managers
                     if (!selectedCell.HasValue || !tilesByCell.TryGetValue(selectedCell.Value, out var tile))
                         return;
                     CreatePinnedInspector(
-                        $"Tile {FormatTile(tile.Coordinates)}",
-                        () => BuildTileInspectorLines(tile.Coordinates),
-                        () => FocusTile(tile.Coordinates));
+                        $"Tile {FormatTile(tile.TileId)}",
+                        () => BuildTileInspectorLines(tile.TileId),
+                        () => FocusTile(tile.TileId));
                     break;
                 case WorkbenchPage.Ground:
                     CreatePinnedInspector("Ground War", BuildGroundOverviewLines);
@@ -1685,15 +1678,14 @@ namespace Engine.Monobehaviours.Managers
         {
             if (!tilesById.TryGetValue(tileId, out var tile))
                 return new[] { "STALE", "Tile no longer exists." };
-            tileDataById.TryGetValue(tileId, out var data);
-            var land = data as LandTileData;
+            var land = tile as RuntimeLandTile;
             var lines = new List<string>
             {
                 $"Coordinates  {FormatTile(tileId)}",
                 $"Surface / terrain  {tile.Surface} / {tile.Terrain}",
                 $"Urbanization / forest  {tile.Urbanization} / {tile.ForestCover}",
                 $"Controller  {(land == null ? "None" : land.Controller.ToString())}",
-                $"Infrastructure  {(land == null ? "N/A" : $"{land.Infrastructure.FunctionalLevel}/{land.Infrastructure.BuildLevel} (damage {land.Infrastructure.Damage})")}"
+                $"Infrastructure  {(land == null ? "N/A" : $"{land.InfrastructureFunctionalLevel}/{land.InfrastructureBuildLevel} (damage {land.InfrastructureDamage})")}",
             };
             lines.AddRange(gameManager.divisionSystem.GetDivisionsOnTile(tileId)
                 .OrderBy(division => division.Name)
@@ -1990,8 +1982,7 @@ namespace Engine.Monobehaviours.Managers
         private (int TotalLand, int FriendlyOnly, int HostileOnly, int Both, int Clear)
             CalculateAirInterferenceCoverage(Alliance territoryOwner)
         {
-            var landTiles = tileDataById.Values
-                .OfType<LandTileData>()
+            var landTiles = gameManager.tileSystem.LandTiles
                 .Where(tile => tile.Controller == territoryOwner)
                 .ToList();
             var commander = gameManager.GetAllianceAirTaskingCommander(territoryOwner);
@@ -3824,7 +3815,7 @@ namespace Engine.Monobehaviours.Managers
             if (timeLabel == null || gameManager == null)
                 return;
 
-            timeLabel.text = $"{gameManager.GameTime:yyyy-MM-dd HH:mm:ss} | Tiles: {gameManager.CampaignTiles.Count}";
+            timeLabel.text = $"{gameManager.GameTime:yyyy-MM-dd HH:mm:ss} | Tiles: {gameManager.tileSystem.Count}";
             if (pauseButton != null)
                 pauseButton.text = gameManager.IsGamePaused ? "Play" : "Pause";
             if (nextIncrementButton != null)
@@ -3865,18 +3856,17 @@ namespace Engine.Monobehaviours.Managers
                 return;
             }
 
-            tileDataById.TryGetValue(selectedTile.Coordinates, out var tileData);
-            var landData = tileData as LandTileData;
+            var landData = selectedTile as RuntimeLandTile;
             var controller = landData == null ? "None" : landData.Controller.ToString();
-            var infrastructure = landData == null ? "N/A" : landData.Infrastructure.FunctionalLevel.ToString();
-            var buildings = gameManager.buildingSystem.GetBuildingsOnTile(selectedTile.Coordinates);
+            var infrastructure = landData == null ? "N/A" : landData.InfrastructureFunctionalLevel.ToString();
+            var buildings = gameManager.buildingSystem.GetBuildingsOnTile(selectedTile.TileId);
             var buildingText = buildings.Count == 0
                 ? "No buildings"
                 : string.Join(", ", buildings.Select(building => $"{building.Type} {building.FunctionalLevel}"));
-            var supplyFeatures = GetSupplyFeatureLabel(selectedTile.Coordinates);
+            var supplyFeatures = GetSupplyFeatureLabel(selectedTile.TileId);
 
             selectedTileLabel.text =
-                $"Hex {selectedTile.Coordinates.x}, {selectedTile.Coordinates.y}, {selectedTile.Coordinates.z}\n" +
+                $"Hex {selectedTile.TileId.x}, {selectedTile.TileId.y}, {selectedTile.TileId.z}\n" +
                 $"{selectedTile.Surface} | {selectedTile.Terrain}\n" +
                 $"Settlement: {selectedTile.Urbanization} | Forest: {selectedTile.ForestCover}\n" +
                 $"Control: {controller}\n" +
@@ -3923,7 +3913,7 @@ namespace Engine.Monobehaviours.Managers
 
             var count = 0;
             if (selectedCell.HasValue && tilesByCell.TryGetValue(selectedCell.Value, out var selectedTile))
-                count = gameManager.buildingSystem.GetBuildingsOnTile(selectedTile.Coordinates).Count;
+                count = gameManager.buildingSystem.GetBuildingsOnTile(selectedTile.TileId).Count;
             buildingsFoldout.text = count == 0 ? "Buildings" : $"Buildings ({count})";
             if (buildingsFoldout.value)
                 UpdateBuildingsList();
@@ -3942,7 +3932,7 @@ namespace Engine.Monobehaviours.Managers
             }
 
             var buildings = gameManager.buildingSystem
-                .GetBuildingsOnTile(selectedTile.Coordinates)
+                .GetBuildingsOnTile(selectedTile.TileId)
                 .OrderBy(building => building.Type)
                 .ThenBy(building => building.BuildingId)
                 .ToList();
@@ -4007,7 +3997,7 @@ namespace Engine.Monobehaviours.Managers
                 }
 
                 var riverSuffix = riverNeighbors.Contains(neighborId) ? " | River" : string.Empty;
-                var coords = neighbor.Coordinates;
+                var coords = neighbor.TileId;
                 var summary =
                     $"({coords.x}, {coords.y}, {coords.z}) {neighbor.Surface} | {neighbor.Terrain}{riverSuffix}";
                 neighborsList.Add(CreateNeighborSelectButton(neighbor, summary));
@@ -4037,7 +4027,7 @@ namespace Engine.Monobehaviours.Managers
             if (!selectedCell.HasValue || !tilesByCell.TryGetValue(selectedCell.Value, out var selectedTile))
                 return new List<Division>();
 
-            return gameManager.divisionSystem.GetDivisionsOnTile(selectedTile.Coordinates);
+            return gameManager.divisionSystem.GetDivisionsOnTile(selectedTile.TileId);
         }
 
         private VisualElement CreateUnitCard(Division division)
@@ -4086,7 +4076,7 @@ namespace Engine.Monobehaviours.Managers
             return label;
         }
 
-        private Button CreateNeighborSelectButton(CampaignTile neighbor, string summary)
+        private Button CreateNeighborSelectButton(RuntimeTile neighbor, string summary)
         {
             var button = new Button(() => SelectTile(neighbor)) { text = summary };
             button.AddToClassList("campaign-hud-neighbor-item");
@@ -4095,9 +4085,9 @@ namespace Engine.Monobehaviours.Managers
             return button;
         }
 
-        private void SelectTile(CampaignTile tile)
+        private void SelectTile(RuntimeTile tile)
         {
-            var cell = GetCell(tile.Coordinates);
+            var cell = GetCell(tile.TileId);
             if (!tilesByCell.ContainsKey(cell))
                 return;
 
@@ -5731,9 +5721,8 @@ namespace Engine.Monobehaviours.Managers
             if (!GroundSystemUtility.TryGetDivisionAlliance(gameManager, division, out var divisionAlliance))
                 return false;
 
-            if (tileDataById.TryGetValue(destinationTileId, out var tileData)
-                && tileData is LandTileData landData
-                && GroundSystemUtility.AreHostile(divisionAlliance, landData.Controller))
+            if (gameManager.tileSystem.TryGetLand(destinationTileId, out var landTile)
+                && GroundSystemUtility.AreHostile(divisionAlliance, landTile.Controller))
                 return true;
 
             return gameManager.divisionSystem.GetDivisionsOnTile(destinationTileId)
@@ -5793,26 +5782,26 @@ namespace Engine.Monobehaviours.Managers
             if (railwayRoot == null || gameManager?.buildingSystem == null)
                 return;
 
-            foreach (var campaignTile in gameManager.CampaignTiles.Where(tile => tile.Surface == TileSurface.Land))
+            foreach (var campaignTile in gameManager.tileSystem.LandTiles)
             {
-                if (!TileHasRailroad(campaignTile.Coordinates))
+                if (!TileHasRailroad(campaignTile.TileId))
                     continue;
 
-                var fromCell = GetCell(campaignTile.Coordinates);
+                var fromCell = GetCell(campaignTile.TileId);
                 if (!hexCentersByCell.TryGetValue(fromCell, out var fromCenter))
                     continue;
 
                 for (var sideIndex = 0; sideIndex < TerritoryBorderNeighborOffsets.Length; sideIndex++)
                 {
-                    var neighborId = campaignTile.Coordinates + TerritoryBorderNeighborOffsets[sideIndex];
-                    if (!ShouldDrawRailLink(campaignTile.Coordinates, neighborId) || !TileHasRailroad(neighborId))
+                    var neighborId = campaignTile.TileId + TerritoryBorderNeighborOffsets[sideIndex];
+                    if (!ShouldDrawRailLink(campaignTile.TileId, neighborId) || !TileHasRailroad(neighborId))
                         continue;
 
                     var toCell = GetCell(neighborId);
                     if (!hexCentersByCell.TryGetValue(toCell, out var toCenter))
                         continue;
 
-                    CreateRailwayLine(fromCenter, toCenter, campaignTile.Coordinates, neighborId);
+                    CreateRailwayLine(fromCenter, toCenter, campaignTile.TileId, neighborId);
                 }
             }
         }
@@ -6179,7 +6168,7 @@ namespace Engine.Monobehaviours.Managers
                 .ThenBy(target => target.TileId.y)
                 .Select(target => MapPickTarget.ForCombat(target.TileId)));
             if (tilesByCell.ContainsKey(cell))
-                result.Add(MapPickTarget.ForTile(tilesByCell[cell].Coordinates));
+                result.Add(MapPickTarget.ForTile(tilesByCell[cell].TileId));
             return result;
         }
 
@@ -6219,7 +6208,7 @@ namespace Engine.Monobehaviours.Managers
             UpdateTimeUi();
         }
 
-        private UnityEngine.Tilemaps.Tile GetRenderTile(CampaignTile campaignTile)
+        private UnityEngine.Tilemaps.Tile GetRenderTile(RuntimeTile campaignTile)
         {
             var key = GetTileVisualKey(campaignTile);
             if (renderTilesByKey.TryGetValue(key, out var renderTile))
@@ -6232,10 +6221,11 @@ namespace Engine.Monobehaviours.Managers
             return renderTile;
         }
 
-        private string GetTileVisualKey(CampaignTile campaignTile)
+        private string GetTileVisualKey(RuntimeTile campaignTile)
         {
-            tileDataById.TryGetValue(campaignTile.Coordinates, out var tileData);
-            var controller = tileData is LandTileData landData ? landData.Controller : Alliance.Neutral;
+            var controller = campaignTile is RuntimeLandTile landTile
+                ? landTile.Controller
+                : Alliance.Neutral;
 
             if (campaignTile.Surface == TileSurface.Ocean)
                 return $"Ocean:{campaignTile.Terrain}";
@@ -6243,17 +6233,18 @@ namespace Engine.Monobehaviours.Managers
             var borderMask = AreTerritoryBoundariesVisible()
                 ? GetTerritoryBorderMask(campaignTile, controller)
                 : 0;
-            var supplyOverlay = GetSupplyOverlayKey(campaignTile.Coordinates);
+            var supplyOverlay = GetSupplyOverlayKey(campaignTile.TileId);
             return $"Land:{campaignTile.Terrain}:{campaignTile.Urbanization}:{campaignTile.ForestCover}:{controller}:{borderMask}:{supplyOverlay}";
         }
 
-        private Sprite GetTileSprite(CampaignTile campaignTile, string key)
+        private Sprite GetTileSprite(RuntimeTile campaignTile, string key)
         {
             if (spritesByKey.TryGetValue(key, out var sprite))
                 return sprite;
 
-            tileDataById.TryGetValue(campaignTile.Coordinates, out var tileData);
-            var controller = tileData is LandTileData landData ? landData.Controller : Alliance.Neutral;
+            var controller = campaignTile is RuntimeLandTile landTile
+                ? landTile.Controller
+                : Alliance.Neutral;
             var borderMask = AreTerritoryBoundariesVisible()
                 ? GetTerritoryBorderMask(campaignTile, controller)
                 : 0;
@@ -6268,7 +6259,7 @@ namespace Engine.Monobehaviours.Managers
             return sprite;
         }
 
-        private Texture2D CreateTileTexture(CampaignTile campaignTile, Alliance controller, int borderMask)
+        private Texture2D CreateTileTexture(RuntimeTile campaignTile, Alliance controller, int borderMask)
         {
             var pixels = new Color[TilePixelSize * TilePixelSize];
             FillTerrainPixels(pixels, campaignTile);
@@ -6297,7 +6288,7 @@ namespace Engine.Monobehaviours.Managers
                    || overlayTerritoryBoundariesToggle.value;
         }
 
-        private void FillTerrainPixels(Color[] pixels, CampaignTile campaignTile)
+        private void FillTerrainPixels(Color[] pixels, RuntimeTile campaignTile)
         {
             if (campaignTile.Surface == TileSurface.Ocean)
             {
@@ -6430,12 +6421,12 @@ namespace Engine.Monobehaviours.Managers
             }
         }
 
-        private void ApplySupplyInfrastructure(Color[] pixels, CampaignTile campaignTile)
+        private void ApplySupplyInfrastructure(Color[] pixels, RuntimeTile campaignTile)
         {
             if (gameManager?.buildingSystem == null)
                 return;
 
-            var tileId = campaignTile.Coordinates;
+            var tileId = campaignTile.TileId;
             var hasHub = HasActiveSupplyHub(tileId);
             var capitalAlliance = TryGetSupplyCapitalAlliance(tileId, out var alliance) ? alliance : Alliance.Neutral;
 
@@ -6535,12 +6526,12 @@ namespace Engine.Monobehaviours.Managers
             }
         }
 
-        private int GetTerritoryBorderMask(CampaignTile campaignTile, Alliance controller)
+        private int GetTerritoryBorderMask(RuntimeTile campaignTile, Alliance controller)
         {
             var borderMask = 0;
             for (var sideIndex = 0; sideIndex < TerritoryBorderSideCount; sideIndex++)
             {
-                var neighborId = campaignTile.Coordinates + TerritoryBorderNeighborOffsets[sideIndex];
+                var neighborId = campaignTile.TileId + TerritoryBorderNeighborOffsets[sideIndex];
                 if (IsTerritoryBoundary(neighborId, controller))
                     borderMask |= 1 << sideIndex;
             }
@@ -6561,9 +6552,9 @@ namespace Engine.Monobehaviours.Managers
 
         private bool TryGetTileController(Vector3Int tileId, out Alliance controller)
         {
-            if (tileDataById.TryGetValue(tileId, out var tileData) && tileData is LandTileData landData)
+            if (gameManager.tileSystem.TryGetLand(tileId, out var landTile))
             {
-                controller = landData.Controller;
+                controller = landTile.Controller;
                 return true;
             }
 
@@ -6745,9 +6736,9 @@ namespace Engine.Monobehaviours.Managers
             return Color.Lerp(baseColor, overlay, amount);
         }
 
-        private void CreateTileLabel(CampaignTile campaignTile, Vector3 hexCenter)
+        private void CreateTileLabel(RuntimeTile campaignTile, Vector3 hexCenter)
         {
-            var labelObject = new GameObject($"Hex Label {campaignTile.Coordinates.x},{campaignTile.Coordinates.y},{campaignTile.Coordinates.z}");
+            var labelObject = new GameObject($"Hex Label {campaignTile.TileId.x},{campaignTile.TileId.y},{campaignTile.TileId.z}");
             labelObject.transform.SetParent(labelRoot, false);
             labelObject.transform.position = grid.transform.TransformPoint(hexCenter) + new Vector3(0f, 0f, -0.1f);
 
@@ -6764,19 +6755,18 @@ namespace Engine.Monobehaviours.Managers
             renderer.sortingOrder = 10;
         }
 
-        private string GetTileLabel(CampaignTile campaignTile)
+        private string GetTileLabel(RuntimeTile campaignTile)
         {
-            tileDataById.TryGetValue(campaignTile.Coordinates, out var tileData);
-            var buildingCount = gameManager.buildingSystem.GetBuildingsOnTile(campaignTile.Coordinates).Count;
-            var coords = campaignTile.Coordinates;
+            var buildingCount = gameManager.buildingSystem.GetBuildingsOnTile(campaignTile.TileId).Count;
+            var coords = campaignTile.TileId;
             var hexLine = $"Hex {coords.x},{coords.y},{coords.z}";
-            var supplyFeatures = GetSupplyFeatureLabel(campaignTile.Coordinates);
+            var supplyFeatures = GetSupplyFeatureLabel(campaignTile.TileId);
 
             if (campaignTile.Surface == TileSurface.Ocean)
                 return $"{GetTerrainLabel(campaignTile.Terrain)}\n{hexLine}";
 
-            var controller = tileData is LandTileData landData
-                ? GetControllerLabel(landData.Controller)
+            var controller = campaignTile is RuntimeLandTile landTile
+                ? GetControllerLabel(landTile.Controller)
                 : "Neutral";
             var terrain = GetTerrainLabel(campaignTile.Terrain);
             var settlement = GetSettlementLabel(campaignTile.Urbanization);
@@ -7073,7 +7063,7 @@ namespace Engine.Monobehaviours.Managers
 
         private void FrameCamera()
         {
-            if (sceneCamera == null || gameManager.CampaignTiles.Count == 0)
+            if (sceneCamera == null || gameManager.tileSystem.Count == 0)
                 return;
 
             var centers = hexCentersByCell.Values

@@ -45,23 +45,17 @@ namespace Engine.Models.Systems.Ground
             if (!TryGetHostileAlliance(Alliance, out var hostileAlliance))
                 return;
 
-            var controllersByTileId = BuildControllerLookup(gameManager.Tiles);
-            var neighborsByTileId = BuildNeighborLookup(gameManager.CampaignTiles);
-
-            foreach (var entry in controllersByTileId)
+            foreach (var tile in gameManager.tileSystem.LandTiles)
             {
-                if (entry.Value != Alliance)
+                if (tile.Controller != Alliance)
                     continue;
 
-                if (!neighborsByTileId.TryGetValue(entry.Key, out var neighborTileIds))
-                    continue;
-
-                foreach (var neighborTileId in neighborTileIds)
+                foreach (var neighborTileId in tile.NeighborTileIds)
                 {
-                    if (controllersByTileId.TryGetValue(neighborTileId, out var neighborController)
-                        && neighborController == hostileAlliance)
+                    if (gameManager.tileSystem.TryGetLand(neighborTileId, out var neighbor)
+                        && neighbor.Controller == hostileAlliance)
                     {
-                        frontTileIds.Add(entry.Key);
+                        frontTileIds.Add(tile.TileId);
                         break;
                     }
                 }
@@ -579,7 +573,7 @@ namespace Engine.Models.Systems.Ground
         {
             return division != null
                    && frontTileIds.Contains(division.TileId)
-                   && GroundSystemUtility.AreNeighbors(gameManager, division.TileId, targetTileId);
+                   && gameManager.tileSystem.Get(division.TileId).IsNeighbor(targetTileId);
         }
 
         private static bool DoesOffensiveAssignmentDepartCurrentTile(
@@ -608,7 +602,7 @@ namespace Engine.Models.Systems.Ground
                 .Where(division => assignedDivisionIds.Contains(division.DivisionId)
                                    && IsEligibleForOffense(division, targetTileId)
                                    && IsFriendlyControlledLandTile(division.TileId)
-                                   && GroundSystemUtility.AreNeighbors(gameManager, division.TileId, targetTileId)
+                                   && gameManager.tileSystem.Get(division.TileId).IsNeighbor(targetTileId)
                                    && CanSupportAttackFromCurrentTile(division, targetTileId))
                 .OrderByDescending(GroundCombatEstimationService.CalculateDivisionCombatPower)
                 .ThenBy(division => division.DivisionId);
@@ -629,10 +623,10 @@ namespace Engine.Models.Systems.Ground
                     return !frontTileIds.Contains(division.TileId)
                            || CountEligiblePhysicalDefenders(division.TileId) > REQUIRED_HOLDING_DIVISIONS_PER_FRONT_TILE;
                 case GroundOrderAIIntent.HoldFront:
-                    return GroundSystemUtility.AreNeighbors(gameManager, division.TileId, targetTileId);
+                    return gameManager.tileSystem.Get(division.TileId).IsNeighbor(targetTileId);
                 case GroundOrderAIIntent.HoldEdge:
                     return CountAdjacentHostileTiles(division.TileId, GroundSystemUtility.GetHostileAlliance(Alliance)) == 1
-                           && GroundSystemUtility.AreNeighbors(gameManager, division.TileId, targetTileId);
+                           && gameManager.tileSystem.Get(division.TileId).IsNeighbor(targetTileId);
                 default:
                     return false;
             }
@@ -1101,8 +1095,8 @@ namespace Engine.Models.Systems.Ground
         private float GetTileStrategicValue(Vector3Int tileId)
         {
             var value = 0f;
-            if (GroundSystemUtility.TryGetLandTileData(gameManager, tileId, out var landTileData))
-                value += landTileData.Infrastructure.FunctionalLevel;
+            if (gameManager.tileSystem.TryGetLand(tileId, out var landTile))
+                value += landTile.InfrastructureFunctionalLevel;
 
             if (IsHostileControlledLandTile(tileId))
             {
@@ -1232,11 +1226,10 @@ namespace Engine.Models.Systems.Ground
         private int CountAdjacentHostileTiles(Vector3Int tileId, Alliance hostileAlliance)
         {
             return GetNeighborTileIds(tileId)
-                .Count(neighborTileId => GroundSystemUtility.TryGetLandTileData(
-                                             gameManager,
+                .Count(neighborTileId => gameManager.tileSystem.TryGetLand(
                                              neighborTileId,
-                                             out var landTileData)
-                                         && landTileData.Controller == hostileAlliance);
+                                             out var landTile)
+                                         && landTile.Controller == hostileAlliance);
         }
 
         private bool DoesCapturingTargetRemoveSourceFromFront(Vector3Int sourceTileId, Vector3Int targetTileId)
@@ -1244,7 +1237,7 @@ namespace Engine.Models.Systems.Ground
             if (!frontTileIds.Contains(sourceTileId))
                 return false;
 
-            if (!GroundSystemUtility.AreNeighbors(gameManager, sourceTileId, targetTileId))
+            if (!gameManager.tileSystem.Get(sourceTileId).IsNeighbor(targetTileId))
                 return false;
 
             if (!IsHostileControlledLandTile(targetTileId))
@@ -1257,19 +1250,19 @@ namespace Engine.Models.Systems.Ground
 
         private bool IsFriendlyControlledLandTile(Vector3Int tileId)
         {
-            return GroundSystemUtility.TryGetLandTileData(gameManager, tileId, out var landTileData)
-                   && landTileData.Controller == Alliance;
+            return gameManager.tileSystem.TryGetLand(tileId, out var landTile)
+                   && landTile.Controller == Alliance;
         }
 
         private bool IsHostileControlledLandTile(Vector3Int tileId)
         {
-            return GroundSystemUtility.TryGetLandTileData(gameManager, tileId, out var landTileData)
-                   && GroundSystemUtility.AreHostile(Alliance, landTileData.Controller);
+            return gameManager.tileSystem.TryGetLand(tileId, out var landTile)
+                   && GroundSystemUtility.AreHostile(Alliance, landTile.Controller);
         }
 
         private IEnumerable<Vector3Int> GetNeighborTileIds(Vector3Int tileId)
         {
-            return GroundSystemUtility.GetNeighborTileIds(gameManager, tileId);
+            return gameManager.tileSystem.Get(tileId).NeighborTileIds;
         }
 
         private IEnumerable<Division> GetAllianceDivisions()
@@ -1293,39 +1286,6 @@ namespace Engine.Models.Systems.Ground
                     hostileAlliance = default;
                     return false;
             }
-        }
-
-        private static Dictionary<Vector3Int, Alliance> BuildControllerLookup(IReadOnlyList<TileData> tiles)
-        {
-            var controllersByTileId = new Dictionary<Vector3Int, Alliance>();
-            if (tiles == null)
-                return controllersByTileId;
-
-            foreach (var tileData in tiles)
-            {
-                if (tileData is LandTileData landTileData)
-                    controllersByTileId[tileData.TileId] = landTileData.Controller;
-            }
-
-            return controllersByTileId;
-        }
-
-        private static Dictionary<Vector3Int, List<Vector3Int>> BuildNeighborLookup(IReadOnlyList<Tile> tiles)
-        {
-            var neighborsByTileId = new Dictionary<Vector3Int, List<Vector3Int>>();
-            if (tiles == null)
-                return neighborsByTileId;
-
-            foreach (var tile in tiles)
-            {
-                if (tile == null)
-                    continue;
-
-                neighborsByTileId[tile.Coordinates] =
-                    tile.NeighborTileIds;
-            }
-
-            return neighborsByTileId;
         }
 
         private static IOrderedEnumerable<Vector3Int> OrderTileIds(IEnumerable<Vector3Int> tileIds)
