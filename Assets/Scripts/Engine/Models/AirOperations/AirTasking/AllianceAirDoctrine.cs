@@ -31,7 +31,10 @@ namespace Models.Gameplay.Campaign
             if (PriorityWeights.TryGetValue(requestType, out var weight))
                 return Mathf.Max(0f, weight);
 
-            return 1f;
+            return requestType
+                   == AirMissionRequestType.DestructionOfEnemyAirDefenses
+                ? 0.85f
+                : 1f;
         }
 
         public AllianceAirDoctrine Clone()
@@ -72,7 +75,8 @@ namespace Models.Gameplay.Campaign
                 { AirMissionRequestType.BarrierCombatAirPatrol, 1f },
                 { AirMissionRequestType.OffensiveCounterAirSweep, 0.85f },
                 { AirMissionRequestType.ProvideAirborneC2, 0.7f },
-                { AirMissionRequestType.ProvideAerialRefueling, 0.75f }
+                { AirMissionRequestType.ProvideAerialRefueling, 0.75f },
+                { AirMissionRequestType.DestructionOfEnemyAirDefenses, 0.85f }
             };
         }
     }

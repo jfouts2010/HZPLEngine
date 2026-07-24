@@ -179,6 +179,28 @@ namespace Engine.Models
             if (activePass != null
                 && frame.Flights.TryGetValue(activePass.TargetFlightId, out var passTarget))
             {
+                if (flight.MissionType
+                    == AirMissionRequestType.DestructionOfEnemyAirDefenses)
+                {
+                    var route = DeadDefensiveShotCommand(
+                        source,
+                        frame.Time,
+                        activePass.ReleaseAt,
+                        "Preparing a defensive air-to-air shot while remaining on the DEAD route.");
+                    if (!IsSelfDefenseTarget(
+                            source,
+                            passTarget,
+                            frame,
+                            ordnanceTypes))
+                    {
+                        route.RequestsAirToAirPassCancellation = true;
+                        route.Reason =
+                            "The defensive air threat is no longer authorized; "
+                            + "resuming the DEAD route.";
+                    }
+                    return route;
+                }
+
                 return AimAtTargetCommand(
                     source,
                     passTarget,
@@ -375,6 +397,29 @@ namespace Engine.Models
                         Math.Min(targetCapacity, desiredShots) - pendingShots));
                 if (quantity > 0)
                 {
+                    var employment = new AirCombatEmploymentProposal
+                    {
+                        SourceFlightId = flight.FlightId,
+                        TargetFlightId = target.Flight.FlightId,
+                        OrdnanceTypeDefinitionId = weapon.OrdnanceTypeDefinitionId,
+                        Quantity = quantity,
+                        LaunchQuality = launchQuality
+                    };
+                    if (flight.MissionType
+                        == AirMissionRequestType.DestructionOfEnemyAirDefenses)
+                    {
+                        var defensiveShot = DeadDefensiveShotCommand(
+                            source,
+                            frame.Time,
+                            frame.Time.AddSeconds(Math.Max(
+                                5f,
+                                weapon.PreparationSeconds)),
+                            $"Preparing a defensive {weapon.Name} shot from the DEAD route "
+                            + $"at launch quality {launchQuality:0.00}.");
+                        defensiveShot.Employment = employment;
+                        return defensiveShot;
+                    }
+
                     var command = AimAtTargetCommand(
                         source,
                         target,
@@ -385,16 +430,20 @@ namespace Engine.Models
                         target.Flight.FlightId,
                         Guid.Empty,
                         $"Valid {weapon.Name} opportunity at launch quality {launchQuality:0.00}.");
-                    command.Employment = new AirCombatEmploymentProposal
-                    {
-                        SourceFlightId = flight.FlightId,
-                        TargetFlightId = target.Flight.FlightId,
-                        OrdnanceTypeDefinitionId = weapon.OrdnanceTypeDefinitionId,
-                        Quantity = quantity,
-                        LaunchQuality = launchQuality
-                    };
+                    command.Employment = employment;
                     return command;
                 }
+            }
+
+            if (flight.MissionType
+                == AirMissionRequestType.DestructionOfEnemyAirDefenses)
+            {
+                return RouteCommand(
+                    source,
+                    frame.Time,
+                    AirCombatIntent.FollowMission,
+                    "Tracked air threat cannot be engaged from the current DEAD route; "
+                    + "continuing the assigned mission.");
             }
 
             var maximumRange = EffectiveMaximumRangeKm(weapon, flight);
@@ -885,8 +934,7 @@ namespace Engine.Models
             var position = new Vector2(
                 track.LastKnownPositionFeet.x,
                 track.LastKnownPositionFeet.z);
-            var radiusFeet = (area.RadiusTiles + 0.55f)
-                              * frame.TileDistanceKm
+            var radiusFeet = area.RadiusKm
                               * AirspaceGeometry.FeetPerKilometer;
             var distance = Vector2.Distance(center, position);
             if (distance <= radiusFeet)
@@ -895,10 +943,9 @@ namespace Engine.Models
                 return true;
             }
 
-            var responseRadiusFeet = (area.RadiusTiles
+            var responseRadiusFeet = (area.RadiusKm
                                       + BarcapResponsePaddingTiles
-                                      + 0.55f)
-                                     * frame.TileDistanceKm
+                                      * frame.TileDistanceKm)
                                      * AirspaceGeometry.FeetPerKilometer;
             if (distance > responseRadiusFeet)
                 return false;
@@ -1126,29 +1173,31 @@ namespace Engine.Models
             AirCombatFrame frame,
             IReadOnlyDictionary<Guid, OrdnanceTypeDefinition> ordnanceTypes)
         {
+            if (!frame.TryGetCurrentTrack(
+                    source.Alliance,
+                    target.Flight.FlightId,
+                    out var track))
+                return false;
+
             if (source.Flight.MissionType
                     == AirMissionRequestType.BarrierCombatAirPatrol
                 && source.Flight.ActiveBarcapCoverage is BarcapStationCoverage coverage
                 && coverage.CoveredBarrierTileIds != null
                 && coverage.CoveredBarrierTileIds.Count > 0
-                && (!frame.TryGetCurrentTrack(
-                        source.Alliance,
-                        target.Flight.FlightId,
-                        out var track)
-                    || !IsBarcapDefensiveContact(
+                && !IsBarcapDefensiveContact(
                         source,
                         track,
                         frame,
-                        ordnanceTypes)))
+                        ordnanceTypes))
                 return false;
 
-            if (TargetAspect(source.Flight, target.Flight) > HotThreatAspectDegrees)
+            if (TargetAspect(source.Flight, track) > HotThreatAspectDegrees)
                 return false;
 
             var distanceKm = DistanceKm(
                 source.Flight.PositionFeet,
-                target.Flight.PositionFeet);
-            var targetAltitudeFeet = target.Flight.PositionFeet.y;
+                track.LastKnownPositionFeet);
+            var targetAltitudeFeet = track.LastKnownPositionFeet.y;
             return source.LiveAircraft
                 .SelectMany(aircraft => aircraft.Loadout)
                 .Any(item => item.Count > 0
@@ -1241,6 +1290,14 @@ namespace Engine.Models
                 return command;
 
             var threats = frame.GetKnownSamThreats(source.Alliance);
+            if (ShouldIgnoreAuthorizedSurfaceThreat(source, frame))
+            {
+                threats = threats
+                    .Where(threat => threat.SiteId
+                                     != source.Flight
+                                         .AuthorizedSurfaceThreatSiteId)
+                    .ToList();
+            }
             if (threats.Count == 0)
                 return command;
 
@@ -1250,7 +1307,9 @@ namespace Engine.Models
                     source.AircraftType,
                     source.AircraftType.CombatSpeedKnots);
             var activePass = frame.ActivePasses
-                .Where(pass => pass.SourceFlightId == source.Flight.FlightId)
+                .Where(pass => pass.SourceFlightId == source.Flight.FlightId
+                               && pass.TargetKind
+                               == OrdnanceEmploymentTargetKind.AirFlight)
                 .OrderBy(pass => pass.ReleaseAt)
                 .ThenBy(pass => pass.EmploymentPassId)
                 .FirstOrDefault();
@@ -1387,6 +1446,34 @@ namespace Engine.Models
             command.Reason =
                 "No flyable route around known SAM coverage could be found; recovering.";
             return command;
+        }
+
+        private static bool ShouldIgnoreAuthorizedSurfaceThreat(
+            AirCombatFlightView source,
+            AirCombatFrame frame)
+        {
+            var flight = source.Flight;
+            var siteId = flight.AuthorizedSurfaceThreatSiteId;
+            if (siteId == Guid.Empty
+                || flight.MissionType
+                != AirMissionRequestType.DestructionOfEnemyAirDefenses
+                || flight.ExecutionPhase != FlightExecutionPhase.Executing)
+                return false;
+
+            if (flight.AuthorizedSurfaceThreatPenetrationGranted)
+                return true;
+
+            return frame.ActivePasses.Any(pass =>
+                       pass.SourceFlightId == flight.FlightId
+                       && pass.TargetKind
+                       == OrdnanceEmploymentTargetKind.AirDefenseComponent
+                       && pass.TargetSiteId == siteId)
+                   || frame.PendingEffects.Any(effect =>
+                       effect.SourceFlightId == flight.FlightId
+                       && effect.TargetKind
+                       == OrdnanceEmploymentTargetKind.AirDefenseComponent
+                       && effect.TargetSiteId == siteId
+                       && effect.ResolveAt > frame.Time);
         }
 
         private static bool IsLaunchSupportPlanSafe(
@@ -1712,8 +1799,7 @@ namespace Engine.Models
             var horizontalDistance = Vector2.Distance(
                 new Vector2(center.x, center.z),
                 new Vector2(positionFeet.x, positionFeet.z));
-            var radiusFeet = (area.RadiusTiles + paddingTiles + 0.55f)
-                             * tileDistanceKm
+            var radiusFeet = (area.RadiusKm + paddingTiles * tileDistanceKm)
                              * AirspaceGeometry.FeetPerKilometer;
             return horizontalDistance <= radiusFeet;
         }
@@ -2062,6 +2148,26 @@ namespace Engine.Models
                 reason);
         }
 
+        private static AirCombatCommand DeadDefensiveShotCommand(
+            AirCombatFlightView source,
+            DateTime currentTime,
+            DateTime minimumEndAt,
+            string reason)
+        {
+            return Command(
+                source,
+                AirCombatIntent.FollowMission,
+                AirCombatManeuver.LaunchSetup,
+                Guid.Empty,
+                Guid.Empty,
+                currentTime,
+                minimumEndAt,
+                AirCombatManeuverSide.None,
+                source.Flight.PositionFeet,
+                Math.Max(1f, source.AircraftType.CruiseSpeedKnots),
+                reason);
+        }
+
         private static AirCombatCommand AimAtTargetCommand(
             AirCombatFlightView source,
             AirCombatFlightView target,
@@ -2164,6 +2270,16 @@ namespace Engine.Models
         {
             var bearingToSource = HeadingTo(target.PositionFeet, source.PositionFeet);
             return Math.Abs(Mathf.DeltaAngle(target.HeadingDegrees, bearingToSource));
+        }
+
+        private static float TargetAspect(AirFlight source, IADSTrack target)
+        {
+            var bearingToSource = HeadingTo(
+                target.LastKnownPositionFeet,
+                source.PositionFeet);
+            return Math.Abs(Mathf.DeltaAngle(
+                target.EstimatedHeadingDegrees,
+                bearingToSource));
         }
 
         private static int CountRounds(AirCombatFlightView flight, Guid ordnanceId)

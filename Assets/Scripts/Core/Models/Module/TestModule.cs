@@ -311,8 +311,7 @@ namespace Models.Module
                     effectPower: 3,
                     effectivenessByTargetCategory: new Dictionary<OrdnanceTargetCategory, float>
                     {
-                        { OrdnanceTargetCategory.Radar, 1f },
-                        { OrdnanceTargetCategory.Building, 0.15f }
+                        { OrdnanceTargetCategory.Radar, 1f }
                     },
                     employmentCategory: OrdnanceEmploymentCategory.AntiRadiation,
                     guidanceMode: OrdnanceGuidanceMode.AntiRadiation,

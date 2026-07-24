@@ -185,7 +185,14 @@ namespace Engine.Service
                 .Any(package =>
                     requestsById.TryGetValue(package.MissionRequestId, out var origin)
                     && origin.RequestType == request.RequestType
-                    && origin.MissionArea.CenterTileId == request.MissionArea.CenterTileId);
+                    && (request.RequestType
+                        == AirMissionRequestType.DestructionOfEnemyAirDefenses
+                        ? origin.DeadPlan != null
+                          && request.DeadPlan != null
+                          && origin.DeadPlan.TargetSiteId
+                          == request.DeadPlan.TargetSiteId
+                        : origin.MissionArea.CenterTileId
+                          == request.MissionArea.CenterTileId));
         }
 
         public IReadOnlyList<AirFlight> GetSupportingFlights(

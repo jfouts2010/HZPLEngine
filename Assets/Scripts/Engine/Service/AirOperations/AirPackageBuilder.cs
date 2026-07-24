@@ -29,7 +29,10 @@ namespace Engine.Service
         private const float FuelPlanningMarginSeconds = 60f;
         private const float BarcapPreferredLaunchRangeFraction = 0.78f;
         private const int MaximumBarcapRouteChoices = 32;
+        public const float DeadLocalPassRadiusNauticalMiles = 5f;
+        private const float DeadStandoffDistanceKm = 40f;
         private static readonly TimeSpan BarcapHandoffOverlap = TimeSpan.FromMinutes(10);
+        private static readonly TimeSpan DeadAttackWindow = TimeSpan.FromMinutes(15);
 
         private readonly GameManager gameManager;
         private readonly ProjectedAirEffectService projectedEffects;
@@ -39,6 +42,9 @@ namespace Engine.Service
         private readonly IReadOnlyDictionary<Guid, RadarAirDefenseComponentDefinition>
             radarDefinitions;
         private readonly AirLoadoutPlanner loadoutPlanner;
+        private readonly DeadLoadoutPlanner deadLoadoutPlanner;
+        private readonly IReadOnlyDictionary<Guid, AirDefenseComponentDefinition>
+            airDefenseComponentDefinitions;
         private readonly IAirRouteGeometryPlanner routeGeometryPlanner;
         private readonly KnownSamThreatAssessment knownSamThreatAssessment;
         private readonly AirportOperationsService airportOperations;
@@ -73,12 +79,19 @@ namespace Engine.Service
                                 ?? new List<AirDefenseComponentDefinition>())
                 .OfType<RadarAirDefenseComponentDefinition>()
                 .ToDictionary(definition => definition.SamComponentDefinitionId);
-            loadoutPlanner = new AirLoadoutPlanner(
-                module,
+            airDefenseComponentDefinitions = module.SamComponentDefinitions
+                .ToDictionary(definition => definition.SamComponentDefinitionId);
+            Func<Alliance, IReadOnlyCollection<Guid>> allowedOrdnanceResolver =
                 alliance =>
                     gameManager.OrdnanceAllowances.TryGetValue(alliance, out var allowed)
                         ? allowed
-                        : Array.Empty<Guid>());
+                        : Array.Empty<Guid>();
+            loadoutPlanner = new AirLoadoutPlanner(
+                module,
+                allowedOrdnanceResolver);
+            deadLoadoutPlanner = new DeadLoadoutPlanner(
+                module,
+                allowedOrdnanceResolver);
         }
 
         public AirPackageBuildOutcome TryBuild(
@@ -204,6 +217,17 @@ namespace Engine.Service
             {
                 reason = "An equivalent discrete effect is already committed.";
                 return AirPackageBuildOutcome.EquivalentCommitment;
+            }
+
+            if (request.RequestType
+                == AirMissionRequestType.DestructionOfEnemyAirDefenses)
+            {
+                return TryBuildDeadPackage(
+                    commander,
+                    request,
+                    currentTime,
+                    out package,
+                    out reason);
             }
 
             var planningStart = currentTime + AirPackage.PreparationDelay;
@@ -384,6 +408,189 @@ namespace Engine.Service
             }
 
             reason = $"Proposed {desiredStrength} combat aircraft.";
+            return AirPackageBuildOutcome.Built;
+        }
+
+        private AirPackageBuildOutcome TryBuildDeadPackage(
+            AllianceAirTaskingCommander commander,
+            AirMissionRequest request,
+            DateTime currentTime,
+            out AirPackage package,
+            out string reason)
+        {
+            package = null;
+            reason = string.Empty;
+            if (request.DeadPlan == null
+                || request.DeadPlan.TargetSiteId == Guid.Empty)
+            {
+                reason = "The DEAD request has no persistent SAM-site target.";
+                return AirPackageBuildOutcome.Deferred;
+            }
+
+            var report = gameManager.intelligenceSystem
+                ?.GetPicture(commander.Alliance)
+                ?.HostileAirDefenseSites
+                ?.FirstOrDefault(candidate => candidate != null
+                                              && candidate.SiteId
+                                              == request.DeadPlan.TargetSiteId);
+            if (report == null
+                || report.InformationQuality <= 0f
+                || report.IsDisabled
+                || report.IsDestroyed)
+            {
+                reason = "The assigned SAM site is no longer a valid known hostile target.";
+                return AirPackageBuildOutcome.AlreadySatisfied;
+            }
+
+            var liveComponents = (report.Components
+                                  ?? new List<AirDefenseComponentIntelligenceReport>())
+                .Where(component => component != null && !component.IsDamaged)
+                .OrderBy(component => component.ComponentId)
+                .ToList();
+            var minimumEffectComponentCount = liveComponents.Count(component =>
+                airDefenseComponentDefinitions.TryGetValue(
+                    component.SamComponentDefinitionId,
+                    out var definition)
+                && definition is RadarAirDefenseComponentDefinition
+                {
+                    ProvidesWeaponQualityTrack: true
+                });
+            var hasFunctionalLauncher = liveComponents.Any(component =>
+                airDefenseComponentDefinitions.TryGetValue(
+                    component.SamComponentDefinitionId,
+                    out var definition)
+                && definition is LauncherAirDefenseComponentDefinition);
+            if (minimumEffectComponentCount == 0 || !hasFunctionalLauncher)
+            {
+                reason = "The assigned SAM site no longer has a functional shooter chain.";
+                return AirPackageBuildOutcome.AlreadySatisfied;
+            }
+
+            request.DeadPlan.TargetComponentIds = liveComponents
+                .Select(component => component.ComponentId)
+                .Distinct()
+                .OrderBy(id => id)
+                .ToList();
+            request.MissionArea.CenterTileId = report.TileId;
+
+            var squadronCandidates = GetFriendlySquadrons(commander.Alliance)
+                .Where(squadron => aircraftTypes.TryGetValue(
+                    squadron.AircraftTypeDefinitionId,
+                    out _))
+                .Select(squadron =>
+                {
+                    var aircraftType = aircraftTypes[
+                        squadron.AircraftTypeDefinitionId];
+                    return deadLoadoutPlanner.TryPlan(
+                        aircraftType,
+                        commander.Alliance,
+                        liveComponents,
+                        out var loadout,
+                        out _)
+                        ? new DeadSquadronCandidate(
+                            squadron,
+                            aircraftType,
+                            GetAvailableAircraft(squadron),
+                            loadout,
+                            GetAirportPhysicalDistanceKm(
+                                squadron,
+                                report.TileId))
+                        : null;
+                })
+                .Where(candidate => candidate != null
+                                    && candidate.AvailableAircraft.Count > 0
+                                    && (candidate.AircraftType.RangeKm <= 0f
+                                        || candidate.DistanceKm * 2f
+                                        + request.MissionArea.RadiusKm * 2f
+                                        <= candidate.AircraftType.RangeKm))
+                .OrderBy(candidate => candidate.DistanceKm)
+                .ThenBy(candidate => candidate.Squadron.AirportBuildingId)
+                .ThenBy(candidate => candidate.Squadron.SquadronId)
+                .ToList();
+            if (squadronCandidates.Count == 0)
+            {
+                reason = "No ready aircraft can carry both DEAD effect and self-defense.";
+                return AirPackageBuildOutcome.Deferred;
+            }
+
+            var selected = new List<SelectedCombatAircraft>();
+            var remainingPrimaryAttacks = minimumEffectComponentCount;
+            var plannedMinimumEffectStores = 0;
+            var plannedCleanupStores = 0;
+            var plannedSelfDefenseShots = 0;
+            foreach (var candidate in squadronCandidates)
+            {
+                if (remainingPrimaryAttacks <= 0)
+                    break;
+
+                var attacksPerAircraft = Math.Max(
+                    1,
+                    candidate.LoadoutPlan.MinimumEffectStoreCount);
+                var requiredAircraft = (int)Math.Ceiling(
+                    remainingPrimaryAttacks / (double)attacksPerAircraft);
+                var aircraft = candidate.AvailableAircraft
+                    .Take(Math.Min(requiredAircraft, candidate.AvailableAircraft.Count))
+                    .ToList();
+                if (aircraft.Count == 0)
+                    continue;
+
+                selected.Add(new SelectedCombatAircraft(
+                    candidate.Squadron,
+                    candidate.AircraftType,
+                    aircraft,
+                    candidate.LoadoutPlan.Loadout
+                        .Select(item => new AircraftLoadoutItem(
+                            item.OrdnanceTypeDefinitionId,
+                            item.Count))
+                        .ToList()));
+                plannedMinimumEffectStores += aircraft.Count
+                                              * candidate.LoadoutPlan
+                                                  .MinimumEffectStoreCount;
+                plannedCleanupStores += aircraft.Count
+                                        * candidate.LoadoutPlan.CleanupStoreCount;
+                plannedSelfDefenseShots += aircraft.Count
+                                           * candidate.LoadoutPlan
+                                               .SelfDefenseShotCount;
+                remainingPrimaryAttacks -= aircraft.Count * attacksPerAircraft;
+            }
+            if (remainingPrimaryAttacks > 0)
+            {
+                reason = "Ready aircraft cannot cover every required DEAD component.";
+                return AirPackageBuildOutcome.Deferred;
+            }
+
+            var planningStart = currentTime + AirPackage.PreparationDelay;
+            var effectStart = planningStart > request.EffectStart
+                ? planningStart
+                : request.EffectStart;
+            package = CreatePackage(request, currentTime);
+            AddSelectedFlights(package, request, selected);
+            if (!TryMaterializeRoutes(
+                    commander,
+                    package,
+                    request,
+                    planningStart,
+                    effectStart,
+                    effectStart + DeadAttackWindow,
+                    report.TileId,
+                    null,
+                    out reason))
+            {
+                package = null;
+                return AirPackageBuildOutcome.Deferred;
+            }
+
+            var aircraftCount = selected.Sum(candidate => candidate.Aircraft.Count);
+            package.Rationale = request.Rationale
+                                + $" Selected {package.Flights.Count} flight(s) / "
+                                + $"{aircraftCount} aircraft with "
+                                + $"{plannedMinimumEffectStores} minimum-effect stores, "
+                                + $"{plannedCleanupStores} cleanup stores, and "
+                                + $"{plannedSelfDefenseShots} self-defense shots.";
+            reason = $"Proposed {aircraftCount} self-escorting DEAD aircraft "
+                     + $"against {minimumEffectComponentCount} required component(s) "
+                     + $"with {plannedMinimumEffectStores} minimum-effect and "
+                     + $"{plannedCleanupStores} cleanup stores.";
             return AirPackageBuildOutcome.Built;
         }
 
@@ -841,6 +1048,8 @@ namespace Engine.Service
             {
                 SquadronId = squadron.SquadronId,
                 MissionType = request.RequestType,
+                AuthorizedSurfaceThreatSiteId = request.DeadPlan?.TargetSiteId
+                                                ?? Guid.Empty,
                 IsRequired = true
             };
             flight.AircraftIds.AddRange(
@@ -897,6 +1106,27 @@ namespace Engine.Service
                 return int.MaxValue;
 
             return AirMissionArea.HexDistance(building.TileId, targetTile);
+        }
+
+        private float GetAirportPhysicalDistanceKm(
+            Squadron squadron,
+            Vector3Int targetTile)
+        {
+            if (!gameManager.buildingSystem.TryGetBuilding(
+                    squadron.AirportBuildingId,
+                    out var building))
+                return float.PositiveInfinity;
+
+            var origin = AirspaceGeometry.TileCenterFeet(
+                building.TileId,
+                gameManager.SimulationSettings.TileDistanceKM);
+            var destination = AirspaceGeometry.TileCenterFeet(
+                targetTile,
+                gameManager.SimulationSettings.TileDistanceKM);
+            return Vector2.Distance(
+                       new Vector2(origin.x, origin.z),
+                       new Vector2(destination.x, destination.z))
+                   / AirspaceGeometry.FeetPerKilometer;
         }
 
         private IReadOnlyList<KnownSamThreatEnvelope> GetKnownSamThreats(
@@ -990,8 +1220,20 @@ namespace Engine.Service
             var tileDistanceFeet = gameManager.SimulationSettings.TileDistanceKM
                                    * AirspaceGeometry.FeetPerKilometer;
             var knownSamThreats = GetKnownSamThreats(package.Alliance);
+            if (request.RequestType
+                    == AirMissionRequestType.DestructionOfEnemyAirDefenses
+                && request.DeadPlan != null)
+            {
+                // The package is authorized to enter the selected site's envelope.
+                // Every other known SAM remains a routing constraint.
+                knownSamThreats = knownSamThreats
+                    .Where(threat => threat.SiteId != request.DeadPlan.TargetSiteId)
+                    .ToList();
+            }
             var combat = request.RequestType == AirMissionRequestType.BarrierCombatAirPatrol
-                         || request.RequestType == AirMissionRequestType.OffensiveCounterAirSweep;
+                         || request.RequestType == AirMissionRequestType.OffensiveCounterAirSweep
+                         || request.RequestType
+                         == AirMissionRequestType.DestructionOfEnemyAirDefenses;
             var hasRendezvous = combat && plans.Count > 1;
             var rendezvousPosition = Vector3.zero;
             var coordinatedSpeed = plans.Min(plan => Math.Max(1f, plan.AircraftType.CruiseSpeedKnots));
@@ -1117,7 +1359,11 @@ namespace Engine.Service
                     plan.PlannedTakeoff += requiredShift;
             }
 
-            var plannedEffectEnd = proposedEffectEnd;
+            var plannedEffectEnd = request.RequestType
+                                   == AirMissionRequestType
+                                       .DestructionOfEnemyAirDefenses
+                ? plannedEffectStart + DeadAttackWindow
+                : proposedEffectEnd;
             if (request.FulfillmentPattern
                 == AirMissionRequestFulfillmentPattern.Sustained)
             {
@@ -1430,6 +1676,27 @@ namespace Engine.Service
                 return;
             }
 
+            if (request.RequestType
+                == AirMissionRequestType.DestructionOfEnemyAirDefenses)
+            {
+                var attackDirection = missionCenter - missionOrigin;
+                attackDirection.y = 0f;
+                if (attackDirection.sqrMagnitude < 1f)
+                    attackDirection = Vector3.forward;
+                attackDirection.Normalize();
+                var standoffOffset = attackDirection * Math.Max(
+                    AirspaceGeometry.FeetPerKilometer,
+                    DeadStandoffDistanceKm
+                    * AirspaceGeometry.FeetPerKilometer);
+                var localPassOffset = attackDirection
+                                      * DeadLocalPassRadiusNauticalMiles
+                                      * AirspaceGeometry.FeetPerNauticalMile;
+                plan.MissionEntryPosition = missionCenter - standoffOffset;
+                plan.MissionPushPosition = missionCenter - localPassOffset;
+                plan.MissionExitPosition = missionCenter + localPassOffset;
+                return;
+            }
+
             if (request.FulfillmentPattern != AirMissionRequestFulfillmentPattern.Sustained)
             {
                 plan.MissionEntryPosition = missionCenter;
@@ -1587,7 +1854,8 @@ namespace Engine.Service
             {
                 var effectArea = new AirMissionArea(
                     request.MissionArea.CenterTileId,
-                    request.MissionArea.RadiusTiles);
+                    request.MissionArea.RadiusKm,
+                    request.MissionArea.TileDistanceKm);
                 var stationEntry = NewWaypoint(
                     plan.MissionEntryPosition,
                     AirWaypointAction.StationEntry,
@@ -1619,6 +1887,48 @@ namespace Engine.Service
                     exitTime,
                     effectArea));
                 returnTime = exitTime;
+                returnPosition = plan.MissionExitPosition;
+            }
+            else if (request.RequestType
+                     == AirMissionRequestType.DestructionOfEnemyAirDefenses)
+            {
+                var effectArea = new AirMissionArea(
+                    request.MissionArea.CenterTileId,
+                    request.MissionArea.RadiusKm,
+                    request.MissionArea.TileDistanceKm);
+                route.Add(NewWaypoint(
+                    plan.MissionEntryPosition,
+                    AirWaypointAction.MissionAction,
+                    effectStart,
+                    effectArea));
+                var localPassStart = effectStart + TimeSpan.FromSeconds(
+                    AirspaceGeometry.TravelSeconds(
+                        plan.MissionEntryPosition,
+                        plan.MissionPushPosition,
+                        plan.AircraftType.CruiseSpeedKnots,
+                        plan.AircraftType.ClimbRateFeetPerMinute,
+                        plan.AircraftType.DescentRateFeetPerMinute));
+                var stationEntry = NewWaypoint(
+                    plan.MissionPushPosition,
+                    AirWaypointAction.StationEntry,
+                    localPassStart,
+                    effectArea);
+                var firstPassEnd = localPassStart + TimeSpan.FromSeconds(
+                    AirspaceGeometry.TravelSeconds(
+                        plan.MissionPushPosition,
+                        plan.MissionExitPosition,
+                        plan.AircraftType.CruiseSpeedKnots,
+                        plan.AircraftType.ClimbRateFeetPerMinute,
+                        plan.AircraftType.DescentRateFeetPerMinute));
+                route.Add(stationEntry);
+                route.Add(NewWaypoint(
+                    plan.MissionExitPosition,
+                    AirWaypointAction.StationEndpoint,
+                    firstPassEnd,
+                    hasRepeat: true,
+                    repeatFromWaypointId: stationEntry.WaypointId,
+                    repeatUntil: effectEnd));
+                returnTime = effectEnd;
                 returnPosition = plan.MissionExitPosition;
             }
             else if (request.FulfillmentPattern == AirMissionRequestFulfillmentPattern.Sustained)
@@ -1659,7 +1969,8 @@ namespace Engine.Service
                     effectStart,
                     new AirMissionArea(
                         request.MissionArea.CenterTileId,
-                        request.MissionArea.RadiusTiles)));
+                        request.MissionArea.RadiusKm,
+                        request.MissionArea.TileDistanceKm)));
                 returnTime = effectStart;
                 returnPosition = plan.MissionExitPosition;
             }
@@ -1697,7 +2008,8 @@ namespace Engine.Service
             {
                 return new AirMissionArea(
                     request.MissionArea.CenterTileId,
-                    request.MissionArea.RadiusTiles);
+                    request.MissionArea.RadiusKm,
+                    request.MissionArea.TileDistanceKm);
             }
 
             return new AirMissionArea(
@@ -1705,11 +2017,8 @@ namespace Engine.Service
                     plan.MissionEntryPosition
                     + (plan.MissionExitPosition - plan.MissionEntryPosition) * 0.5f,
                     gameManager.SimulationSettings.TileDistanceKM),
-                Math.Max(
-                    1,
-                    Mathf.CeilToInt(
-                        barcapCoverage.PlannedResponseRadiusKm
-                        / gameManager.SimulationSettings.TileDistanceKM)));
+                Math.Max(0f, barcapCoverage.PlannedResponseRadiusKm),
+                gameManager.SimulationSettings.TileDistanceKM);
         }
 
         private static AirWaypoint NewWaypoint(
@@ -1824,6 +2133,29 @@ namespace Engine.Service
                 AvailableAircraft = availableAircraft;
                 Loadout = loadout;
                 DistanceTiles = distanceTiles;
+            }
+        }
+
+        private sealed class DeadSquadronCandidate
+        {
+            public Squadron Squadron { get; }
+            public AircraftTypeDefinition AircraftType { get; }
+            public List<CampaignAircraft> AvailableAircraft { get; }
+            public DeadAircraftLoadoutPlan LoadoutPlan { get; }
+            public float DistanceKm { get; }
+
+            public DeadSquadronCandidate(
+                Squadron squadron,
+                AircraftTypeDefinition aircraftType,
+                List<CampaignAircraft> availableAircraft,
+                DeadAircraftLoadoutPlan loadoutPlan,
+                float distanceKm)
+            {
+                Squadron = squadron;
+                AircraftType = aircraftType;
+                AvailableAircraft = availableAircraft;
+                LoadoutPlan = loadoutPlan;
+                DistanceKm = Math.Max(0f, distanceKm);
             }
         }
 

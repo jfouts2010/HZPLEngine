@@ -246,7 +246,8 @@ namespace Models.Gameplay.Campaign
                         SupportType = AirMissionRequestType.ProvideAerialRefueling,
                         MissionArea = new AirMissionArea(
                             request.MissionArea.CenterTileId,
-                            request.MissionArea.RadiusTiles),
+                            request.MissionArea.RadiusKm,
+                            request.MissionArea.TileDistanceKm),
                         RequestedSlots = tankerSlots
                     });
                 }

@@ -113,6 +113,12 @@ namespace Engine.Service
                 AirMissionRequestType.OffensiveCounterAirSweep => Mathf.Max(
                     friendlyDeficit,
                     observedHostilePressure),
+                AirMissionRequestType.DestructionOfEnemyAirDefenses =>
+                    request.PriorityComponents.TryGetValue(
+                        "deadAirportFunctionalLevel",
+                        out var deadAirportFunctionalLevel)
+                        ? Mathf.Clamp01(deadAirportFunctionalLevel)
+                        : 0f,
                 AirMissionRequestType.ProvideAirborneC2 =>
                     Mathf.Clamp01(request.DesiredSupportSlots / 12f),
                 AirMissionRequestType.ProvideAerialRefueling =>

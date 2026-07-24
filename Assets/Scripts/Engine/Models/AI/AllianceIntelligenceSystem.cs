@@ -115,6 +115,9 @@ namespace Engine.Models
         public float InformationQuality;
         public DateTime ObservedAt;
         public ObservedAirportCondition Condition;
+        public int BuildLevel;
+        public int FunctionalLevel;
+        public int TargetToughness;
         [SerializeReference]
         public List<ObservedAircraftGroup> AircraftGroups =
             new List<ObservedAircraftGroup>();
@@ -122,6 +125,9 @@ namespace Engine.Models
         public void Normalize()
         {
             InformationQuality = Mathf.Clamp01(InformationQuality);
+            BuildLevel = Math.Max(0, BuildLevel);
+            FunctionalLevel = Math.Max(0, Math.Min(BuildLevel, FunctionalLevel));
+            TargetToughness = Math.Max(1, TargetToughness);
             AircraftGroups ??= new List<ObservedAircraftGroup>();
             foreach (var group in AircraftGroups)
                 group?.Normalize();
@@ -495,6 +501,9 @@ namespace Engine.Models
                     InformationQuality = MaximumInformationQuality,
                     ObservedAt = observedAt,
                     Condition = GetObservedCondition(airport),
+                    BuildLevel = airport.Level.BuildLevel,
+                    FunctionalLevel = airport.FunctionalLevel,
+                    TargetToughness = airport.TargetToughness,
                     AircraftGroups = GetObservedAircraft(
                         gameManager,
                         observerAlliance,

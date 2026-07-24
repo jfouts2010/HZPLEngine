@@ -28,6 +28,12 @@ namespace Models.Gameplay.Campaign
         Defeated = 4
     }
 
+    public enum OrdnanceEmploymentTargetKind
+    {
+        AirFlight = 0,
+        AirDefenseComponent = 1
+    }
+
     public enum OrdnanceDefeatReason
     {
         None = 0,
@@ -67,6 +73,9 @@ namespace Models.Gameplay.Campaign
         public Guid SourceFlightId;
         public Guid PreferredSourceAircraftId;
         public Guid TargetFlightId;
+        public OrdnanceEmploymentTargetKind TargetKind;
+        public Guid TargetSiteId;
+        public Guid TargetComponentId;
         public Guid OrdnanceTypeDefinitionId;
         public int PlannedQuantity;
         public DateTime PreparationStartedAt;
@@ -85,6 +94,9 @@ namespace Models.Gameplay.Campaign
         public Guid SourceSiteId;
         public Guid SourceComponentId;
         public Guid TargetFlightId;
+        public OrdnanceEmploymentTargetKind TargetKind;
+        public Guid TargetSiteId;
+        public Guid TargetComponentId;
         public Guid OrdnanceTypeDefinitionId;
         public int Quantity;
         public float HitProbability;
@@ -125,6 +137,9 @@ namespace Models.Gameplay.Campaign
         public Guid SourceSiteId;
         public Guid SourceComponentId;
         public Guid TargetFlightId;
+        public OrdnanceEmploymentTargetKind TargetKind;
+        public Guid TargetSiteId;
+        public Guid TargetComponentId;
         public Guid OrdnanceTypeDefinitionId;
         public int Quantity;
         public DateTime OccurredAt;

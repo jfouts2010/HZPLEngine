@@ -1402,6 +1402,8 @@ namespace Engine.Monobehaviours.Managers
                             $"Air operations  {FormatAirportOperationsStatus(operations)}");
                     }
 
+                    lines.AddRange(BuildSamSiteInspectorLinesForHost(
+                        current.BuildingId));
                     return lines;
                 },
                 () => FocusTile(building.TileId));
@@ -1695,6 +1697,8 @@ namespace Engine.Monobehaviours.Managers
                 .OrderBy(building => building.Type)
                 .Select(building =>
                     $"BUILDING  {building.Type}  •  Functional {building.FunctionalLevel}/{building.Level.BuildLevel}  •  Damage {building.Level.Damage}"));
+            foreach (var site in GetSamSitesOnTile(tileId))
+                lines.AddRange(BuildSamSiteInspectorLines(site));
             return lines;
         }
 
@@ -1730,6 +1734,7 @@ namespace Engine.Monobehaviours.Managers
                 lines.Add($"Movement progress  {move.MovementProgress:P1}");
                 lines.Add($"Estimated next-tile arrival  {(float.IsInfinity(hours) ? "Never" : gameManager.CurrentTime.AddHours(hours).ToString("yyyy-MM-dd HH:mm"))}");
             }
+            lines.AddRange(BuildSamSiteInspectorLinesForHost(division.DivisionId));
             return lines;
         }
 
@@ -1752,6 +1757,19 @@ namespace Engine.Monobehaviours.Managers
                 $"Heading / speed  {flight.HeadingDegrees:0}° / {flight.SpeedKnots:0} kt",
                 $"Route progress  {Mathf.Clamp(flight.CurrentWaypointIndex + 1, 0, flight.Route.Count)}/{flight.Route.Count}"
             };
+            var aircraftById = squadron.Aircraft
+                .ToDictionary(aircraft => aircraft.AircraftId);
+            foreach (var aircraftId in flight.AircraftIds)
+            {
+                if (!aircraftById.TryGetValue(aircraftId, out var aircraft))
+                    continue;
+
+                lines.Add(string.Empty);
+                lines.Add(
+                    $"AIRCRAFT {ShortId(aircraft.AircraftId)}  {aircraft.Status}");
+                lines.AddRange(BuildAircraftOrdnanceLines(aircraft, 10)
+                    .Select(line => $"  {line}"));
+            }
             foreach (var record in gameManager.GetOrdnanceEmploymentRecords()
                          .Where(record => record.SourceFlightId == flightId || record.TargetFlightId == flightId)
                          .OrderByDescending(record => record.OccurredAt)
@@ -2281,7 +2299,10 @@ namespace Engine.Monobehaviours.Managers
                 {
                     new AirCardField("Request ID", ShortId(request.MissionRequestId)),
                     new AirCardField("Priority", request.Priority.ToString("0.0")),
-                    new AirCardField("Mission area", $"Hex {FormatTile(request.MissionArea.CenterTileId)}"),
+                    new AirCardField(
+                        "Mission area",
+                        $"Hex {FormatTile(request.MissionArea.CenterTileId)} / "
+                        + $"{request.MissionArea.RadiusKm:0.#} km radius"),
                     new AirCardField("Effect window", $"{request.EffectStart:MM-dd HH:mm} – {request.EffectEnd:MM-dd HH:mm}"),
                     new AirCardField(
                         "Demand",
@@ -2290,6 +2311,13 @@ namespace Engine.Monobehaviours.Managers
                             ? $" / {request.DesiredSupportSlots} support slots"
                             : string.Empty))
                 };
+                if (request.DeadPlan != null)
+                {
+                    fields.Add(new AirCardField(
+                        "SAM target",
+                        $"{ShortId(request.DeadPlan.TargetSiteId)} / "
+                        + $"{request.DeadPlan.TargetComponentIds.Count} known components"));
+                }
                 if (!string.IsNullOrWhiteSpace(request.Rationale))
                     fields.Add(new AirCardField("Intent", request.Rationale));
                 airRequestsList.Add(CreateAirCard(
@@ -2331,7 +2359,9 @@ namespace Engine.Monobehaviours.Managers
                         GetMissionLabel(request.RequestType)),
                     new AirCardField("Composition", $"{package.Flights.Count} flights / {aircraftCount} aircraft"),
                     new AirCardField("Earliest launch", package.EarliestTakeoffTime.ToString("MM-dd HH:mm")),
-                    request.RequestType == AirMissionRequestType.OffensiveCounterAirSweep
+                    (request.RequestType == AirMissionRequestType.OffensiveCounterAirSweep
+                     || request.RequestType
+                     == AirMissionRequestType.DestructionOfEnemyAirDefenses)
                         ? new AirCardField("Sweep pass", $"{package.EffectStart:MM-dd HH:mm} – {package.EffectEnd:MM-dd HH:mm}")
                         : request.FulfillmentPattern == AirMissionRequestFulfillmentPattern.Discrete
                             ? new AirCardField("Effect time", package.EffectStart.ToString("MM-dd HH:mm"))
@@ -2428,7 +2458,7 @@ namespace Engine.Monobehaviours.Managers
                 var launches = GetRecordLaunches(record).ToList();
                 var title =
                     $"{record.OccurredAt:HH:mm:ss} PASS {ShortId(record.EmploymentPassId)}  •  " +
-                    $"{GetSourceLabel(record)} → {GetFlightLabel(record.TargetFlightId)}";
+                    $"{GetSourceLabel(record)} → {GetOrdnanceTargetLabel(record)}";
                 var fields = new List<AirCardField>
                 {
                     new AirCardField("Ordnance", $"{record.Quantity}× {GetOrdnanceName(record.OrdnanceTypeDefinitionId)}"),
@@ -2436,7 +2466,7 @@ namespace Engine.Monobehaviours.Managers
                     new AirCardField("Outcome", $"Destroyed {hits} / Damaged {damaged} / Miss {misses} / Defeated {defeated} / Ineffective {ineffective}"),
                     new AirCardField("Snapshot", $"Range {record.ReleaseRangeKm:0.0} km / P(hit) {record.HitProbability:P1}"),
                     new AirCardField("Source", GetSourceLabel(record)),
-                    new AirCardField("Target", GetFlightLabel(record.TargetFlightId))
+                    new AirCardField("Target", GetOrdnanceTargetLabel(record))
                 };
                 airPassesList.Add(CreateAirCard(
                     GetRecordAlliance(record),
@@ -2534,7 +2564,7 @@ namespace Engine.Monobehaviours.Managers
                         $"Type  {GetMissionLabel(current.RequestType)}",
                         $"State  {current.State}",
                         $"Priority  {current.Priority:0.0}",
-                        $"Area  {FormatTile(current.MissionArea.CenterTileId)} radius {current.MissionArea.RadiusTiles}",
+                        $"Area  {FormatTile(current.MissionArea.CenterTileId)} radius {current.MissionArea.RadiusKm:0.#} km",
                         $"Effect  {current.EffectStart:yyyy-MM-dd HH:mm} → {current.EffectEnd:yyyy-MM-dd HH:mm}",
                         $"Demand  {current.DesiredAircraftStrength} aircraft / {current.DesiredSupportSlots} support slots",
                         $"Rationale  {current.Rationale}"
@@ -2798,6 +2828,8 @@ namespace Engine.Monobehaviours.Managers
                 $"Planned takeoff: {flight.PlannedTakeoffTime:yyyy-MM-dd HH:mm}",
                 flight.HasSustainedEffect
                 || flight.MissionType == AirMissionRequestType.OffensiveCounterAirSweep
+                || flight.MissionType
+                == AirMissionRequestType.DestructionOfEnemyAirDefenses
                     ? $"Effect window: {flight.EffectStart:yyyy-MM-dd HH:mm} – {flight.EffectEnd:yyyy-MM-dd HH:mm}"
                     : $"Effect time: {flight.EffectStart:yyyy-MM-dd HH:mm}",
                 $"Mission area: Hex {FormatTile(flight.MissionArea.CenterTileId)}");
@@ -2880,19 +2912,108 @@ namespace Engine.Monobehaviours.Managers
             }
             else
             {
+                var detailLineCount = 0;
                 for (var index = 0; index < aircraftIds.Count; index++)
                 {
                     var aircraft = aircraftById[aircraftIds[index]];
-                    var loadoutCount = aircraft.Loadout.Sum(item => item.Count);
                     AddFlightDetailMessage(
                         section,
                         $"{index + 1}. Aircraft {ShortId(aircraftIds[index])}  •  " +
-                        $"{aircraft.Status}  •  {loadoutCount} stores");
+                        aircraft.Status);
+                    var ordnanceLines =
+                        BuildAircraftOrdnanceLines(aircraft, 12).ToList();
+                    foreach (var line in ordnanceLines)
+                        AddFlightDetailMessage(section, $"    {line}");
+                    detailLineCount += 1 + ordnanceLines.Count;
                 }
+
+                section.style.minHeight =
+                    43f + Math.Max(1, detailLineCount) * 23f;
             }
 
-            section.style.minHeight = 43f + Math.Max(1, aircraftIds.Count) * 23f;
+            if (aircraftIds.Count == 0)
+                section.style.minHeight = 66f;
             flightDetailContent.Add(section);
+        }
+
+        private IEnumerable<string> BuildAircraftOrdnanceLines(
+            CampaignAircraft aircraft,
+            int maximumSpentLaunches)
+        {
+            var lines = new List<string> { "CURRENT ORDNANCE" };
+            var currentLoadout = aircraft.Loadout
+                .Where(item => item.Count > 0)
+                .OrderBy(item => GetOrdnanceName(
+                    item.OrdnanceTypeDefinitionId))
+                .ToList();
+            if (currentLoadout.Count == 0)
+            {
+                lines.Add("  None");
+            }
+            else
+            {
+                lines.AddRange(currentLoadout.Select(item =>
+                    $"  {GetOrdnanceName(item.OrdnanceTypeDefinitionId)} ×{item.Count}"));
+            }
+
+            var spentLaunches = gameManager.GetOrdnanceEmploymentRecords()
+                .Where(record =>
+                    record.Stage
+                    == OrdnanceEmploymentRecordStage.OrdnanceReleased
+                    && record.SourceKind
+                    == OrdnanceEmploymentSourceKind.AircraftFlight)
+                .SelectMany(record => GetRecordLaunches(record)
+                    .Where(launch =>
+                        launch.SourceAircraftId == aircraft.AircraftId)
+                    .Select(launch => new
+                    {
+                        Record = record,
+                        Launch = launch
+                    }))
+                .OrderByDescending(entry => entry.Record.OccurredAt)
+                .ThenByDescending(entry => entry.Launch.Sequence)
+                .Take(Math.Max(0, maximumSpentLaunches))
+                .ToList();
+
+            lines.Add("SPENT ORDNANCE");
+            if (spentLaunches.Count == 0)
+            {
+                lines.Add("  None recorded");
+                return lines;
+            }
+
+            foreach (var entry in spentLaunches)
+            {
+                var shot = FindResolvedShot(
+                    entry.Record,
+                    entry.Launch.Sequence);
+                var result = shot == null ? "Pending" : shot.Result.ToString();
+                lines.Add(
+                    $"  {entry.Record.OccurredAt:MM-dd HH:mm:ss}  " +
+                    $"{GetOrdnanceName(entry.Launch.OrdnanceTypeDefinitionId)}  " +
+                    $"→ {GetAircraftOrdnanceTargetLabel(entry.Record, entry.Launch)}  " +
+                    $"• {result}");
+            }
+
+            return lines;
+        }
+
+        private string GetAircraftOrdnanceTargetLabel(
+            OrdnanceEmploymentRecord record,
+            OrdnanceLaunchDiagnostic launch)
+        {
+            if (record.TargetKind
+                == OrdnanceEmploymentTargetKind.AirDefenseComponent)
+            {
+                var componentName = GetSamComponentDisplayName(
+                    record.TargetSiteId,
+                    record.TargetComponentId);
+                return $"SAM {ShortId(record.TargetSiteId)} / {componentName}";
+            }
+
+            return launch.TargetAircraftId == Guid.Empty
+                ? GetFlightLabel(record.TargetFlightId)
+                : $"aircraft {ShortId(launch.TargetAircraftId)}";
         }
 
         private void AddRouteDetailSection(AirFlight flight)
@@ -3115,10 +3236,15 @@ namespace Engine.Monobehaviours.Managers
                 }
                 foreach (var shot in record.Shots)
                 {
+                    var shotTarget = record.TargetKind
+                                     == OrdnanceEmploymentTargetKind
+                                         .AirDefenseComponent
+                        ? $"SAM component {ShortId(record.TargetComponentId)}"
+                        : $"aircraft {ShortId(shot.TargetAircraftId)}";
                     AddFlightDetailMessage(
                         section,
                         $"Shot {shot.Sequence}  •  {shot.Result}  •  " +
-                        $"target aircraft {ShortId(shot.TargetAircraftId)}  •  " +
+                        $"target {shotTarget}  •  " +
                         $"P {shot.Probability:P1}  •  " +
                         $"roll {(shot.Roll < 0f ? "—" : shot.Roll.ToString("0.000"))}");
                 }
@@ -3457,6 +3583,7 @@ namespace Engine.Monobehaviours.Managers
             {
                 AirMissionRequestType.BarrierCombatAirPatrol => "BARCAP",
                 AirMissionRequestType.OffensiveCounterAirSweep => "OCA Sweep",
+                AirMissionRequestType.DestructionOfEnemyAirDefenses => "DEAD",
                 AirMissionRequestType.ProvideAirborneC2 => "Airborne C2",
                 AirMissionRequestType.ProvideAerialRefueling => "Aerial Refueling",
                 _ => mission.ToString()
@@ -3491,7 +3618,7 @@ namespace Engine.Monobehaviours.Managers
         private string BuildOrdnancePassLine(OrdnanceEmploymentRecord record)
         {
             return $"{record.OccurredAt:HH:mm:ss}  PASS {ShortId(record.EmploymentPassId)}  " +
-                   $"{GetSourceLabel(record)} → {GetFlightLabel(record.TargetFlightId)}  " +
+                   $"{GetSourceLabel(record)} → {GetOrdnanceTargetLabel(record)}  " +
                    $"{record.Quantity}× {GetOrdnanceName(record.OrdnanceTypeDefinitionId)}  " +
                    $"range {record.ReleaseRangeKm:0.0} km  P(hit) {record.HitProbability:P1}";
         }
@@ -3500,8 +3627,12 @@ namespace Engine.Monobehaviours.Managers
             OrdnanceEmploymentRecord record)
         {
             var resolvedShots = GetResolvedShots(record).ToList();
-            var probabilityExplanation = record.SourceKind ==
-                                         OrdnanceEmploymentSourceKind.SamLauncher
+            var probabilityExplanation = record.TargetKind
+                                         == OrdnanceEmploymentTargetKind
+                                             .AirDefenseComponent
+                ? "A ground-attack hit chance combines the store's base probability, suitability for the component category, and release-range penalty."
+                : record.SourceKind ==
+                  OrdnanceEmploymentSourceKind.SamLauncher
                 ? "A SAM hit chance starts at the fused IADS track quality snapshotted at release; later guidance support and actual target defense modify terminal probability."
                 : "An aircraft-weapon hit chance is snapshotted at release from ordnance probability, range, guidance mode, shooter capability, target ECM, and launch geometry.";
             var lines = new List<string>
@@ -3510,7 +3641,7 @@ namespace Engine.Monobehaviours.Managers
                 $"Pass ID  {record.EmploymentPassId:N}",
                 $"Released  {record.OccurredAt:yyyy-MM-dd HH:mm:ss}",
                 $"Source  {GetSourceLabel(record)}",
-                $"Target  {GetFlightLabel(record.TargetFlightId)}",
+                $"Target  {GetOrdnanceTargetLabel(record)}",
                 $"Ordnance  {record.Quantity}× {GetOrdnanceName(record.OrdnanceTypeDefinitionId)}",
                 $"Release range  {record.ReleaseRangeKm:0.0} km",
                 $"Snapshotted P(hit)  {record.HitProbability:P1}",
@@ -3543,6 +3674,26 @@ namespace Engine.Monobehaviours.Managers
         {
             if (shot == null)
                 return "Pending: no effect-resolution record exists for this launch yet.";
+            if (record.TargetKind
+                == OrdnanceEmploymentTargetKind.AirDefenseComponent)
+            {
+                var groundRoll = shot.Roll < 0f ? 0f : shot.Roll;
+                var groundThreshold = shot.Probability > 0f
+                    ? shot.Probability
+                    : record.HitProbability;
+                return shot.Result switch
+                {
+                    OrdnanceShotResult.Hit =>
+                        $"Destroyed SAM component {ShortId(record.TargetComponentId)} "
+                        + $"because roll {groundRoll:0.000} was below "
+                        + $"P(hit) {groundThreshold:P1}.",
+                    OrdnanceShotResult.Miss =>
+                        $"Missed SAM component {ShortId(record.TargetComponentId)} "
+                        + $"because roll {groundRoll:0.000} was at or above "
+                        + $"P(hit) {groundThreshold:P1}.",
+                    _ => $"Ground effect result: {shot.Result}."
+                };
+            }
             if (shot.Result == OrdnanceShotResult.Ineffective)
             {
                 return shot.TargetAircraftId == Guid.Empty
@@ -3592,8 +3743,12 @@ namespace Engine.Monobehaviours.Managers
             OrdnanceLaunchDiagnostic launch,
             OrdnanceShotDiagnostic shot)
         {
+            var targetLabel = record.TargetKind
+                              == OrdnanceEmploymentTargetKind.AirDefenseComponent
+                ? $"SAM component {ShortId(record.TargetComponentId)}"
+                : $"aircraft {ShortId(launch.TargetAircraftId)}";
             return $"  Launch {launch.Sequence}: {GetLaunchSourceLabel(record, launch)} " +
-                   $"→ aircraft {ShortId(launch.TargetAircraftId)}  " +
+                   $"→ {targetLabel}  " +
                    $"{GetOrdnanceName(launch.OrdnanceTypeDefinitionId)}" +
                    (shot == null
                        ? string.Empty
@@ -3744,6 +3899,17 @@ namespace Engine.Monobehaviours.Managers
                 OpenFlightDetails(record.TargetFlightId);
                 InspectFlightRoute(record.TargetFlightId);
             }
+            else if (record.TargetKind
+                         == OrdnanceEmploymentTargetKind.AirDefenseComponent
+                     && gameManager.airDefenseSiteSystem.TryGetSite(
+                         record.TargetSiteId,
+                         out var site)
+                     && gameManager.airDefenseSiteSystem.TryGetTileId(
+                         site,
+                         out var tileId))
+            {
+                FocusTile(tileId);
+            }
             ApplySelectedFlightMarker();
         }
 
@@ -3755,6 +3921,18 @@ namespace Engine.Monobehaviours.Managers
             return gameManager.airDefenseSiteSystem.TryGetSite(record.SourceSiteId, out var site)
                 ? $"{GetSamSiteDisplayName(site)} {ShortId(site.SiteId)}"
                 : $"SAM {ShortId(record.SourceSiteId)}";
+        }
+
+        private string GetOrdnanceTargetLabel(OrdnanceEmploymentRecord record)
+        {
+            if (record.TargetKind
+                == OrdnanceEmploymentTargetKind.AirDefenseComponent)
+            {
+                return $"SAM {ShortId(record.TargetSiteId)} component "
+                       + ShortId(record.TargetComponentId);
+            }
+
+            return GetFlightLabel(record.TargetFlightId);
         }
 
         private string GetLaunchSourceLabel(
@@ -3864,6 +4042,22 @@ namespace Engine.Monobehaviours.Managers
                 ? "No buildings"
                 : string.Join(", ", buildings.Select(building => $"{building.Type} {building.FunctionalLevel}"));
             var supplyFeatures = GetSupplyFeatureLabel(selectedTile.TileId);
+            var samSites = GetSamSitesOnTile(selectedTile.TileId).ToList();
+            var samText = samSites.Count == 0
+                ? string.Empty
+                : "\n" + string.Join(
+                    "\n",
+                    samSites.Select(site =>
+                    {
+                        var components = site.Components?
+                            .Where(component => component != null)
+                            .ToList() ?? new List<AirDefenseComponent>();
+                        var intact = components.Count(component =>
+                            !component.IsDamaged);
+                        return $"SAM: {GetSamSiteDisplayName(site)}  •  " +
+                               $"{GetSamSiteStateLabel(site)}  •  " +
+                               $"{intact}/{components.Count} components intact";
+                    }));
 
             selectedTileLabel.text =
                 $"Hex {selectedTile.TileId.x}, {selectedTile.TileId.y}, {selectedTile.TileId.z}\n" +
@@ -3872,7 +4066,8 @@ namespace Engine.Monobehaviours.Managers
                 $"Control: {controller}\n" +
                 $"Infrastructure: {infrastructure}\n" +
                 buildingText +
-                (string.IsNullOrWhiteSpace(supplyFeatures) ? string.Empty : $"\n{supplyFeatures}");
+                (string.IsNullOrWhiteSpace(supplyFeatures) ? string.Empty : $"\n{supplyFeatures}") +
+                samText;
 
             UpdateNeighborsUi();
             UpdateUnitsUi();
@@ -3944,11 +4139,24 @@ namespace Engine.Monobehaviours.Managers
 
             foreach (var building in buildings)
             {
+                var samLines = gameManager.airDefenseSiteSystem
+                    .GetSitesForHost(building.BuildingId)
+                    .Where(site => site != null)
+                    .Select(site =>
+                    {
+                        var components = site.Components?
+                            .Where(component => component != null)
+                            .ToList() ?? new List<AirDefenseComponent>();
+                        return $"\nSAM {GetSamSiteDisplayName(site)}  •  " +
+                               $"{GetSamSiteStateLabel(site)}  •  " +
+                               $"{components.Count(component => !component.IsDamaged)}/{components.Count} intact";
+                    });
                 var button = new Button(() => PinBuildingInspector(building))
                 {
                     text =
                         $"{building.Type}  •  Functional {building.FunctionalLevel}/{building.Level.BuildLevel}\n" +
-                        $"Damage {building.Level.Damage}  •  Toughness {building.TargetToughness}"
+                        $"Damage {building.Level.Damage}  •  Toughness {building.TargetToughness}" +
+                        string.Concat(samLines)
                 };
                 button.AddToClassList("campaign-hud-neighbor-item");
                 ApplyRuntimeFont(button);
@@ -4045,6 +4253,24 @@ namespace Engine.Monobehaviours.Managers
             var supplyPercent = GetDivisionSupplyStorePercent(division);
             var stats = new Label(
                 $"Org {organizationPercent}% | Strength {strengthPercent}% | Supply {supplyPercent}% | Speed {division.Speed:0.#}");
+            var mobileSamSites = gameManager.airDefenseSiteSystem
+                .GetSitesForHost(division.DivisionId)
+                .Where(site => site != null)
+                .ToList();
+            if (mobileSamSites.Count > 0)
+            {
+                stats.text += "\n" + string.Join(
+                    "\n",
+                    mobileSamSites.Select(site =>
+                    {
+                        var components = site.Components?
+                            .Where(component => component != null)
+                            .ToList() ?? new List<AirDefenseComponent>();
+                        return $"SAM {GetSamSiteDisplayName(site)} | " +
+                               $"{GetSamSiteStateLabel(site)} | " +
+                               $"{components.Count(component => !component.IsDamaged)}/{components.Count} intact";
+                    }));
+            }
             stats.AddToClassList("campaign-hud-unit-stat");
             ApplyRuntimeFont(stats);
 
@@ -4510,6 +4736,10 @@ namespace Engine.Monobehaviours.Managers
                     CreateAirPatrolPattern(flight, center, radius, color);
                     break;
 
+                case AirMissionRequestType.DestructionOfEnemyAirDefenses:
+                    CreateAirSweepPattern(flight, center, radius, color);
+                    break;
+
                 case AirMissionRequestType.ProvideAirborneC2:
                     CreateAirSupportOrbitPattern(flight, center, radius, color, "C2");
                     break;
@@ -4849,9 +5079,14 @@ namespace Engine.Monobehaviours.Managers
                 gameManager.SimulationSettings.TileDistanceKM));
         }
 
-        private static float GetMissionAreaMapRadius(AirMissionArea area)
+        private float GetMissionAreaMapRadius(AirMissionArea area)
         {
-            return Mathf.Max(0.34f, (area.RadiusTiles + 0.62f) * HexHeight);
+            var tileDistanceKm = Math.Max(
+                0.001f,
+                gameManager.SimulationSettings.TileDistanceKM);
+            return Mathf.Max(
+                0.34f,
+                (area.RadiusKm / tileDistanceKm + 0.62f) * HexHeight);
         }
 
         private void CreateAirIntentPolyline(
@@ -4981,6 +5216,7 @@ namespace Engine.Monobehaviours.Managers
             return mission switch
             {
                 AirMissionRequestType.OffensiveCounterAirSweep => new Color(1f, 0.48f, 0.18f),
+                AirMissionRequestType.DestructionOfEnemyAirDefenses => new Color(1f, 0.22f, 0.12f),
                 AirMissionRequestType.BarrierCombatAirPatrol => Color.Lerp(
                     GetAirAllianceColor(alliance),
                     new Color(0.20f, 1f, 0.72f),
@@ -4996,6 +5232,7 @@ namespace Engine.Monobehaviours.Managers
             return mission switch
             {
                 AirMissionRequestType.OffensiveCounterAirSweep => "SWEEP",
+                AirMissionRequestType.DestructionOfEnemyAirDefenses => "DEAD",
                 AirMissionRequestType.BarrierCombatAirPatrol => "BARCAP",
                 AirMissionRequestType.ProvideAirborneC2 => "C2",
                 AirMissionRequestType.ProvideAerialRefueling => "TANKER",
@@ -5180,12 +5417,113 @@ namespace Engine.Monobehaviours.Managers
             label.fontSize = 21;
             label.color = operational ? Color.white : new Color(0.72f, 0.72f, 0.72f);
             var hostLabel = site.HostType == SamSiteHostType.MobileDivision ? "MOBILE" : "STATIC";
-            var statusLabel = operational ? $"{engagementRangeKm:0} km" : GetSamStatusLabel(site);
-            label.text = $"{GetSamSiteDisplayName(site)}\n{hostLabel} | {statusLabel}";
+            var siteState = GetSamSiteStateLabel(site);
+            var statusLabel = siteState switch
+            {
+                "OPERATIONAL" => $"{engagementRangeKm:0} km",
+                "DEGRADED" => $"DEGRADED | {engagementRangeKm:0} km",
+                _ => siteState
+            };
+            var components = site.Components?
+                .Where(component => component != null)
+                .ToList() ?? new List<AirDefenseComponent>();
+            var intactCount = components.Count(component =>
+                !component.IsDamaged);
+            label.text =
+                $"{GetSamSiteDisplayName(site)}\n" +
+                $"{hostLabel} | {statusLabel}\n" +
+                $"{intactCount}/{components.Count} components intact";
             labelObject.GetComponent<MeshRenderer>().sortingOrder = 38;
         }
 
-        private static string GetSamStatusLabel(SamSite site)
+        private IEnumerable<SamSite> GetSamSitesOnTile(Vector3Int tileId)
+        {
+            if (gameManager?.airDefenseSiteSystem?.Sites == null)
+                return Enumerable.Empty<SamSite>();
+
+            return gameManager.airDefenseSiteSystem.Sites
+                .Where(site =>
+                    site != null
+                    && gameManager.airDefenseSiteSystem.TryGetTileId(
+                        site,
+                        out var siteTileId)
+                    && siteTileId == tileId)
+                .OrderBy(site => GetSamSiteDisplayName(site))
+                .ThenBy(site => site.SiteId)
+                .ToList();
+        }
+
+        private IEnumerable<string> BuildSamSiteInspectorLinesForHost(
+            Guid hostId)
+        {
+            if (gameManager?.airDefenseSiteSystem == null)
+                return Enumerable.Empty<string>();
+
+            return gameManager.airDefenseSiteSystem.GetSitesForHost(hostId)
+                .Where(site => site != null)
+                .OrderBy(site => GetSamSiteDisplayName(site))
+                .ThenBy(site => site.SiteId)
+                .SelectMany(BuildSamSiteInspectorLines)
+                .ToList();
+        }
+
+        private IEnumerable<string> BuildSamSiteInspectorLines(SamSite site)
+        {
+            if (site == null)
+                return Enumerable.Empty<string>();
+
+            var components = site.Components?
+                .Where(component => component != null)
+                .OrderBy(component => GetSamComponentDisplayName(
+                    site.SiteId,
+                    component.ComponentId))
+                .ThenBy(component => component.ComponentId)
+                .ToList() ?? new List<AirDefenseComponent>();
+            var intactCount = components.Count(component => !component.IsDamaged);
+            var damagedCount = components.Count - intactCount;
+            var lines = new List<string>
+            {
+                string.Empty,
+                $"SAM SITE  {GetSamSiteDisplayName(site)}  {ShortId(site.SiteId)}",
+                $"Site status  {GetSamSiteStateLabel(site)}",
+                $"Host / alliance  {site.HostType} / {gameManager.airDefenseSiteSystem.GetEffectiveAlliance(site)}",
+                $"Components  {intactCount} intact / {damagedCount} damaged / {components.Count} total"
+            };
+
+            if (components.Count == 0)
+            {
+                lines.Add("  No components.");
+                return lines;
+            }
+
+            foreach (var component in components)
+            {
+                var componentName = GetSamComponentDisplayName(
+                    site.SiteId,
+                    component.ComponentId);
+                var componentState = component.IsDamaged
+                    ? "DAMAGED"
+                    : site.IsSuppressed
+                        ? "INTACT (SITE SUPPRESSED)"
+                        : site.IsDisabled
+                            ? "INTACT (SITE DISABLED)"
+                            : "OPERATIONAL";
+                var detail = component is LauncherAirDefenseComponent launcher
+                    ? $"  •  ready {launcher.ReadyRounds} / reserve {launcher.ReserveRounds}"
+                      + (launcher.NextReloadAt == default
+                          ? string.Empty
+                          : $" / reload {launcher.NextReloadAt:MM-dd HH:mm:ss}")
+                    : string.Empty;
+                lines.Add(
+                    $"  [{componentState}] {componentName}  •  " +
+                    $"{GetSamComponentTypeLabel(component)}  •  " +
+                    $"{ShortId(component.ComponentId)}{detail}");
+            }
+
+            return lines;
+        }
+
+        private static string GetSamSiteStateLabel(SamSite site)
         {
             if (site.IsDestroyed)
                 return "DESTROYED";
@@ -5193,7 +5531,55 @@ namespace Engine.Monobehaviours.Managers
                 return "DISABLED";
             if (site.IsSuppressed)
                 return "SUPPRESSED";
-            return "NO COVERAGE";
+
+            var components = site.Components?
+                .Where(component => component != null)
+                .ToList() ?? new List<AirDefenseComponent>();
+            if (components.Count == 0
+                || components.All(component => component.IsDamaged))
+                return "COMBAT INEFFECTIVE";
+            return components.Any(component => component.IsDamaged)
+                ? "DEGRADED"
+                : "OPERATIONAL";
+        }
+
+        private static string GetSamComponentTypeLabel(
+            AirDefenseComponent component)
+        {
+            return component switch
+            {
+                RadarAirDefenseComponent => "Radar",
+                LauncherAirDefenseComponent => "Launcher",
+                CommandAirDefenseComponent => "Command",
+                SupportAirDefenseComponent => "Support",
+                _ => "Component"
+            };
+        }
+
+        private string GetSamComponentDisplayName(
+            Guid siteId,
+            Guid componentId)
+        {
+            if (gameManager?.airDefenseSiteSystem == null
+                || !gameManager.airDefenseSiteSystem.TryGetSite(
+                    siteId,
+                    out var site))
+                return $"component {ShortId(componentId)}";
+
+            var component = site.Components?
+                .FirstOrDefault(candidate =>
+                    candidate != null
+                    && candidate.ComponentId == componentId);
+            if (component == null)
+                return $"component {ShortId(componentId)}";
+
+            var definition = ModuleSingleton.Instance?.ActiveModule
+                ?.SamComponentDefinitions
+                ?.FirstOrDefault(candidate =>
+                    candidate != null
+                    && candidate.SamComponentDefinitionId
+                    == component.SamComponentDefinitionId);
+            return definition?.Name ?? $"component {ShortId(componentId)}";
         }
 
         private static string GetSamSiteDisplayName(SamSite site)
@@ -5286,8 +5672,8 @@ namespace Engine.Monobehaviours.Managers
                 $"Target {launch.Sequence}");
             CreateOrdnanceMapLabel(
                 Vector3.Lerp(source, target, 0.52f) + offset,
-                $"L{launch.Sequence} {GetSourceLabel(record)}→" +
-                $"{GetFlightLabel(record.TargetFlightId)} {ShortId(launch.TargetAircraftId)}",
+                $"L{launch.Sequence} {GetSourceLabel(record)}→"
+                + GetOrdnanceTargetLabel(record),
                 selected);
         }
 

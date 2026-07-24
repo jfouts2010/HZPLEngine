@@ -110,6 +110,7 @@ namespace Models.Gameplay.Campaign
         public Guid FlightId = Guid.NewGuid();
         public Guid SquadronId;
         public AirMissionRequestType MissionType;
+        public Guid AuthorizedSurfaceThreatSiteId;
         public bool IsRequired = true;
         private List<Guid> aircraftIds = new List<Guid>();
         private List<PlannedAircraftLoadout> plannedAircraftLoadouts =
@@ -125,6 +126,7 @@ namespace Models.Gameplay.Campaign
         private FlightTacticalState tacticalState = new FlightTacticalState();
         private bool isWaitingAtRendezvous;
         private bool missionAchieved;
+        private bool authorizedSurfaceThreatPenetrationGranted;
         private List<FlightExecutionEvent> executionEvents =
             new List<FlightExecutionEvent>();
         private List<AerialRefuelingRecord> aerialRefuelingRecords =
@@ -154,6 +156,8 @@ namespace Models.Gameplay.Campaign
             tacticalState ??= new FlightTacticalState();
         public bool IsWaitingAtRendezvous => isWaitingAtRendezvous;
         public bool MissionAchieved => missionAchieved;
+        public bool AuthorizedSurfaceThreatPenetrationGranted =>
+            authorizedSurfaceThreatPenetrationGranted;
         public DateTime PlannedTakeoffTime =>
             GetRequiredWaypoint(AirWaypointAction.Takeoff).PlannedArrivalTime;
         public DateTime EffectStart => EffectWaypoints.First().PlannedArrivalTime;
@@ -455,18 +459,28 @@ namespace Models.Gameplay.Campaign
                         return FlightWaypointTransition.Advanced;
                     }
 
-                    missionAchieved = true;
+                    if (MissionType
+                        != AirMissionRequestType.DestructionOfEnemyAirDefenses)
+                    {
+                        missionAchieved = true;
+                    }
                     RecordEvent(waypoint, occurredAt, "Flight exited station.");
                     currentWaypointIndex++;
                     return FlightWaypointTransition.Advanced;
 
                 case AirWaypointAction.MissionAction:
                     executionPhase = FlightExecutionPhase.Executing;
-                    missionAchieved = true;
+                    var isDeadStandoff = MissionType
+                                         == AirMissionRequestType
+                                             .DestructionOfEnemyAirDefenses;
+                    if (!isDeadStandoff)
+                        missionAchieved = true;
                     RecordEvent(
                         waypoint,
                         occurredAt,
-                        "Flight completed its mission action.");
+                        isDeadStandoff
+                            ? "Flight reached its DEAD standoff attack position."
+                            : "Flight completed its mission action.");
                     currentWaypointIndex++;
                     return FlightWaypointTransition.Advanced;
 
@@ -500,11 +514,71 @@ namespace Models.Gameplay.Campaign
             return true;
         }
 
+        public void UpdateMissionOutcome(
+            bool achieved,
+            DateTime occurredAt,
+            string reason)
+        {
+            if (MissionType
+                    != AirMissionRequestType.DestructionOfEnemyAirDefenses
+                || !IsAirborne
+                || missionAchieved == achieved)
+                return;
+
+            missionAchieved = achieved;
+            RecordEvent(
+                CurrentWaypoint,
+                occurredAt,
+                reason,
+                AirWaypointAction.MissionAction);
+        }
+
+        public void UpdateSurfaceThreatPenetrationAuthorization(bool granted)
+        {
+            authorizedSurfaceThreatPenetrationGranted =
+                MissionType
+                == AirMissionRequestType.DestructionOfEnemyAirDefenses
+                && IsAirborne
+                && granted;
+        }
+
+        public bool EndDeadAttackAndBeginRecovery(
+            DateTime occurredAt,
+            bool achieved,
+            string reason)
+        {
+            if (MissionType
+                    != AirMissionRequestType.DestructionOfEnemyAirDefenses
+                || !IsAirborne
+                || executionPhase == FlightExecutionPhase.Returning
+                || executionPhase == FlightExecutionPhase.Landing)
+                return false;
+
+            missionAchieved = achieved;
+            var returnIndex = route.FindIndex(
+                Math.Max(0, currentWaypointIndex),
+                waypoint => waypoint.Action == AirWaypointAction.ReturnToBase);
+            if (returnIndex < 0)
+                return false;
+
+            currentWaypointIndex = returnIndex;
+            isWaitingAtRendezvous = false;
+            authorizedSurfaceThreatPenetrationGranted = false;
+            executionPhase = FlightExecutionPhase.Returning;
+            RecordEvent(
+                CurrentWaypoint,
+                occurredAt,
+                reason,
+                AirWaypointAction.ReturnToBase);
+            return true;
+        }
+
         public FlightCancellationResult Cancel(DateTime occurredAt, string reason)
         {
             if (IsTerminal)
                 return FlightCancellationResult.None;
 
+            authorizedSurfaceThreatPenetrationGranted = false;
             if (!IsAirborne)
             {
                 lifecycleState = AirTaskingLifecycleState.Cancelled;
@@ -601,6 +675,7 @@ namespace Models.Gameplay.Campaign
             lifecycleState = AirTaskingLifecycleState.Aborted;
             executionPhase = FlightExecutionPhase.Returning;
             isWaitingAtRendezvous = false;
+            authorizedSurfaceThreatPenetrationGranted = false;
             RecordEvent(currentWaypoint, occurredAt, reason, AirWaypointAction.ReturnToBase);
             return FlightCancellationResult.Aborted;
         }
@@ -616,6 +691,7 @@ namespace Models.Gameplay.Campaign
             currentWaypointIndex++;
             hasPosition = false;
             isWaitingAtRendezvous = false;
+            authorizedSurfaceThreatPenetrationGranted = false;
             executionPhase = FlightExecutionPhase.Ended;
             if (lifecycleState != AirTaskingLifecycleState.Aborted)
             {
@@ -631,6 +707,7 @@ namespace Models.Gameplay.Campaign
             executionPhase = FlightExecutionPhase.Ended;
             hasPosition = false;
             isWaitingAtRendezvous = false;
+            authorizedSurfaceThreatPenetrationGranted = false;
             RecordEvent(
                 CurrentWaypoint,
                 occurredAt,
@@ -711,6 +788,7 @@ namespace Models.Gameplay.Campaign
         private void BeginAbortRecovery(DateTime occurredAt, string reason)
         {
             isWaitingAtRendezvous = false;
+            authorizedSurfaceThreatPenetrationGranted = false;
             if (executionPhase == FlightExecutionPhase.Returning
                 || executionPhase == FlightExecutionPhase.Landing)
                 return;

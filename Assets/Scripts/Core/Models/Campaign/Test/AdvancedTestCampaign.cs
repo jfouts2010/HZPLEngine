@@ -97,6 +97,8 @@ namespace Models.Gameplay.Campaign
         private static readonly Vector3Int BlueVulnerableAirbaseTileId = new Vector3Int(-3, 4, -1);
         private static readonly Vector3Int RedDefensiveAirbaseTileId = new Vector3Int(6, 0, -6);
         private static readonly Vector3Int RedVulnerableAirbaseTileId = new Vector3Int(4, 0, -4);
+        private static readonly Vector3Int RedDeadCorridorSamTileId =
+            new Vector3Int(2, 0, -2);
         private static readonly Vector3Int NeutralHubTileId = new Vector3Int(0, 0, 0);
         private static readonly Vector3Int[] BlueFrontTileIds =
         {
@@ -132,7 +134,7 @@ namespace Models.Gameplay.Campaign
                     SimulationTickMinutes = 5,
                     OperationalCadenceHours = 6
                 },
-                ContentHash = "advanced-mechanics-test-campaign-v12",
+                ContentHash = "advanced-mechanics-test-campaign-v13",
                 CountryAllianceAssignments = CreateCountryAllianceAssignments(),
                 OrdnanceAllowances = CreateOrdnanceAllowances(),
                 SamSiteTemplateAllowances = CreateSamSiteTemplateAllowances(),
@@ -224,6 +226,7 @@ namespace Models.Gameplay.Campaign
                 {
                     { AirMissionRequestType.BarrierCombatAirPatrol, 1.15f },
                     { AirMissionRequestType.OffensiveCounterAirSweep, 1f },
+                    { AirMissionRequestType.DestructionOfEnemyAirDefenses, 0.85f },
                     { AirMissionRequestType.ProvideAirborneC2, 0.9f },
                     { AirMissionRequestType.ProvideAerialRefueling, 0.9f }
                 }
@@ -353,15 +356,20 @@ namespace Models.Gameplay.Campaign
                 CreateBuilding("8ef77ba7-1ca4-4898-8f8e-afbcbe173d11", RedCapitalTileId, BuildingType.SupplyHub, 8),
                 CreateBuilding("c7a5f0e8-4d9b-427d-0256-8e3bf73a296e", RedRefineryTileId, BuildingType.Refinery, 3),
                 CreateBuilding("c85658f6-45d4-4b4a-a64f-3e1a10f59991", RedRefineryTileId, BuildingType.Railroad, 6),
-                CreateBuilding("8b036491-6c29-432d-98b5-c70fb9326712", new Vector3Int(2, 0, -2), BuildingType.Railroad, 5),
+                CreateBuilding("8b036491-6c29-432d-98b5-c70fb9326712", RedDeadCorridorSamTileId, BuildingType.Railroad, 5),
                 CreateBuilding("a963e4f6-96f8-413c-b092-1d6f435f1fc0", RedFrontTileIds[0], BuildingType.Railroad, 4),
                 CreateBuilding("d8b6a1f9-5e0c-438e-1367-9f4c084b3a7f", RedFrontTileIds[1], BuildingType.Railroad, 4),
                 CreateBuilding("b8056bb0-5fb5-4d09-b9d4-a4585c43f0f7", RedFrontTileIds[1], BuildingType.SupplyHub, 4),
                 CreateBuilding("2f40d216-7eb7-4362-8f31-d519a6a2d585", RedFrontTileIds[2], BuildingType.Railroad, 3),
                 CreateStaticSamBuilding("e765cf9b-4220-49d6-a4ce-001ac06f0fae", RedDefensiveAirbaseTileId, RedCountryId),
-                CreateStaticSamBuilding("ee341816-d3e7-4ea1-966a-e32301cfa70f", RedCapitalTileId, RedCountryId),
-                CreateStaticSamBuilding("b21c3065-1ab4-49d6-befc-7e8a5d232608", RedVulnerableAirbaseTileId, RedCountryId),
-                CreateStaticSamBuilding("4e854b37-5479-4473-9daf-338cc7b01b69", new Vector3Int(2, 0, -2), RedCountryId),
+                // This isolated battery blocks Blue's first airport-strike corridor.
+                // Nearby Red SAMs intentionally remain outside its 40 km DEAD area
+                // so the assigned package can enter this site's envelope without
+                // being rejected by an overlapping, non-target threat.
+                CreateStaticSamBuilding(
+                    "4e854b37-5479-4473-9daf-338cc7b01b69",
+                    RedDeadCorridorSamTileId,
+                    RedCountryId),
                 CreateStaticSamBuilding("7c526362-4d00-466d-aa43-63535843ae99", new Vector3Int(2, 4, -6), RedCountryId),
                 CreateOmniscientTestRadarBuilding(
                     "7603f203-51ce-4ceb-ab40-83fc9d2975a9",
@@ -536,7 +544,7 @@ namespace Models.Gameplay.Campaign
                 {
                     MobileSamSiteId = Guid.Parse("07f07acf-78f5-4afd-9c8c-663d3120b82a"),
                     SamSiteTemplateId = TestModule.OsaSiteTemplateId,
-                    HostDivisionId = RedFrontDivisionIds[2],
+                    HostDivisionId = RedFrontDivisionIds[10],
                     Alliance = Alliance.Redfor
                 },
                 new MobileSamSiteStartingCondition

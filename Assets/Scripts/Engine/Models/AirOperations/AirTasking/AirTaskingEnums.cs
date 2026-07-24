@@ -5,7 +5,8 @@ namespace Models.Gameplay.Campaign
         BarrierCombatAirPatrol = 0,
         OffensiveCounterAirSweep = 1,
         ProvideAirborneC2 = 2,
-        ProvideAerialRefueling = 3
+        ProvideAerialRefueling = 3,
+        DestructionOfEnemyAirDefenses = 4
     }
 
     public enum AirMissionRequestFulfillmentPattern

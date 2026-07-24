@@ -20,9 +20,12 @@ namespace Engine.Models
         private readonly AirTaskingSystem airTaskingSystem;
         private readonly IReadOnlyDictionary<Guid, AircraftTypeDefinition> aircraftTypes;
         private readonly IReadOnlyDictionary<Guid, OrdnanceTypeDefinition> ordnanceTypes;
+        private readonly IReadOnlyDictionary<Guid, AirDefenseComponentDefinition>
+            airDefenseComponentDefinitions;
         private readonly AirLoadoutPlanner loadoutPlanner;
         private readonly WvrEngagementSystem wvrEngagementSystem;
         private readonly KnownSamThreatAssessment knownSamThreatAssessment;
+        private readonly IAirRouteGeometryPlanner deadCorridorRoutePlanner;
         private readonly AirportOperationsService airportOperations;
         private readonly Dictionary<Alliance, IReadOnlyList<KnownSamThreatEnvelope>>
             knownSamThreatCache =
@@ -41,9 +44,13 @@ namespace Engine.Models
                 .ToDictionary(definition => definition.AircraftTypeDefinitionId);
             ordnanceTypes = module.OrdnanceTypeDefinitions
                 .ToDictionary(definition => definition.OrdnanceTypeDefinitionId);
+            airDefenseComponentDefinitions = module.SamComponentDefinitions
+                .ToDictionary(definition => definition.SamComponentDefinitionId);
             knownSamThreatAssessment = new KnownSamThreatAssessment(
                 module.SamComponentDefinitions,
                 module.OrdnanceTypeDefinitions);
+            deadCorridorRoutePlanner =
+                new SeparatedIngressEgressRouteGeometryPlanner();
             loadoutPlanner = new AirLoadoutPlanner(
                 module,
                 alliance =>
@@ -100,6 +107,18 @@ namespace Engine.Models
                 ordnanceEmploymentSystem.AdvanceScheduledEvents(cursor);
                 ResolveDamageRecovery(cursor);
                 PrepareFlightsAt(cursor);
+                ordnanceEmploymentSystem.CancelAirToGroundPasses(
+                    airTaskingSystem.GetPackages()
+                        .SelectMany(package => package.Flights)
+                        .Where(flight => flight.ExecutionPhase
+                                             == FlightExecutionPhase.Returning
+                                         || flight.ExecutionPhase
+                                             == FlightExecutionPhase.Landing
+                                         || flight.LifecycleState
+                                             == AirTaskingLifecycleState.Aborted)
+                        .Select(flight => flight.FlightId),
+                    cursor,
+                    "Ground-attack preparation was cancelled when the flight began recovery.");
                 ReleaseReadyRendezvousFlights();
 
                 if (cursor >= currentTime)
@@ -115,6 +134,8 @@ namespace Engine.Models
                 frame = BuildAirCombatFrame(cursor);
                 wvrEngagementSystem.Reconcile(frame, cursor);
                 ResolveDamageRecovery(cursor);
+                ProcessDeadMissions(cursor);
+                frame = BuildAirCombatFrame(cursor);
 
                 var commands = frame.Flights.Values
                     .Where(view => view.Flight.IsAirborne
@@ -179,18 +200,31 @@ namespace Engine.Models
                             command.RequestsAirToAirPassCancellation)
                         .Select(command => command.FlightId),
                     cursor,
-                    "Employment preparation aborted because the required "
-                    + "launch-support maneuver entered known SAM coverage.");
-                foreach (var proposal in commands
+                    "Air-to-air employment preparation was cancelled by current "
+                    + "tactical authorization.");
+                ordnanceEmploymentSystem.CancelAirToGroundPasses(
+                    commands
+                        .Where(command => command.RequestsSurfaceThreatRecovery)
+                        .Select(command => command.FlightId),
+                    cursor,
+                    "Ground-attack preparation was cancelled for immediate surface-threat recovery.");
+                var airToAirProposals = commands
                              .Where(command =>
                                  !command.RequestsSurfaceThreatRecovery
                                  && command.Employment != null)
                              .Select(command => command.Employment)
                              .OrderBy(proposal => proposal.SourceFlightId)
-                             .ThenBy(proposal => proposal.TargetFlightId))
+                             .ThenBy(proposal => proposal.TargetFlightId)
+                             .ToList();
+                ordnanceEmploymentSystem.CancelAirToGroundPasses(
+                    airToAirProposals.Select(proposal => proposal.SourceFlightId),
+                    cursor,
+                    "Ground-attack preparation was interrupted to answer an immediate air threat.");
+                foreach (var proposal in airToAirProposals)
                 {
                     ordnanceEmploymentSystem.TryStartAirToAirPass(proposal, cursor);
                 }
+                ProcessDeadMissions(cursor);
                 wvrEngagementSystem.ProcessRequests(
                     commands.Where(command =>
                         !command.RequestsSurfaceThreatRecovery),
@@ -201,6 +235,11 @@ namespace Engine.Models
                         wvrEngagementSystem.IsFlightEngaged),
                     cursor,
                     "Employment preparation aborted when the source entered WVR combat.");
+                ordnanceEmploymentSystem.CancelAirToGroundPasses(
+                    frame.Flights.Keys.Where(
+                        wvrEngagementSystem.IsFlightEngaged),
+                    cursor,
+                    "Ground-attack preparation aborted when the source entered WVR combat.");
                 wvrEngagementSystem.AdvanceDueRounds(
                     frame,
                     GetDoctrine,
@@ -210,6 +249,7 @@ namespace Engine.Models
                 frame = BuildAirCombatFrame(cursor);
                 wvrEngagementSystem.Reconcile(frame, cursor);
                 ResolveDamageRecovery(cursor);
+                ApplyDeadStandoffHolds(commands, frame, cursor);
 
                 var next = NextTacticalBoundary(cursor, currentTime);
                 var elapsedSeconds = Math.Max(0d, (next - cursor).TotalSeconds);
@@ -592,6 +632,21 @@ namespace Engine.Models
             foreach (var package in airTaskingSystem.GetPackages()
                          .OrderBy(candidate => candidate.PackageId))
             {
+                if (package.Flights.All(flight =>
+                        flight.ExecutionPhase
+                        == FlightExecutionPhase.AwaitingTakeoff)
+                    && TryGetDeadPreflightInvalidationReason(
+                        package,
+                        out var deadInvalidationReason))
+                {
+                    airTaskingSystem.CancelPackage(
+                        package.Alliance,
+                        package.PackageId,
+                        currentTime,
+                        deadInvalidationReason);
+                    continue;
+                }
+
                 foreach (var flight in package.Flights
                              .Where(candidate => candidate.IsAirborne)
                              .OrderBy(candidate => candidate.FlightId))
@@ -740,6 +795,610 @@ namespace Engine.Models
                 receiverPackage.Flights.Sum(flight => flight.AircraftIds.Count),
                 receiverPackage.EffectStart,
                 receiverPackage.SupportWindowEnd);
+        }
+
+        private void ProcessDeadMissions(DateTime currentTime)
+        {
+            foreach (var package in airTaskingSystem.GetPackages()
+                         .Where(candidate => candidate.LifecycleState
+                                             == AirTaskingLifecycleState.Active)
+                         .OrderBy(candidate => candidate.PackageId))
+            {
+                var request = airTaskingSystem.GetCommander(package.Alliance)
+                    ?.GetRequest(package.MissionRequestId);
+                if (request?.RequestType
+                        != AirMissionRequestType.DestructionOfEnemyAirDefenses
+                    || request.DeadPlan == null
+                    || !gameManager.airDefenseSiteSystem.TryGetSite(
+                        request.DeadPlan.TargetSiteId,
+                        out var site))
+                    continue;
+
+                var currentReport = gameManager.intelligenceSystem
+                    ?.GetPicture(package.Alliance)
+                    ?.HostileAirDefenseSites
+                    ?.FirstOrDefault(report => report != null
+                                               && report.SiteId == site.SiteId
+                                               && report.InformationQuality > 0f);
+                if (currentReport == null)
+                {
+                    var invalidatedFlightIds = package.Flights
+                        .Where(flight => flight.MissionType
+                                         == AirMissionRequestType
+                                             .DestructionOfEnemyAirDefenses
+                                         && flight.IsAirborne)
+                        .Select(flight => flight.FlightId)
+                        .ToList();
+                    ordnanceEmploymentSystem.CancelAirToGroundPasses(
+                        invalidatedFlightIds,
+                        currentTime,
+                        "DEAD preparation aborted because the assigned site is no longer known.");
+                    foreach (var flight in package.Flights.Where(flight =>
+                                 invalidatedFlightIds.Contains(flight.FlightId)))
+                    {
+                        flight.Cancel(
+                            currentTime,
+                            "The assigned SAM site is no longer known; the flight will not retarget airborne.");
+                    }
+                    continue;
+                }
+
+                request.DeadPlan.TargetComponentIds = (currentReport.Components
+                                                        ?? new List<AirDefenseComponentIntelligenceReport>())
+                    .Where(component => component != null
+                                        && !component.IsDamaged)
+                    .Select(component => component.ComponentId)
+                    .Where(id => id != Guid.Empty)
+                    .Distinct()
+                    .OrderBy(id => id)
+                    .ToList();
+
+                var effectiveSiteAlliance = gameManager.airDefenseSiteSystem
+                    .GetEffectiveAlliance(site);
+                var siteNoLongerHostile = site.IsDisabled
+                                          || site.IsDestroyed
+                                          || effectiveSiteAlliance
+                                          == Alliance.Neutral
+                                          || effectiveSiteAlliance
+                                          == package.Alliance;
+                var hasFunctionalShooterChain = !siteNoLongerHostile
+                                                && HasPermanentSamShooterChain(site);
+                var minimumEffectAchievedByPackage =
+                    DidPackageAchieveDeadMinimumEffect(package, site);
+                var corridorStillBlocked = siteNoLongerHostile
+                                           || IsDeadCorridorStillBlocked(
+                                               package.Alliance,
+                                               request.DeadPlan);
+                foreach (var flight in package.Flights
+                             .Where(candidate => candidate.MissionType
+                                                 == AirMissionRequestType
+                                                     .DestructionOfEnemyAirDefenses
+                                                 && candidate.IsAirborne)
+                             .OrderBy(candidate => candidate.FlightId))
+                {
+                    flight.UpdateSurfaceThreatPenetrationAuthorization(
+                        minimumEffectAchievedByPackage
+                        && !hasFunctionalShooterChain);
+                    flight.UpdateMissionOutcome(
+                        minimumEffectAchievedByPackage,
+                        currentTime,
+                        hasFunctionalShooterChain
+                            ? "The target SAM still has a functional shooter chain."
+                            : minimumEffectAchievedByPackage
+                                ? "The package permanently removed the target SAM's functional shooter chain."
+                                : "The target SAM's shooter chain ended without a qualifying package effect.");
+
+                    var targetInsideFixedArea = request.MissionArea.Contains(
+                        currentReport.TileId);
+                    if (siteNoLongerHostile
+                        || !targetInsideFixedArea
+                        || (!corridorStillBlocked
+                            && !minimumEffectAchievedByPackage))
+                    {
+                        ordnanceEmploymentSystem.CancelAirToGroundPasses(
+                            new[] { flight.FlightId },
+                            currentTime,
+                            siteNoLongerHostile
+                                ? "DEAD preparation aborted because the site is no longer hostile."
+                                : !corridorStillBlocked
+                                    ? "DEAD preparation aborted because the supported corridor is now open."
+                                : "DEAD preparation aborted because the mobile site left the fixed mission area.");
+                        if (!minimumEffectAchievedByPackage)
+                        {
+                            flight.Cancel(
+                                currentTime,
+                                !targetInsideFixedArea
+                                    ? "The assigned SAM left the fixed DEAD mission area; the flight will not pursue it."
+                                    : "The assigned SAM no longer blocks the supported corridor; the flight will not retarget airborne.");
+                        }
+                        else
+                        {
+                            flight.EndDeadAttackAndBeginRecovery(
+                                currentTime,
+                                true,
+                                "The DEAD minimum effect is complete; ending the attack sequence.");
+                        }
+                        continue;
+                    }
+
+                    if (flight.ExecutionPhase != FlightExecutionPhase.Executing
+                        || currentTime >= flight.EffectEnd
+                        || !gameManager.airDefenseSiteSystem.TryGetTileId(
+                            site,
+                            out var siteTileId)
+                        || !TryGetFlightContext(
+                            flight,
+                            out var squadron,
+                            out _))
+                        continue;
+
+                    TryStartNextDeadAttack(
+                        flight,
+                        squadron,
+                        site,
+                        siteTileId,
+                        request.DeadPlan.TargetComponentIds,
+                        currentTime);
+
+                    var unresolvedGroundEffect = ordnanceEmploymentSystem
+                        .ActivePasses.Any(pass =>
+                            pass.SourceFlightId == flight.FlightId
+                            && pass.TargetKind
+                            == OrdnanceEmploymentTargetKind.AirDefenseComponent)
+                        || ordnanceEmploymentSystem.PendingEffects.Any(effect =>
+                            effect.SourceFlightId == flight.FlightId
+                            && effect.TargetKind
+                            == OrdnanceEmploymentTargetKind.AirDefenseComponent);
+                    if (!unresolvedGroundEffect
+                        && !HasDeadMissionUsefulOrdnance(
+                            flight,
+                            squadron,
+                            site,
+                            request.DeadPlan.TargetComponentIds))
+                    {
+                        flight.EndDeadAttackAndBeginRecovery(
+                            currentTime,
+                            minimumEffectAchievedByPackage,
+                            hasFunctionalShooterChain
+                                ? "Mission-useful DEAD ordnance is exhausted before the minimum effect."
+                                : minimumEffectAchievedByPackage
+                                    ? "The DEAD minimum effect is complete and no useful cleanup ordnance remains."
+                                    : "The target was invalidated without a qualifying package effect.");
+                    }
+                }
+            }
+        }
+
+        private bool TryGetDeadPreflightInvalidationReason(
+            AirPackage package,
+            out string reason)
+        {
+            reason = string.Empty;
+            var request = airTaskingSystem.GetCommander(package.Alliance)
+                ?.GetRequest(package.MissionRequestId);
+            if (request?.RequestType
+                    != AirMissionRequestType.DestructionOfEnemyAirDefenses
+                || request.DeadPlan == null)
+                return false;
+
+            var report = gameManager.intelligenceSystem
+                ?.GetPicture(package.Alliance)
+                ?.HostileAirDefenseSites
+                ?.FirstOrDefault(candidate => candidate != null
+                                              && candidate.SiteId
+                                              == request.DeadPlan.TargetSiteId
+                                              && candidate.InformationQuality > 0f);
+            if (report == null)
+            {
+                reason = "The assigned SAM site is no longer known before takeoff.";
+                return true;
+            }
+
+            if (report.IsDisabled || report.IsDestroyed)
+            {
+                reason = "The assigned SAM site no longer requires a DEAD attack before takeoff.";
+                return true;
+            }
+
+            var refreshedComponentIds = (report.Components
+                                         ?? new List<AirDefenseComponentIntelligenceReport>())
+                .Where(component => component != null && !component.IsDamaged)
+                .Select(component => component.ComponentId)
+                .Where(id => id != Guid.Empty)
+                .Distinct()
+                .OrderBy(id => id)
+                .ToList();
+            var plannedComponentIds = (request.DeadPlan.TargetComponentIds
+                                       ?? new List<Guid>())
+                .Where(id => id != Guid.Empty)
+                .Distinct()
+                .OrderBy(id => id)
+                .ToList();
+            request.DeadPlan.TargetComponentIds = refreshedComponentIds;
+            if (report.TileId != request.MissionArea.CenterTileId)
+            {
+                request.MissionArea.CenterTileId = report.TileId;
+                reason =
+                    "The assigned mobile SAM moved before takeoff; "
+                    + "the package must be rematerialized around its current position.";
+                return true;
+            }
+            if (!plannedComponentIds.SequenceEqual(refreshedComponentIds))
+            {
+                reason =
+                    "The known DEAD component set changed before takeoff; "
+                    + "the package must be rematerialized with current target coverage.";
+                return true;
+            }
+            if (!IsDeadCorridorStillBlocked(package.Alliance, request.DeadPlan))
+            {
+                reason = "The supported corridor opened before the DEAD package took off.";
+                return true;
+            }
+            return false;
+        }
+
+        private bool IsDeadCorridorStillBlocked(
+            Alliance alliance,
+            DeadMissionPlan plan)
+        {
+            if (plan?.SupportedCorridor == null
+                || plan.TargetSiteId == Guid.Empty)
+                return false;
+            var picture = gameManager.intelligenceSystem?.GetPicture(alliance);
+            var threats = knownSamThreatAssessment.BuildKnownThreats(
+                picture,
+                gameManager.SimulationSettings.TileDistanceKM);
+            var targetThreats = threats
+                .Where(threat => threat.SiteId == plan.TargetSiteId)
+                .ToList();
+            if (targetThreats.Count == 0)
+                return false;
+
+            aircraftTypes.TryGetValue(
+                plan.SupportedCorridor.RepresentativeAircraftTypeDefinitionId,
+                out var representativeType);
+            var clearanceFeet = representativeType == null
+                ? 0f
+                : AirspaceGeometry.SamManeuverClearanceFeet(
+                    representativeType,
+                    representativeType.CruiseSpeedKnots);
+            if (!targetThreats.Any(threat =>
+                    threat.IntersectsSegment(
+                        plan.SupportedCorridor.OriginPositionFeet,
+                        plan.SupportedCorridor.DestinationPositionFeet,
+                        clearanceFeet)
+                    || threat.IntersectsSegment(
+                        plan.SupportedCorridor.DestinationPositionFeet,
+                        plan.SupportedCorridor.RecoveryPositionFeet,
+                        clearanceFeet)))
+                return false;
+
+            var geometry = deadCorridorRoutePlanner.Plan(
+                new AirRouteGeometryPlanningContext(
+                    plan.SupportedCorridor.OriginPositionFeet,
+                    plan.SupportedCorridor.DestinationPositionFeet,
+                    plan.SupportedCorridor.DestinationPositionFeet,
+                    plan.SupportedCorridor.RecoveryPositionFeet,
+                    gameManager.SimulationSettings.TileDistanceKM
+                    * AirspaceGeometry.FeetPerKilometer,
+                    plan.SupportedCorridor
+                        .RepresentativeAircraftTypeDefinitionId,
+                    threats,
+                    clearanceFeet));
+            return !geometry.IsThreatSafe;
+        }
+
+        private void TryStartNextDeadAttack(
+            AirFlight flight,
+            Squadron squadron,
+            SamSite site,
+            Vector3Int siteTileId,
+            IReadOnlyCollection<Guid> authorizedComponentIds,
+            DateTime currentTime)
+        {
+            var authorized = new HashSet<Guid>(
+                authorizedComponentIds ?? Array.Empty<Guid>());
+            var targetPosition = AirspaceGeometry.TileCenterFeet(
+                siteTileId,
+                gameManager.SimulationSettings.TileDistanceKM);
+            var distanceKm = HorizontalDistanceKm(
+                flight.PositionFeet,
+                targetPosition);
+            var functionalFireControlRemains = site.Components.Any(component =>
+                component != null
+                && !component.IsDamaged
+                && authorized.Contains(component.ComponentId)
+                && airDefenseComponentDefinitions.TryGetValue(
+                    component.SamComponentDefinitionId,
+                    out var definition)
+                && definition is RadarAirDefenseComponentDefinition
+                {
+                    ProvidesWeaponQualityTrack: true
+                });
+            foreach (var target in site.Components
+                         .Where(component => component != null
+                                             && !component.IsDamaged
+                                             && authorized.Contains(
+                                                 component.ComponentId)
+                                             && !ordnanceEmploymentSystem
+                                                 .HasActiveOrPendingEffect(
+                                                     component.ComponentId))
+                         .Select(component => new
+                         {
+                             Component = component,
+                             Definition = airDefenseComponentDefinitions
+                                 .TryGetValue(
+                                     component.SamComponentDefinitionId,
+                                     out var definition)
+                                 ? definition
+                                 : null
+                         })
+                         .Where(candidate => candidate.Definition != null)
+                         .Where(candidate => !functionalFireControlRemains
+                                             || candidate.Definition
+                                             is RadarAirDefenseComponentDefinition
+                                             {
+                                                 ProvidesWeaponQualityTrack: true
+                                             })
+                         .OrderBy(candidate => GetDeadTargetPriority(
+                             candidate.Definition))
+                         .ThenBy(candidate => ordnanceEmploymentSystem.Records.Count(
+                             record => record.TargetKind
+                                       == OrdnanceEmploymentTargetKind
+                                           .AirDefenseComponent
+                                       && record.TargetComponentId
+                                       == candidate.Component.ComponentId
+                                       && record.Stage
+                                       == OrdnanceEmploymentRecordStage
+                                           .OrdnanceReleased))
+                         .ThenBy(candidate => candidate.Component.ComponentId))
+            {
+                var weaponId = squadron.Aircraft
+                    .Where(aircraft => aircraft.AssignedFlightId == flight.FlightId
+                                       && aircraft.Status
+                                       != CampaignAircraftStatus.Lost
+                                       && aircraft.Status
+                                       != CampaignAircraftStatus.Damaged)
+                    .SelectMany(aircraft => aircraft.Loadout)
+                    .Where(item => item.Count > 0
+                                   && ordnanceTypes.TryGetValue(
+                                       item.OrdnanceTypeDefinitionId,
+                                       out var ordnance)
+                                   && DeadLoadoutPlanner.CanAttackComponent(
+                                       ordnance,
+                                       target.Definition)
+                                   && distanceKm >= ordnance.MinimumRangeKm
+                                   && distanceKm <= ordnance.MaximumRangeKm)
+                    .Select(item => ordnanceTypes[
+                        item.OrdnanceTypeDefinitionId])
+                    .OrderByDescending(ordnance =>
+                        target.Definition.TargetCategory
+                        == OrdnanceTargetCategory.Radar
+                        && ordnance.EmploymentCategory
+                        == OrdnanceEmploymentCategory.AntiRadiation)
+                    .ThenByDescending(ordnance => ordnance.MaximumRangeKm)
+                    .ThenByDescending(ordnance => ordnance.GetEffectiveness(
+                        target.Definition.TargetCategory))
+                    .ThenBy(ordnance => ordnance.OrdnanceTypeDefinitionId)
+                    .Select(ordnance => ordnance.OrdnanceTypeDefinitionId)
+                    .FirstOrDefault();
+                if (weaponId == Guid.Empty)
+                    continue;
+
+                if (ordnanceEmploymentSystem.TryStartAirToGroundPass(
+                        flight.FlightId,
+                        site.SiteId,
+                        target.Component.ComponentId,
+                        weaponId,
+                        currentTime))
+                    return;
+            }
+        }
+
+        private void ApplyDeadStandoffHolds(
+            IReadOnlyCollection<AirCombatCommand> commands,
+            AirCombatFrame frame,
+            DateTime currentTime)
+        {
+            foreach (var command in commands.OrderBy(item => item.FlightId))
+            {
+                if (!frame.Flights.TryGetValue(command.FlightId, out var view)
+                    || view.Flight.MissionType
+                    != AirMissionRequestType.DestructionOfEnemyAirDefenses
+                    || view.Flight.ExecutionPhase != FlightExecutionPhase.Executing
+                    || view.Flight.AuthorizedSurfaceThreatSiteId == Guid.Empty
+                    || command.Intent != AirCombatIntent.FollowMission
+                    || command.Employment != null
+                    || command.TargetFlightId != Guid.Empty
+                    || command.RequestsWvrEngagement
+                    || command.RequestsSurfaceThreatRecovery
+                    || wvrEngagementSystem.IsFlightEngaged(command.FlightId)
+                    || !gameManager.airDefenseSiteSystem.TryGetSite(
+                        view.Flight.AuthorizedSurfaceThreatSiteId,
+                        out var site)
+                    || !HasPermanentSamShooterChain(site))
+                    continue;
+
+                var standoffEffectUnresolved = ordnanceEmploymentSystem.ActivePasses
+                    .Any(pass => pass.TargetKind
+                                 == OrdnanceEmploymentTargetKind.AirDefenseComponent
+                                 && pass.TargetSiteId == site.SiteId
+                                 && IsWeaponQualityRadarComponent(
+                                     site,
+                                     pass.TargetComponentId))
+                    || ordnanceEmploymentSystem.PendingEffects.Any(effect =>
+                        effect.TargetKind
+                        == OrdnanceEmploymentTargetKind.AirDefenseComponent
+                        && effect.TargetSiteId == site.SiteId
+                        && IsWeaponQualityRadarComponent(
+                            site,
+                            effect.TargetComponentId));
+                if (!standoffEffectUnresolved)
+                    continue;
+
+                command.Intent = AirCombatIntent.FollowMission;
+                command.Maneuver = AirCombatManeuver.LaunchSetup;
+                command.TargetFlightId = Guid.Empty;
+                command.SupportedPendingEffectId = Guid.Empty;
+                command.PreferredSide = AirCombatManeuverSide.None;
+                command.AimPointFeet = view.Flight.PositionFeet;
+                command.HasAimPoint = true;
+                command.DesiredSpeedKnots = view.AircraftType.CruiseSpeedKnots;
+                command.MinimumManeuverEndAt = currentTime.AddSeconds(
+                    TacticalDecisionStepSeconds);
+                command.Reason =
+                    "Holding at standoff while fire-control-radar effects resolve.";
+                view.Flight.TacticalState.Apply(
+                    command.Intent,
+                    command.Maneuver,
+                    currentTime,
+                    command.MinimumManeuverEndAt,
+                    command.TargetFlightId,
+                    command.SupportedPendingEffectId,
+                    command.PreferredSide,
+                    command.AimPointFeet,
+                    command.HasAimPoint,
+                    command.Reason);
+            }
+        }
+
+        private bool IsWeaponQualityRadarComponent(
+            SamSite site,
+            Guid componentId)
+        {
+            var component = site.Components.FirstOrDefault(candidate =>
+                candidate != null && candidate.ComponentId == componentId);
+            return component != null
+                   && airDefenseComponentDefinitions.TryGetValue(
+                       component.SamComponentDefinitionId,
+                       out var definition)
+                   && definition is RadarAirDefenseComponentDefinition
+                   {
+                       ProvidesWeaponQualityTrack: true
+                   };
+        }
+
+        private bool HasDeadMissionUsefulOrdnance(
+            AirFlight flight,
+            Squadron squadron,
+            SamSite site,
+            IReadOnlyCollection<Guid> authorizedComponentIds)
+        {
+            var authorized = new HashSet<Guid>(
+                authorizedComponentIds ?? Array.Empty<Guid>());
+            var survivingTargets = site.Components
+                .Where(component => component != null
+                                    && !component.IsDamaged
+                                    && authorized.Contains(component.ComponentId))
+                .Select(component => airDefenseComponentDefinitions.TryGetValue(
+                    component.SamComponentDefinitionId,
+                    out var definition)
+                    ? definition
+                    : null)
+                .Where(definition => definition != null)
+                .ToList();
+            if (survivingTargets.Count == 0)
+                return false;
+
+            return squadron.Aircraft
+                .Where(aircraft => aircraft.AssignedFlightId == flight.FlightId
+                                   && aircraft.Status != CampaignAircraftStatus.Lost
+                                   && aircraft.Status != CampaignAircraftStatus.Damaged)
+                .SelectMany(aircraft => aircraft.Loadout)
+                .Any(item => item.Count > 0
+                             && ordnanceTypes.TryGetValue(
+                                 item.OrdnanceTypeDefinitionId,
+                                 out var ordnance)
+                             && survivingTargets.Any(target =>
+                                 DeadLoadoutPlanner.CanAttackComponent(
+                                     ordnance,
+                                     target)));
+        }
+
+        private bool HasPermanentSamShooterChain(SamSite site)
+        {
+            var fireControlRadar = site.Components.Any(component =>
+                component is RadarAirDefenseComponent
+                && !component.IsDamaged
+                && airDefenseComponentDefinitions.TryGetValue(
+                    component.SamComponentDefinitionId,
+                    out var definition)
+                && definition is RadarAirDefenseComponentDefinition
+                {
+                    ProvidesWeaponQualityTrack: true
+                });
+            var launcher = site.Components.Any(component =>
+                component is LauncherAirDefenseComponent
+                && !component.IsDamaged);
+            return fireControlRadar && launcher;
+        }
+
+        private bool DidPackageAchieveDeadMinimumEffect(
+            AirPackage package,
+            SamSite site)
+        {
+            if (HasPermanentSamShooterChain(site))
+                return false;
+
+            var packageFlightIds = package.Flights
+                .Select(flight => flight.FlightId)
+                .ToHashSet();
+            var componentsHitByPackage = ordnanceEmploymentSystem.Records
+                .Where(record => record.Stage
+                                 == OrdnanceEmploymentRecordStage.EffectResolved
+                                 && record.TargetKind
+                                 == OrdnanceEmploymentTargetKind
+                                     .AirDefenseComponent
+                                 && record.TargetSiteId == site.SiteId
+                                 && packageFlightIds.Contains(record.SourceFlightId)
+                                 && record.Shots.Any(shot =>
+                                     shot.Result == OrdnanceShotResult.Hit))
+                .Select(record => record.TargetComponentId)
+                .ToHashSet();
+            if (componentsHitByPackage.Count == 0)
+                return false;
+
+            var wouldHaveFireControlRadar = site.Components.Any(component =>
+                component is RadarAirDefenseComponent
+                && (!component.IsDamaged
+                    || componentsHitByPackage.Contains(component.ComponentId))
+                && airDefenseComponentDefinitions.TryGetValue(
+                    component.SamComponentDefinitionId,
+                    out var definition)
+                && definition is RadarAirDefenseComponentDefinition
+                {
+                    ProvidesWeaponQualityTrack: true
+                });
+            var wouldHaveLauncher = site.Components.Any(component =>
+                component is LauncherAirDefenseComponent
+                && (!component.IsDamaged
+                    || componentsHitByPackage.Contains(component.ComponentId)));
+            return wouldHaveFireControlRadar && wouldHaveLauncher;
+        }
+
+        private static int GetDeadTargetPriority(
+            AirDefenseComponentDefinition definition)
+        {
+            return definition switch
+            {
+                RadarAirDefenseComponentDefinition
+                {
+                    ProvidesWeaponQualityTrack: true
+                } => 0,
+                LauncherAirDefenseComponentDefinition => 1,
+                RadarAirDefenseComponentDefinition => 2,
+                CommandAirDefenseComponentDefinition => 3,
+                _ => 4
+            };
+        }
+
+        private static float HorizontalDistanceKm(Vector3 first, Vector3 second)
+        {
+            return Vector2.Distance(
+                       new Vector2(first.x, first.z),
+                       new Vector2(second.x, second.z))
+                   / AirspaceGeometry.FeetPerKilometer;
         }
 
         private AllianceAirDoctrine GetDoctrine(Alliance alliance)

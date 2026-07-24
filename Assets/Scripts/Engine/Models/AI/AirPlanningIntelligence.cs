@@ -17,6 +17,8 @@ namespace Engine.Models
         public IReadOnlyList<Vector3Int> FriendlyAirportTiles { get; }
         public IReadOnlyList<Vector3Int> FriendlyAirfieldTiles { get; }
         public IReadOnlyList<ObservedEnemyAirportSnapshot> EnemyAirports { get; }
+        public IReadOnlyList<AirDefenseSiteIntelligenceReport>
+            HostileAirDefenseSites { get; }
         public IReadOnlyList<Vector3Int> FriendlyFrontlineDivisionTiles { get; }
         public IReadOnlyList<Vector3Int> FriendlyControlledTileIds { get; }
         public IReadOnlyList<Vector3Int> HostileControlledTileIds { get; }
@@ -29,6 +31,7 @@ namespace Engine.Models
             IReadOnlyList<Vector3Int> friendlyAirportTiles,
             IReadOnlyList<Vector3Int> friendlyAirfieldTiles,
             IReadOnlyList<ObservedEnemyAirportSnapshot> enemyAirports,
+            IReadOnlyList<AirDefenseSiteIntelligenceReport> hostileAirDefenseSites,
             IReadOnlyList<Vector3Int> friendlyFrontlineDivisionTiles,
             IReadOnlyList<Vector3Int> friendlyControlledTileIds,
             IReadOnlyList<Vector3Int> hostileControlledTileIds)
@@ -41,6 +44,8 @@ namespace Engine.Models
             FriendlyAirfieldTiles = friendlyAirfieldTiles;
             EnemyAirports = enemyAirports
                             ?? Array.Empty<ObservedEnemyAirportSnapshot>();
+            HostileAirDefenseSites = hostileAirDefenseSites
+                                      ?? Array.Empty<AirDefenseSiteIntelligenceReport>();
             FriendlyFrontlineDivisionTiles = friendlyFrontlineDivisionTiles
                                              ?? Array.Empty<Vector3Int>();
             FriendlyControlledTileIds = friendlyControlledTileIds
@@ -134,6 +139,11 @@ namespace Engine.Models
                 GetAirportTiles(alliance),
                 GetFriendlyAirfieldTiles(alliance),
                 GetEnemyAirports(alliance),
+                (IReadOnlyList<AirDefenseSiteIntelligenceReport>)
+                    gameManager.intelligenceSystem
+                        ?.GetPicture(alliance)
+                        ?.HostileAirDefenseSites
+                    ?? Array.Empty<AirDefenseSiteIntelligenceReport>(),
                 GetFriendlyFrontlineDivisionTiles(alliance),
                 GetControlledLandTiles(alliance),
                 GetHostileControlledLandTiles(alliance));

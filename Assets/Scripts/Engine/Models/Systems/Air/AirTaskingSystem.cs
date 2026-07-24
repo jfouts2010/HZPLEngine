@@ -47,7 +47,15 @@ namespace Engine.Models
                     .Select(tile => tile.TileId)
                     .Distinct()
                     .ToList());
-            requestGenerator = new AirMissionRequestGenerator(priorityService);
+            requestGenerator = new AirMissionRequestGenerator(
+                priorityService,
+                module,
+                alliance =>
+                    gameManager.OrdnanceAllowances.TryGetValue(
+                        alliance,
+                        out var allowed)
+                        ? allowed
+                        : Array.Empty<Guid>());
             packageBuilder = new AirPackageBuilder(
                 gameManager,
                 module,

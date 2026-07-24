@@ -47,7 +47,10 @@ namespace Models.Gameplay.Campaign
         public DateTime PlannedArrivalTime => plannedArrivalTime;
         public AirMissionArea EffectArea => effectArea == null
             ? null
-            : new AirMissionArea(effectArea.CenterTileId, effectArea.RadiusTiles);
+            : new AirMissionArea(
+                effectArea.CenterTileId,
+                effectArea.RadiusKm,
+                effectArea.TileDistanceKm);
         public BarcapStationCoverage BarcapCoverage => barcapCoverage?.Clone();
         public bool HasRepeat => hasRepeat;
         public Guid RepeatFromWaypointId => repeatFromWaypointId;
@@ -74,7 +77,10 @@ namespace Models.Gameplay.Campaign
             this.plannedArrivalTime = plannedArrivalTime;
             this.effectArea = effectArea == null
                 ? null
-                : new AirMissionArea(effectArea.CenterTileId, effectArea.RadiusTiles);
+                : new AirMissionArea(
+                    effectArea.CenterTileId,
+                    effectArea.RadiusKm,
+                    effectArea.TileDistanceKm);
             this.barcapCoverage = barcapCoverage?.Clone();
             this.hasRepeat = hasRepeat;
             this.repeatFromWaypointId = repeatFromWaypointId;
