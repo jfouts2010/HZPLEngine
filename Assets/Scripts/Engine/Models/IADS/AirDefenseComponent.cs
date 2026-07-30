@@ -31,6 +31,10 @@ namespace Models.Gameplay.Campaign
     [Serializable]
     public sealed class RadarAirDefenseComponent : AirDefenseComponent
     {
+        public bool IsEmitting;
+        public DateTime LastEmittedAt;
+        public DateTime EmissionHoldUntil;
+
         public RadarAirDefenseComponent()
         {
         }
@@ -38,6 +42,32 @@ namespace Models.Gameplay.Campaign
         public RadarAirDefenseComponent(RadarAirDefenseComponentDefinition definition)
             : base(definition.SamComponentDefinitionId)
         {
+            IsEmitting = definition.SearchesWhileUnassigned;
+        }
+
+        public void UpdateEmission(bool shouldEmit, DateTime occurredAt)
+        {
+            IsEmitting = CanEmitAt(occurredAt) && shouldEmit;
+            if (IsEmitting)
+                LastEmittedAt = occurredAt;
+        }
+
+        public bool CanEmitAt(DateTime occurredAt)
+        {
+            return !IsDamaged && occurredAt >= EmissionHoldUntil;
+        }
+
+        public void HoldEmissionUntil(DateTime releaseAt)
+        {
+            if (releaseAt > EmissionHoldUntil)
+                EmissionHoldUntil = releaseAt;
+            IsEmitting = false;
+        }
+
+        public override void Damage()
+        {
+            base.Damage();
+            IsEmitting = false;
         }
     }
 

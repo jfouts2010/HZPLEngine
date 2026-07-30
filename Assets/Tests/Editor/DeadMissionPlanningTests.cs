@@ -355,6 +355,37 @@ namespace Tests.Editor
         }
 
         [Test]
+        public void AuthorizedDeadIngressIgnoresAssignedSamWhileOutbound()
+        {
+            var scenario = CreateDeadAirCombatScenario(
+                hostileDistanceKm: 50f,
+                includeHostileTrack: false);
+            var targetSiteId = Guid.NewGuid();
+            scenario.Source.Flight.AuthorizedSurfaceThreatSiteId = targetSiteId;
+            scenario.Source.Flight
+                .UpdateSurfaceThreatPenetrationAuthorization(true);
+            SetBlueKnownThreat(
+                scenario,
+                CreateKnownThreat(
+                    targetSiteId,
+                    scenario.Source.Flight.PositionFeet));
+
+            var command = AirCombatRules.Decide(
+                scenario.Source,
+                scenario.Frame,
+                scenario.OrdnanceTypes,
+                AllianceAirDoctrine.CreateDefault());
+
+            Assert.That(
+                scenario.Source.Flight.ExecutionPhase,
+                Is.EqualTo(FlightExecutionPhase.Outbound));
+            Assert.That(command.RequestsSurfaceThreatRecovery, Is.False);
+            Assert.That(
+                command.Maneuver,
+                Is.EqualTo(AirCombatManeuver.FollowRoute));
+        }
+
+        [Test]
         public void DeadMayHoldTargetSamDuringActiveGroundAttack()
         {
             var scenario = CreateDeadAirCombatScenario(

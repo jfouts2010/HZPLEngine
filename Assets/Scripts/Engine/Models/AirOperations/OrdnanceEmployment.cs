@@ -114,6 +114,7 @@ namespace Models.Gameplay.Campaign
         public Guid SupportSourceSiteId;
         public Guid SupportSourceComponentId;
         public DateTime LastGuidanceUpdateAt;
+        public DateTime LastTargetEmissionAt;
         public float LaunchQuality = 1f;
         public float SupportSeconds;
         public float SupportedSeconds;

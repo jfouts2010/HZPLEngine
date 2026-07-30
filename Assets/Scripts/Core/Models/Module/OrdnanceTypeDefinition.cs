@@ -50,6 +50,8 @@ namespace Models.Module
         public bool RequiresSupportUntilAutonomous { get; }
         public float TerminalLethality { get; }
         public float MaximumSupportAngleDegrees { get; }
+        public float AntiRadiationEmitterMemorySeconds { get; }
+        public float AntiRadiationSilentQualityFloor { get; }
         public Dictionary<OrdnanceTargetCategory, float> EffectivenessByTargetCategory { get; }
 
         public OrdnanceTypeDefinition(
@@ -73,7 +75,9 @@ namespace Models.Module
             float secondsUntilAutonomous = 0f,
             bool requiresSupportUntilAutonomous = false,
             float terminalLethality = 1f,
-            float maximumSupportAngleDegrees = 70f)
+            float maximumSupportAngleDegrees = 70f,
+            float antiRadiationEmitterMemorySeconds = 0f,
+            float antiRadiationSilentQualityFloor = 0f)
         {
             if (ordnanceTypeDefinitionId == Guid.Empty)
                 throw new ArgumentException("Ordnance type definition id is required.", nameof(ordnanceTypeDefinitionId));
@@ -104,6 +108,12 @@ namespace Models.Module
             MaximumSupportAngleDegrees = Math.Max(
                 0f,
                 Math.Min(180f, maximumSupportAngleDegrees));
+            AntiRadiationEmitterMemorySeconds = Math.Max(
+                0f,
+                antiRadiationEmitterMemorySeconds);
+            AntiRadiationSilentQualityFloor = Math.Max(
+                0f,
+                Math.Min(1f, antiRadiationSilentQualityFloor));
             EffectivenessByTargetCategory = ClampEffectiveness(effectivenessByTargetCategory);
         }
 

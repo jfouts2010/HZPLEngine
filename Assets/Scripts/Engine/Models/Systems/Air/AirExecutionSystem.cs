@@ -249,7 +249,7 @@ namespace Engine.Models
                 frame = BuildAirCombatFrame(cursor);
                 wvrEngagementSystem.Reconcile(frame, cursor);
                 ResolveDamageRecovery(cursor);
-                ApplyDeadStandoffHolds(commands, frame, cursor);
+                ApplyDeadPostLaunchManeuvers(commands, frame, cursor);
 
                 var next = NextTacticalBoundary(cursor, currentTime);
                 var elapsedSeconds = Math.Max(0d, (next - cursor).TotalSeconds);
@@ -594,7 +594,13 @@ namespace Engine.Models
                 waypointsCrossedWithoutTime?.Clear();
                 var step = Math.Min(MaximumIntegrationStepSeconds, remaining);
                 var previous = flight.PositionFeet;
-                IntegrateMotion(flight, target, aircraftType, speedKnots, step);
+                IntegrateMotion(
+                    flight,
+                    target,
+                    aircraftType,
+                    command.Maneuver,
+                    speedKnots,
+                    step);
                 remaining -= step;
                 localTime = localTime.AddSeconds(step);
                 BurnFuel(flight, aircraftType, command.Intent, step);
@@ -876,9 +882,20 @@ namespace Engine.Models
                                                  && candidate.IsAirborne)
                              .OrderBy(candidate => candidate.FlightId))
                 {
+                    var canApproachTargetFireControlRadar =
+                        TryGetFlightContext(
+                            flight,
+                            out var probingSquadron,
+                            out _)
+                        && CanApproachDeadFireControlRadar(
+                            flight,
+                            probingSquadron,
+                            site,
+                            request.DeadPlan.TargetComponentIds);
                     flight.UpdateSurfaceThreatPenetrationAuthorization(
-                        minimumEffectAchievedByPackage
-                        && !hasFunctionalShooterChain);
+                        (minimumEffectAchievedByPackage
+                         && !hasFunctionalShooterChain)
+                        || canApproachTargetFireControlRadar);
                     flight.UpdateMissionOutcome(
                         minimumEffectAchievedByPackage,
                         currentTime,
@@ -1196,7 +1213,68 @@ namespace Engine.Models
             }
         }
 
-        private void ApplyDeadStandoffHolds(
+        private bool CanApproachDeadFireControlRadar(
+            AirFlight flight,
+            Squadron squadron,
+            SamSite site,
+            IReadOnlyCollection<Guid> authorizedComponentIds)
+        {
+            if (flight == null
+                || squadron == null
+                || site == null
+                || ordnanceEmploymentSystem.ActivePasses.Any(pass =>
+                    pass.SourceFlightId == flight.FlightId
+                    && pass.TargetKind
+                    == OrdnanceEmploymentTargetKind.AirDefenseComponent)
+                || ordnanceEmploymentSystem.PendingEffects.Any(effect =>
+                    effect.SourceFlightId == flight.FlightId
+                    && effect.TargetKind
+                    == OrdnanceEmploymentTargetKind.AirDefenseComponent))
+                return false;
+
+            var authorized = new HashSet<Guid>(
+                authorizedComponentIds ?? Array.Empty<Guid>());
+            var fireControlRadars = site.Components
+                .OfType<RadarAirDefenseComponent>()
+                .Where(radar => !radar.IsDamaged
+                                && authorized.Contains(radar.ComponentId)
+                                && airDefenseComponentDefinitions.TryGetValue(
+                                    radar.SamComponentDefinitionId,
+                                    out var definition)
+                                && definition
+                                is RadarAirDefenseComponentDefinition
+                                {
+                                    ProvidesWeaponQualityTrack: true
+                                })
+                .ToList();
+            if (fireControlRadars.Count == 0)
+                return false;
+
+            return squadron.Aircraft
+                .Where(aircraft => aircraft.AssignedFlightId == flight.FlightId
+                                   && aircraft.Status
+                                   != CampaignAircraftStatus.Lost
+                                   && aircraft.Status
+                                   != CampaignAircraftStatus.Damaged)
+                .SelectMany(aircraft => aircraft.Loadout)
+                .Any(item => item.Count > 0
+                             && ordnanceTypes.TryGetValue(
+                                 item.OrdnanceTypeDefinitionId,
+                                 out var ordnance)
+                             && (ordnance.EmploymentCategory
+                                 == OrdnanceEmploymentCategory.AntiRadiation
+                                 || ordnance.GuidanceMode
+                                 == OrdnanceGuidanceMode.AntiRadiation)
+                             && fireControlRadars.Any(radar =>
+                                 airDefenseComponentDefinitions.TryGetValue(
+                                     radar.SamComponentDefinitionId,
+                                     out var definition)
+                                 && DeadLoadoutPlanner.CanAttackComponent(
+                                     ordnance,
+                                     definition)));
+        }
+
+        private void ApplyDeadPostLaunchManeuvers(
             IReadOnlyCollection<AirCombatCommand> commands,
             AirCombatFrame frame,
             DateTime currentTime)
@@ -1220,35 +1298,76 @@ namespace Engine.Models
                     || !HasPermanentSamShooterChain(site))
                     continue;
 
-                var standoffEffectUnresolved = ordnanceEmploymentSystem.ActivePasses
-                    .Any(pass => pass.TargetKind
-                                 == OrdnanceEmploymentTargetKind.AirDefenseComponent
-                                 && pass.TargetSiteId == site.SiteId
-                                 && IsWeaponQualityRadarComponent(
-                                     site,
-                                     pass.TargetComponentId))
-                    || ordnanceEmploymentSystem.PendingEffects.Any(effect =>
-                        effect.TargetKind
-                        == OrdnanceEmploymentTargetKind.AirDefenseComponent
-                        && effect.TargetSiteId == site.SiteId
-                        && IsWeaponQualityRadarComponent(
-                            site,
-                            effect.TargetComponentId));
-                if (!standoffEffectUnresolved)
+                var pendingEffect = ordnanceEmploymentSystem.PendingEffects
+                    .Where(effect => effect != null
+                                     && !effect.IsDefeated
+                                     && effect.SourceFlightId
+                                     == view.Flight.FlightId
+                                     && effect.TargetKind
+                                     == OrdnanceEmploymentTargetKind
+                                         .AirDefenseComponent
+                                     && effect.TargetSiteId == site.SiteId
+                                     && effect.ResolveAt > currentTime
+                                     && IsWeaponQualityRadarComponent(
+                                         site,
+                                         effect.TargetComponentId)
+                                     && ordnanceTypes.TryGetValue(
+                                         effect.OrdnanceTypeDefinitionId,
+                                         out var ordnance)
+                                     && (ordnance.EmploymentCategory
+                                         == OrdnanceEmploymentCategory
+                                             .AntiRadiation
+                                         || ordnance.GuidanceMode
+                                         == OrdnanceGuidanceMode
+                                             .AntiRadiation))
+                    .OrderBy(effect => effect.ResolveAt)
+                    .FirstOrDefault();
+                if (pendingEffect == null)
                     continue;
 
+                var away = view.Flight.PositionFeet
+                           - pendingEffect.TargetPositionFeet;
+                away.y = 0f;
+                if (away.sqrMagnitude < 1f)
+                    away = pendingEffect.SourcePositionFeet
+                           - pendingEffect.TargetPositionFeet;
+                away.y = 0f;
+                if (away.sqrMagnitude < 1f)
+                    away = Vector3.forward;
+                away.Normalize();
+
+                var turnLeft = (view.Flight.FlightId.ToByteArray()[0] & 1) == 0;
+                var tangent = turnLeft
+                    ? new Vector3(-away.z, 0f, away.x)
+                    : new Vector3(away.z, 0f, -away.x);
+                var offsetDirection = (tangent + away * 0.35f).normalized;
+                var secondsRemaining = Math.Max(
+                    TacticalDecisionStepSeconds,
+                    (pendingEffect.ResolveAt - currentTime).TotalSeconds);
+                var cruiseFeetPerSecond =
+                    Math.Max(1f, view.AircraftType.CruiseSpeedKnots)
+                    * AirspaceGeometry.FeetPerNauticalMile / 3600f;
+                var offsetDistanceFeet = Mathf.Clamp(
+                    cruiseFeetPerSecond * (float)secondsRemaining,
+                    10f * AirspaceGeometry.FeetPerKilometer,
+                    25f * AirspaceGeometry.FeetPerKilometer);
+
                 command.Intent = AirCombatIntent.FollowMission;
-                command.Maneuver = AirCombatManeuver.LaunchSetup;
+                command.Maneuver = AirCombatManeuver.Extend;
                 command.TargetFlightId = Guid.Empty;
-                command.SupportedPendingEffectId = Guid.Empty;
-                command.PreferredSide = AirCombatManeuverSide.None;
-                command.AimPointFeet = view.Flight.PositionFeet;
+                command.SupportedPendingEffectId = pendingEffect.PendingEffectId;
+                command.PreferredSide = turnLeft
+                    ? AirCombatManeuverSide.Left
+                    : AirCombatManeuverSide.Right;
+                command.AimPointFeet = view.Flight.PositionFeet
+                                       + offsetDirection * offsetDistanceFeet;
+                command.AimPointFeet.y = view.Flight.PositionFeet.y;
                 command.HasAimPoint = true;
                 command.DesiredSpeedKnots = view.AircraftType.CruiseSpeedKnots;
                 command.MinimumManeuverEndAt = currentTime.AddSeconds(
                     TacticalDecisionStepSeconds);
                 command.Reason =
-                    "Holding at standoff while fire-control-radar effects resolve.";
+                    "Offsetting from the emitter while the anti-radiation missile resolves.";
                 view.Flight.TacticalState.Apply(
                     command.Intent,
                     command.Maneuver,
@@ -1999,6 +2118,7 @@ namespace Engine.Models
             AirFlight flight,
             Vector3 target,
             AircraftTypeDefinition aircraftType,
+            AirCombatManeuver maneuver,
             float speedKnots,
             double seconds)
         {
@@ -2006,7 +2126,8 @@ namespace Engine.Models
             var heading = Mathf.MoveTowardsAngle(
                 flight.HeadingDegrees,
                 desiredHeading,
-                aircraftType.TurnRateDegreesPerSecond * (float)seconds);
+                GetManeuverTurnRateDegreesPerSecond(aircraftType, maneuver)
+                * (float)seconds);
             var radians = heading * Mathf.Deg2Rad;
             var feetPerSecond = speedKnots * AirspaceGeometry.FeetPerNauticalMile / 3600f;
             var horizontalStep = feetPerSecond * (float)seconds;
@@ -2031,6 +2152,22 @@ namespace Engine.Models
                     Math.Max(1f, verticalRate) * (float)seconds),
                 position.z);
             flight.UpdateKinematics(position, heading, speedKnots);
+        }
+
+        internal static float GetManeuverTurnRateDegreesPerSecond(
+            AircraftTypeDefinition aircraftType,
+            AirCombatManeuver maneuver)
+        {
+            if (aircraftType == null)
+                return 0f;
+
+            return maneuver == AirCombatManeuver.BeamLeft
+                   || maneuver == AirCombatManeuver.BeamRight
+                   || maneuver == AirCombatManeuver.BreakLeft
+                   || maneuver == AirCombatManeuver.BreakRight
+                   || maneuver == AirCombatManeuver.Drag
+                ? aircraftType.DefensiveTurnRateDegreesPerSecond
+                : aircraftType.TurnRateDegreesPerSecond;
         }
 
         private static bool HasReached(Vector3 current, Vector3 target)

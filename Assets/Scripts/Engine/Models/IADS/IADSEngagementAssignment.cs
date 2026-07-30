@@ -9,6 +9,7 @@ namespace Models.Gameplay.Campaign
         public Guid SiteId;
         public Guid TrackId;
         public Guid TargetFlightId;
+        public Guid FireControlRadarComponentId;
         public DateTime AssignedAt;
     }
 }

@@ -214,7 +214,9 @@ namespace Models.Gameplay.Campaign
                 .Where(assignment => assignment != null
                                      && assignment.SiteId != Guid.Empty
                                      && assignment.TrackId != Guid.Empty
-                                     && assignment.TargetFlightId != Guid.Empty)
+                                     && assignment.TargetFlightId != Guid.Empty
+                                     && assignment.FireControlRadarComponentId
+                                     != Guid.Empty)
                 .OrderBy(assignment => assignment.SiteId)
                 .ThenBy(assignment => assignment.TargetFlightId)
                 .ToList();
@@ -241,6 +243,7 @@ namespace Models.Gameplay.Campaign
                              .OfType<RadarAirDefenseComponent>())
                 {
                     if (radarComponent.IsDamaged
+                        || !radarComponent.IsEmitting
                         || radarDefinitionLookup == null
                         || !radarDefinitionLookup.TryGetValue(
                             radarComponent.SamComponentDefinitionId,

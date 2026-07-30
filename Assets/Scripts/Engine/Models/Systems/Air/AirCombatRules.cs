@@ -1457,7 +1457,9 @@ namespace Engine.Models
             if (siteId == Guid.Empty
                 || flight.MissionType
                 != AirMissionRequestType.DestructionOfEnemyAirDefenses
-                || flight.ExecutionPhase != FlightExecutionPhase.Executing)
+                || (flight.ExecutionPhase != FlightExecutionPhase.Outbound
+                    && flight.ExecutionPhase
+                    != FlightExecutionPhase.Executing))
                 return false;
 
             if (flight.AuthorizedSurfaceThreatPenetrationGranted)

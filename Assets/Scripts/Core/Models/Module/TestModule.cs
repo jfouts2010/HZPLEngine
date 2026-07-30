@@ -39,6 +39,8 @@ namespace Models.Module
             Guid.Parse("713acf12-4569-43cb-bd66-23bbbda24168");
 
         public static readonly Guid FanSongComponentId = Guid.Parse("0ec0a8c9-dc38-461c-a3f8-1831afdf43ad");
+        public static readonly Guid SpoonRestComponentId =
+            Guid.Parse("a4f1d813-2f60-42ec-817c-5bcefe160e5d");
         public static readonly Guid Sa2LauncherComponentId = Guid.Parse("1ecf62f4-3034-4be3-86c3-0e8d65ecef6a");
         public static readonly Guid SamCommandPostComponentId = Guid.Parse("0ef1697d-f3fb-49fa-8f54-bac90107b552");
         public static readonly Guid OsaRadarComponentId = Guid.Parse("9daab0e8-3d79-49f3-91b5-feb343f09fac");
@@ -116,7 +118,8 @@ namespace Models.Module
                     airInterferenceCapability: 1f,
                     internalGunOrdnanceTypeDefinitionId: M61GunOrdnanceTypeId,
                     internalGunBurstCount: 6,
-                    wvrCombatRating: 0.72f),
+                    wvrCombatRating: 0.72f,
+                    defensiveTurnRateDegreesPerSecond: 9f),
                 new AircraftTypeDefinition(
                     Mig29AircraftTypeId,
                     "MiG-29 Fulcrum",
@@ -145,7 +148,8 @@ namespace Models.Module
                     airInterferenceCapability: 0.95f,
                     internalGunOrdnanceTypeDefinitionId: Gsh301GunOrdnanceTypeId,
                     internalGunBurstCount: 5,
-                    wvrCombatRating: 0.74f),
+                    wvrCombatRating: 0.74f,
+                    defensiveTurnRateDegreesPerSecond: 9.6f),
                 new AircraftTypeDefinition(
                     E3AircraftTypeId,
                     "E-3 Sentry",
@@ -316,8 +320,10 @@ namespace Models.Module
                     employmentCategory: OrdnanceEmploymentCategory.AntiRadiation,
                     guidanceMode: OrdnanceGuidanceMode.AntiRadiation,
                     maximumRangeKm: 150f,
-                    preparationSeconds: 45f,
-                    effectSpeedKnots: 1800f),
+                    preparationSeconds: 5f,
+                    effectSpeedKnots: 1800f,
+                    antiRadiationEmitterMemorySeconds: 40f,
+                    antiRadiationSilentQualityFloor: 0.25f),
                 new OrdnanceTypeDefinition(
                     Gbu38OrdnanceTypeId,
                     "GBU-38 JDAM",
@@ -464,7 +470,18 @@ namespace Models.Module
                     trackQuality: 0.75f,
                     providesWeaponQualityTrack: true,
                     maximumSupportedMissiles: 3,
-                    maximumConcurrentTargetEngagements: 1),
+                    maximumConcurrentTargetEngagements: 1,
+                    searchesWhileUnassigned: false),
+                new RadarAirDefenseComponentDefinition(
+                    SpoonRestComponentId,
+                    "Spoon Rest acquisition radar component",
+                    OrdnanceTargetCategory.Radar,
+                    targetToughness: 2,
+                    detectionRangeKm: 120f,
+                    maxAltitudeMeters: 24000f,
+                    trackQuality: 0.5f,
+                    providesWeaponQualityTrack: false,
+                    searchesWhileUnassigned: true),
                 new LauncherAirDefenseComponentDefinition(
                     Sa2LauncherComponentId,
                     "SA-2 launcher rail",
@@ -535,6 +552,7 @@ namespace Models.Module
                     SamSiteHostConstraint.StaticOnly,
                     new List<SamSiteTemplateComponent>
                     {
+                        new SamSiteTemplateComponent(SpoonRestComponentId, 1),
                         new SamSiteTemplateComponent(FanSongComponentId, 1),
                         new SamSiteTemplateComponent(Sa2LauncherComponentId, 6),
                         new SamSiteTemplateComponent(SamCommandPostComponentId, 1)

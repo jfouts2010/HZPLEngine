@@ -187,6 +187,10 @@ namespace Engine.Models
                     ordnance,
                     componentDefinition))
                 return false;
+            if (IsAntiRadiation(ordnance)
+                && (component is not RadarAirDefenseComponent radar
+                    || !radar.IsEmitting))
+                return false;
 
             var targetPosition = AirspaceGeometry.TileCenterFeet(
                 siteTileId,
@@ -411,6 +415,15 @@ namespace Engine.Models
                 if (seconds <= 0d)
                     continue;
 
+                if (effect.TargetKind
+                        == OrdnanceEmploymentTargetKind.AirDefenseComponent
+                    && IsAntiRadiation(ordnance)
+                    && TryGetTargetRadar(effect, out var targetRadar)
+                    && targetRadar.IsEmitting)
+                {
+                    effect.LastTargetEmissionAt = boundedCurrent;
+                }
+
                 contexts.TryGetValue(effect.TargetFlightId, out var defendedTarget);
                 var maximumRangeKm = effect.MaximumRangeKmAtRelease > 0f
                     ? effect.MaximumRangeKmAtRelease
@@ -487,12 +500,13 @@ namespace Engine.Models
                         if (secondsToImpact
                             <= AirCombatRules.TerminalDefenseSeconds)
                         {
-                            var beamStrength = CalculateRadarBeamStrength(
-                                defendedTarget.Flight.TacticalState.Maneuver,
-                                defendedTarget.Flight.HeadingDegrees,
-                                effect.PrincipalThreatBearingDegrees);
+                            var defensiveStrength =
+                                CalculateRadarDefensiveManeuverStrength(
+                                    defendedTarget.Flight.TacticalState.Maneuver,
+                                    defendedTarget.Flight.HeadingDegrees,
+                                    effect.PrincipalThreatBearingDegrees);
                             effect.DefensiveSeconds +=
-                                (float)seconds * beamStrength;
+                                (float)seconds * defensiveStrength;
                             var flightSeconds = Math.Max(
                                 1d,
                                 (effect.ResolveAt - effect.ReleasedAt)
@@ -565,6 +579,7 @@ namespace Engine.Models
                 .OfType<RadarAirDefenseComponent>()
                 .FirstOrDefault(component =>
                     !component.IsDamaged
+                    && component.IsEmitting
                     && (effect.SupportSourceComponentId == Guid.Empty
                         || component.ComponentId == effect.SupportSourceComponentId));
             if (radar == null
@@ -637,20 +652,18 @@ namespace Engine.Models
             };
         }
 
-        internal static float CalculateRadarBeamStrength(
+        internal static float CalculateRadarDefensiveManeuverStrength(
             AirCombatManeuver maneuver,
             float headingDegrees,
             float threatBearingDegrees)
         {
-            if (maneuver != AirCombatManeuver.BeamLeft
-                && maneuver != AirCombatManeuver.BeamRight)
+            if (maneuver == AirCombatManeuver.Extend)
                 return 0f;
 
-            var relativeBearing = Math.Abs(Mathf.DeltaAngle(
+            return CalculateDefensiveManeuverStrength(
+                maneuver,
                 headingDegrees,
-                threatBearingDegrees));
-            return 1f - Mathf.Clamp01(
-                Math.Abs(relativeBearing - 90f) / 90f);
+                threatBearingDegrees);
         }
 
         public void RefreshTacticalState(DateTime currentTime)
@@ -660,8 +673,10 @@ namespace Engine.Models
 
             contexts = BuildFlightContexts();
             RefreshSamEngagementAssignments(contexts, currentTime);
+            RefreshRadarEmissionPostures(currentTime);
             LaunchAssignedSamShots(contexts, currentTime);
             ProcessDueEvents(currentTime);
+            RefreshRadarEmissionPostures(currentTime);
 
             TrimEmploymentRecords();
         }
@@ -862,6 +877,18 @@ namespace Engine.Models
                     "Ground-attack preparation aborted because the selected component was no longer functional.");
                 return;
             }
+            if (IsAntiRadiation(ordnance)
+                && (component is not RadarAirDefenseComponent radar
+                    || !radar.IsEmitting))
+            {
+                AddRecord(
+                    pass,
+                    OrdnanceEmploymentRecordStage.PreparationAborted,
+                    releaseAt,
+                    0,
+                    "Anti-radiation preparation aborted because the selected radar stopped emitting before release.");
+                return;
+            }
 
             var targetPosition = AirspaceGeometry.TileCenterFeet(
                 siteTileId,
@@ -934,6 +961,9 @@ namespace Engine.Models
                 GuidanceStage = OrdnanceGuidanceStage.Autonomous,
                 AutonomousAt = releaseAt,
                 LastGuidanceUpdateAt = releaseAt,
+                LastTargetEmissionAt = IsAntiRadiation(ordnance)
+                    ? releaseAt
+                    : default,
                 LaunchQuality = 1f
             };
             PendingEffects.Add(pending);
@@ -1380,6 +1410,7 @@ namespace Engine.Models
                 effect.GuidanceStage = OrdnanceGuidanceStage.Resolved;
                 var result = OrdnanceShotResult.Ineffective;
                 var roll = -1f;
+                var guidanceQuality = 1f;
                 if (gameManager.airDefenseSiteSystem.TryGetSite(
                         effect.TargetSiteId,
                         out var site)
@@ -1391,6 +1422,26 @@ namespace Engine.Models
                         && candidate.ComponentId == effect.TargetComponentId);
                     if (component != null && !component.IsDamaged)
                     {
+                        if (ordnanceTypes.TryGetValue(
+                                effect.OrdnanceTypeDefinitionId,
+                                out var ordnance)
+                            && IsAntiRadiation(ordnance))
+                        {
+                            if (component is RadarAirDefenseComponent
+                                {
+                                    IsEmitting: true
+                                })
+                            {
+                                effect.LastTargetEmissionAt = resolveAt;
+                            }
+                            guidanceQuality =
+                                CalculateAntiRadiationGuidanceQuality(
+                                    effect,
+                                    ordnance,
+                                    resolveAt);
+                            effect.HitProbability = Mathf.Clamp01(
+                                effect.HitProbability * guidanceQuality);
+                        }
                         roll = (float)StableRoll(effect.PendingEffectId, 0);
                         result = roll < effect.HitProbability
                             ? OrdnanceShotResult.Hit
@@ -1421,7 +1472,10 @@ namespace Engine.Models
                     result == OrdnanceShotResult.Hit
                         ? $"SAM component {ShortId(effect.TargetComponentId)} was destroyed."
                         : result == OrdnanceShotResult.Miss
-                            ? $"Attack on SAM component {ShortId(effect.TargetComponentId)} missed."
+                            ? $"Attack on SAM component {ShortId(effect.TargetComponentId)} missed"
+                              + (guidanceQuality < 0.999f
+                                  ? $" after emitter guidance decayed to {guidanceQuality:P0}."
+                                  : ".")
                             : $"Attack on SAM component {ShortId(effect.TargetComponentId)} became ineffective.",
                     new List<OrdnanceShotDiagnostic> { shot });
                 PendingEffects.Remove(effect);
@@ -1512,16 +1566,21 @@ namespace Engine.Models
                         continue;
 
                     foreach (var track in tracks.Where(track =>
-                                 !reservedTargetFlightIds.Contains(track.FlightId)
-                                 && CanAnyLauncherEngage(
-                                     site,
-                                     sitePosition,
-                                     contexts[track.FlightId],
-                                     track)))
+                                 !reservedTargetFlightIds.Contains(track.FlightId)))
                     {
+                        if (!CanAnyLauncherEngage(
+                                site,
+                                sitePosition,
+                                contexts[track.FlightId],
+                                track,
+                                currentTime,
+                                out var fireControlRadarComponentId))
+                            continue;
+
                         candidates.Add(new SamEngagementCandidate(
                             site,
                             track,
+                            fireControlRadarComponentId,
                             Vector3.Distance(
                                 sitePosition,
                                 contexts[track.FlightId].Flight.PositionFeet)));
@@ -1545,6 +1604,8 @@ namespace Engine.Models
                         SiteId = candidate.Site.SiteId,
                         TrackId = candidate.Track.TrackId,
                         TargetFlightId = candidate.Track.FlightId,
+                        FireControlRadarComponentId =
+                            candidate.FireControlRadarComponentId,
                         AssignedAt = currentTime
                     });
                     assignedSiteIds.Add(candidate.Site.SiteId);
@@ -1583,6 +1644,9 @@ namespace Engine.Models
                             site,
                             target,
                             track,
+                            assignment.FireControlRadarComponentId,
+                            true,
+                            currentTime,
                             out var supportRadar,
                             out var supportRadarDefinition,
                             out var weaponQualityForShot))
@@ -1679,6 +1743,78 @@ namespace Engine.Models
             }
         }
 
+        private void RefreshRadarEmissionPostures(DateTime currentTime)
+        {
+            var assignments = new[] { Alliance.Bluefor, Alliance.Redfor }
+                .Select(alliance => iadsSystem.GetAllianceIADS(alliance))
+                .Where(iads => iads != null)
+                .SelectMany(iads => iads.CurrentEngagementAssignments)
+                .ToList();
+
+            foreach (var site in gameManager.airDefenseSiteSystem.Sites
+                         .Where(candidate => candidate != null))
+            {
+                var availableRadarIds = gameManager.airDefenseSiteSystem
+                    .GetAvailableComponents(site)
+                    .OfType<RadarAirDefenseComponent>()
+                    .Select(radar => radar.ComponentId)
+                    .ToHashSet();
+
+                foreach (var radar in site.Components
+                             .OfType<RadarAirDefenseComponent>())
+                {
+                    if (!availableRadarIds.Contains(radar.ComponentId)
+                        || radar.IsDamaged
+                        || !airDefenseComponentDefinitions.TryGetValue(
+                            radar.SamComponentDefinitionId,
+                            out var componentDefinition)
+                        || componentDefinition
+                        is not RadarAirDefenseComponentDefinition definition)
+                    {
+                        radar.UpdateEmission(false, currentTime);
+                        continue;
+                    }
+
+                    var isAssigned = assignments.Any(assignment =>
+                        assignment.SiteId == site.SiteId
+                        && assignment.FireControlRadarComponentId
+                        == radar.ComponentId);
+                    var isSupporting = GetPendingSupportedSamEffects(
+                            site.SiteId,
+                            radar.ComponentId,
+                            currentTime)
+                        .Any();
+                    var inboundAntiRadiationEffects = PendingEffects
+                        .Where(effect => effect != null
+                                         && !effect.IsDefeated
+                                         && effect.TargetKind
+                                         == OrdnanceEmploymentTargetKind
+                                             .AirDefenseComponent
+                                         && effect.TargetSiteId == site.SiteId
+                                         && effect.TargetComponentId
+                                         == radar.ComponentId
+                                         && effect.ResolveAt > currentTime
+                                         && ordnanceTypes.TryGetValue(
+                                             effect.OrdnanceTypeDefinitionId,
+                                             out var ordnance)
+                                         && IsAntiRadiation(ordnance))
+                        .ToList();
+                    if (!isSupporting && inboundAntiRadiationEffects.Count > 0)
+                    {
+                        radar.HoldEmissionUntil(
+                            inboundAntiRadiationEffects.Max(effect =>
+                                effect.ResolveAt));
+                    }
+
+                    radar.UpdateEmission(
+                        definition.SearchesWhileUnassigned
+                        || isAssigned
+                        || isSupporting,
+                        currentTime);
+                }
+            }
+        }
+
         private static Guid SelectTargetAircraftId(
             FlightContext target,
             Guid seed,
@@ -1696,18 +1832,24 @@ namespace Engine.Models
             SamSite site,
             Vector3 sitePosition,
             FlightContext target,
-            IADSTrack track)
+            IADSTrack track,
+            DateTime currentTime,
+            out Guid fireControlRadarComponentId)
         {
+            fireControlRadarComponentId = Guid.Empty;
             if (!TryGetWeaponQualityRadar(
                     site,
                     target,
                     track,
-                    out _,
+                    Guid.Empty,
+                    false,
+                    currentTime,
+                    out var supportRadar,
                     out _,
                     out var weaponQualityForShot))
                 return false;
 
-            return gameManager.airDefenseSiteSystem
+            var canEngage = gameManager.airDefenseSiteSystem
                 .GetAvailableComponents(site)
                 .OfType<LauncherAirDefenseComponent>()
                 .Any(launcher =>
@@ -1721,6 +1863,9 @@ namespace Engine.Models
                         out _)
                     && weaponQualityForShot
                     >= launcherDefinition.MinimumTrackQualityToFire);
+            if (canEngage)
+                fireControlRadarComponentId = supportRadar.ComponentId;
+            return canEngage;
         }
 
         private bool TryGetLauncherEmployment(
@@ -1786,6 +1931,9 @@ namespace Engine.Models
             SamSite site,
             FlightContext target,
             IADSTrack track,
+            Guid preferredRadarComponentId,
+            bool requireEmission,
+            DateTime currentTime,
             out RadarAirDefenseComponent radar,
             out RadarAirDefenseComponentDefinition radarDefinition,
             out float weaponQualityForShot)
@@ -1804,6 +1952,11 @@ namespace Engine.Models
                 .GetAvailableComponents(site)
                 .OfType<RadarAirDefenseComponent>()
                 .Where(component => !component.IsDamaged
+                                    && component.CanEmitAt(currentTime)
+                                    && (!requireEmission || component.IsEmitting)
+                                    && (preferredRadarComponentId == Guid.Empty
+                                        || component.ComponentId
+                                        == preferredRadarComponentId)
                                     && airDefenseComponentDefinitions.TryGetValue(
                                         component.SamComponentDefinitionId,
                                         out var definition)
@@ -1839,7 +1992,7 @@ namespace Engine.Models
                     item.Component.ComponentId,
                     item.Definition,
                     target.Flight.FlightId,
-                    gameManager.CurrentTime))
+                    currentTime))
                 .OrderByDescending(item => item.LocalQualityCap)
                 .ThenBy(item => item.Component.ComponentId)
                 .FirstOrDefault();
@@ -1851,6 +2004,57 @@ namespace Engine.Models
             return radar != null
                    && radarDefinition != null
                    && weaponQualityForShot > 0f;
+        }
+
+        private bool TryGetTargetRadar(
+            PendingOrdnanceEffect effect,
+            out RadarAirDefenseComponent radar)
+        {
+            radar = null;
+            if (effect == null
+                || effect.TargetKind
+                != OrdnanceEmploymentTargetKind.AirDefenseComponent
+                || effect.TargetSiteId == Guid.Empty
+                || effect.TargetComponentId == Guid.Empty
+                || !gameManager.airDefenseSiteSystem.TryGetSite(
+                    effect.TargetSiteId,
+                    out var site))
+                return false;
+
+            radar = site.Components
+                .OfType<RadarAirDefenseComponent>()
+                .FirstOrDefault(component =>
+                    component.ComponentId == effect.TargetComponentId);
+            return radar != null;
+        }
+
+        internal static float CalculateAntiRadiationGuidanceQuality(
+            PendingOrdnanceEffect effect,
+            OrdnanceTypeDefinition ordnance,
+            DateTime resolveAt)
+        {
+            if (effect == null || !IsAntiRadiation(ordnance))
+                return 1f;
+
+            var lastEmission = effect.LastTargetEmissionAt == default
+                ? effect.ReleasedAt
+                : effect.LastTargetEmissionAt;
+            var silentSeconds = Math.Max(
+                0d,
+                (resolveAt - lastEmission).TotalSeconds);
+            if (silentSeconds <= 0d)
+                return 1f;
+
+            var floor = Mathf.Clamp01(
+                ordnance.AntiRadiationSilentQualityFloor);
+            var memorySeconds = Math.Max(
+                0f,
+                ordnance.AntiRadiationEmitterMemorySeconds);
+            if (memorySeconds <= 0f)
+                return floor;
+
+            var decay = Mathf.Clamp01((float)silentSeconds / memorySeconds);
+            return Mathf.Lerp(1f, floor, decay);
         }
 
         private bool CanRadarAcceptNewSalvo(
@@ -2068,6 +2272,15 @@ namespace Engine.Models
                            OrdnanceTargetCategory.Aircraft) > 0f);
         }
 
+        private static bool IsAntiRadiation(OrdnanceTypeDefinition definition)
+        {
+            return definition != null
+                   && (definition.EmploymentCategory
+                       == OrdnanceEmploymentCategory.AntiRadiation
+                       || definition.GuidanceMode
+                       == OrdnanceGuidanceMode.AntiRadiation);
+        }
+
         private static bool IsWvrWeapon(OrdnanceTypeDefinition definition)
         {
             return definition.EmploymentCategory
@@ -2162,15 +2375,18 @@ namespace Engine.Models
         {
             public readonly SamSite Site;
             public readonly IADSTrack Track;
+            public readonly Guid FireControlRadarComponentId;
             public readonly float DistanceFeet;
 
             public SamEngagementCandidate(
                 SamSite site,
                 IADSTrack track,
+                Guid fireControlRadarComponentId,
                 float distanceFeet)
             {
                 Site = site;
                 Track = track;
+                FireControlRadarComponentId = fireControlRadarComponentId;
                 DistanceFeet = distanceFeet;
             }
         }

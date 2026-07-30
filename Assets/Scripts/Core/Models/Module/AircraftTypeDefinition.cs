@@ -20,6 +20,7 @@ namespace Models.Module
         public float ClimbRateFeetPerMinute { get; }
         public float DescentRateFeetPerMinute { get; }
         public float TurnRateDegreesPerSecond { get; }
+        public float DefensiveTurnRateDegreesPerSecond { get; }
         public float NominalCruiseAltitudeFeet { get; }
         public float ServiceCeilingFeet { get; }
         public float RangeKm { get; }
@@ -69,7 +70,8 @@ namespace Models.Module
             float airInterferenceCapability = 0f,
             Guid internalGunOrdnanceTypeDefinitionId = default,
             int internalGunBurstCount = 0,
-            float wvrCombatRating = 0.5f)
+            float wvrCombatRating = 0.5f,
+            float defensiveTurnRateDegreesPerSecond = 0f)
         {
             if (aircraftTypeDefinitionId == Guid.Empty)
                 throw new ArgumentException("Aircraft type definition id is required.",
@@ -83,6 +85,12 @@ namespace Models.Module
             ClimbRateFeetPerMinute = Math.Max(0f, climbRateFeetPerMinute);
             DescentRateFeetPerMinute = Math.Max(0f, descentRateFeetPerMinute);
             TurnRateDegreesPerSecond = Math.Max(0f, turnRateDegreesPerSecond);
+            DefensiveTurnRateDegreesPerSecond =
+                defensiveTurnRateDegreesPerSecond <= 0f
+                    ? TurnRateDegreesPerSecond
+                    : Math.Max(
+                        TurnRateDegreesPerSecond,
+                        defensiveTurnRateDegreesPerSecond);
             NominalCruiseAltitudeFeet = Math.Max(0f, nominalCruiseAltitudeFeet);
             ServiceCeilingFeet = Math.Max(NominalCruiseAltitudeFeet, serviceCeilingFeet);
             RangeKm = rangeKm;

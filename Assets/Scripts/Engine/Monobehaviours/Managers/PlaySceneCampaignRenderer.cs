@@ -5508,12 +5508,23 @@ namespace Engine.Monobehaviours.Managers
                         : site.IsDisabled
                             ? "INTACT (SITE DISABLED)"
                             : "OPERATIONAL";
-                var detail = component is LauncherAirDefenseComponent launcher
-                    ? $"  •  ready {launcher.ReadyRounds} / reserve {launcher.ReserveRounds}"
-                      + (launcher.NextReloadAt == default
-                          ? string.Empty
-                          : $" / reload {launcher.NextReloadAt:MM-dd HH:mm:ss}")
-                    : string.Empty;
+                var detail = component switch
+                {
+                    RadarAirDefenseComponent radar =>
+                        $"  •  {(radar.IsEmitting ? "EMITTING" : "SILENT")}"
+                        + (radar.IsEmitting || radar.LastEmittedAt == default
+                            ? string.Empty
+                            : $" / last emission {radar.LastEmittedAt:MM-dd HH:mm:ss}")
+                        + (radar.EmissionHoldUntil <= gameManager.CurrentTime
+                            ? string.Empty
+                            : $" / held until {radar.EmissionHoldUntil:MM-dd HH:mm:ss}"),
+                    LauncherAirDefenseComponent launcher =>
+                        $"  •  ready {launcher.ReadyRounds} / reserve {launcher.ReserveRounds}"
+                        + (launcher.NextReloadAt == default
+                            ? string.Empty
+                            : $" / reload {launcher.NextReloadAt:MM-dd HH:mm:ss}"),
+                    _ => string.Empty
+                };
                 lines.Add(
                     $"  [{componentState}] {componentName}  •  " +
                     $"{GetSamComponentTypeLabel(component)}  •  " +

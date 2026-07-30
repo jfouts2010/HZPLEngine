@@ -34,6 +34,7 @@ namespace Models.Module
         public float MaxAltitudeMeters { get; }
         public float TrackQuality { get; }
         public bool ProvidesWeaponQualityTrack { get; }
+        public bool SearchesWhileUnassigned { get; }
         public int MaximumSupportedMissiles { get; }
         public int MaximumConcurrentTargetEngagements { get; }
         
@@ -48,13 +49,15 @@ namespace Models.Module
             bool providesWeaponQualityTrack = false,
             string thirdPartyId = "",
             int maximumSupportedMissiles = 1,
-            int maximumConcurrentTargetEngagements = 1)
+            int maximumConcurrentTargetEngagements = 1,
+            bool searchesWhileUnassigned = true)
             : base(samComponentDefinitionId, name, targetCategory, targetToughness, thirdPartyId)
         {
             DetectionRangeKm = Math.Max(0f, detectionRangeKm);
             MaxAltitudeMeters = Math.Max(0f, maxAltitudeMeters);
             TrackQuality = Math.Max(0f, Math.Min(1f, trackQuality));
             ProvidesWeaponQualityTrack = providesWeaponQualityTrack;
+            SearchesWhileUnassigned = searchesWhileUnassigned;
             MaximumSupportedMissiles = providesWeaponQualityTrack
                 ? Math.Max(1, maximumSupportedMissiles)
                 : 0;
