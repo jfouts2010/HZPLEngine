@@ -63,9 +63,51 @@ namespace Engine.Models
         }
     }
 
+    internal enum AirToAirShotStatus
+    {
+        Ready = 0,
+        NeedsPointing = 1,
+        LowQuality = 2,
+        TooFar = 3,
+        TooClose = 4,
+        Unavailable = 5
+    }
+
+    internal sealed class AirToAirShotAssessment
+    {
+        public OrdnanceTypeDefinition Weapon { get; }
+        public AirToAirShotStatus Status { get; }
+        public float DistanceKm { get; }
+        public float MaximumRangeKm { get; }
+        public float OffNoseDegrees { get; }
+        public float LaunchQuality { get; }
+        public bool HasValidLaunchGeometry =>
+            Status == AirToAirShotStatus.Ready
+            || Status == AirToAirShotStatus.LowQuality;
+
+        public AirToAirShotAssessment(
+            OrdnanceTypeDefinition weapon,
+            AirToAirShotStatus status,
+            float distanceKm,
+            float maximumRangeKm,
+            float offNoseDegrees,
+            float launchQuality)
+        {
+            Weapon = weapon;
+            Status = status;
+            DistanceKm = Math.Max(0f, distanceKm);
+            MaximumRangeKm = Math.Max(0f, maximumRangeKm);
+            OffNoseDegrees = Math.Max(0f, offNoseDegrees);
+            LaunchQuality = Mathf.Clamp01(launchQuality);
+        }
+    }
+
     internal static class AirCombatRules
     {
         private const float PreferredRangeFraction = 0.78f;
+        private const float MaximumClosingRangeBonus = 0.15f;
+        private const float MaximumOpeningRangePenalty = 0.30f;
+        private const float RadarBeamAspectQuality = 0.75f;
         private const float WvrDecisionRangeKm = 8f;
         private const float TacticalAimDistanceKm = 80f;
         private const float CrankOffsetDegrees = 55f;
@@ -213,9 +255,10 @@ namespace Engine.Models
                     var maximumRangeKm = GetAvailableAirToAirWeapons(
                             source,
                             ordnanceTypes)
-                        .Select(weapon => EffectiveMaximumRangeKm(
+                        .Select(weapon => EffectiveLaunchEnvelopeKm(
                             weapon,
-                            flight))
+                            flight,
+                            preferredEscortTarget.Flight))
                         .DefaultIfEmpty(0f)
                         .Max();
                     var retarget = AimAtTargetCommand(
@@ -448,13 +491,23 @@ namespace Engine.Models
                 return merge;
             }
 
-            var weapon = SelectWeapon(
+            var shot = SelectShotAssessment(
                 source,
                 target,
                 ordnanceTypes,
                 doctrine);
-            if (weapon == null)
+            if (shot == null)
             {
+                if (flight.IsDeadAttackFlight)
+                {
+                    return RouteCommand(
+                        source,
+                        frame.Time,
+                        AirCombatIntent.FollowMission,
+                        "No expendable air-to-air ordnance remains; "
+                        + "continuing the assigned mission.");
+                }
+
                 return AimAtTargetCommand(
                     source,
                     target,
@@ -464,13 +517,14 @@ namespace Engine.Models
                     frame.Time.AddSeconds(30),
                     target.Flight.FlightId,
                     Guid.Empty,
-                    "No air-to-air ordnance remains; extending from the threat.",
+                    "No expendable air-to-air ordnance remains; extending from the threat.",
                     awayFromTarget: true);
             }
+            var weapon = shot.Weapon;
 
-            if (EvaluateLaunch(source, target, weapon, out var launchQuality)
-                && launchQuality >= doctrine.MinimumLaunchQuality)
+            if (shot.Status == AirToAirShotStatus.Ready)
             {
+                var launchQuality = shot.LaunchQuality;
                 var totalRounds = CountRounds(source, weapon.OrdnanceTypeDefinitionId);
                 var pendingShots = frame.PendingEffects
                     .Where(effect => effect.SourceKind == OrdnanceEmploymentSourceKind.AircraftFlight
@@ -546,28 +600,116 @@ namespace Engine.Models
                     + "continuing the assigned mission.");
             }
 
-            var maximumRange = EffectiveMaximumRangeKm(weapon, flight);
-            var preferredRange = Math.Max(1f, maximumRange * PreferredRangeFraction);
-            var interceptPoint = PredictStandoffIntercept(
-                source,
-                target,
-                preferredRange);
-            return Command(
-                source,
-                AirCombatIntent.EngageTarget,
-                distanceKm > maximumRange
-                    ? AirCombatManeuver.Intercept
-                    : AirCombatManeuver.Press,
-                target.Flight.FlightId,
-                Guid.Empty,
-                frame.Time,
-                frame.Time.AddSeconds(15),
-                AirCombatManeuverSide.None,
-                interceptPoint,
-                Math.Max(1f, source.AircraftType.CombatSpeedKnots),
-                distanceKm > maximumRange
-                    ? "Closing toward a predicted standoff intercept."
-                    : "Pressing to improve launch geometry.");
+            return BuildBvrManeuverCommand(source, target, shot, frame.Time);
+        }
+
+        private static AirCombatCommand BuildBvrManeuverCommand(
+            AirCombatFlightView source,
+            AirCombatFlightView target,
+            AirToAirShotAssessment shot,
+            DateTime currentTime)
+        {
+            if (shot.Weapon == null)
+            {
+                return AimAtTargetCommand(
+                    source,
+                    target,
+                    AirCombatIntent.Disengage,
+                    AirCombatManeuver.Extend,
+                    currentTime,
+                    currentTime.AddSeconds(30),
+                    target.Flight.FlightId,
+                    Guid.Empty,
+                    "No usable air-to-air weapon envelope against the target; extending.",
+                    awayFromTarget: true);
+            }
+
+            switch (shot.Status)
+            {
+                case AirToAirShotStatus.TooFar:
+                {
+                    var preferredRange = Math.Max(
+                        1f,
+                        shot.MaximumRangeKm * PreferredRangeFraction);
+                    return Command(
+                        source,
+                        AirCombatIntent.EngageTarget,
+                        AirCombatManeuver.Intercept,
+                        target.Flight.FlightId,
+                        Guid.Empty,
+                        currentTime,
+                        currentTime.AddSeconds(15),
+                        AirCombatManeuverSide.None,
+                        PredictStandoffIntercept(
+                            source,
+                            target,
+                            preferredRange),
+                        Math.Max(1f, source.AircraftType.CombatSpeedKnots),
+                        $"Closing to enter the {shot.Weapon.Name} launch envelope "
+                        + $"from {shot.DistanceKm:0} km "
+                        + $"(current maximum {shot.MaximumRangeKm:0} km).");
+                }
+                case AirToAirShotStatus.NeedsPointing:
+                    return AimAtTargetCommand(
+                        source,
+                        target,
+                        AirCombatIntent.EngageTarget,
+                        AirCombatManeuver.Press,
+                        currentTime,
+                        currentTime.AddSeconds(15),
+                        target.Flight.FlightId,
+                        Guid.Empty,
+                        $"Turning to bring the target inside {shot.Weapon.Name} launch boresight "
+                        + $"from {shot.OffNoseDegrees:0} degrees off nose.");
+                case AirToAirShotStatus.LowQuality:
+                    return AimAtTargetCommand(
+                        source,
+                        target,
+                        AirCombatIntent.EngageTarget,
+                        AirCombatManeuver.Press,
+                        currentTime,
+                        currentTime.AddSeconds(15),
+                        target.Flight.FlightId,
+                        Guid.Empty,
+                        $"Pressing to improve the {shot.Weapon.Name} shot from "
+                        + $"launch quality {shot.LaunchQuality:0.00}.");
+                case AirToAirShotStatus.TooClose:
+                    return AimAtTargetCommand(
+                        source,
+                        target,
+                        AirCombatIntent.Disengage,
+                        AirCombatManeuver.Extend,
+                        currentTime,
+                        currentTime.AddSeconds(30),
+                        target.Flight.FlightId,
+                        Guid.Empty,
+                        $"Inside {shot.Weapon.Name} minimum range at "
+                        + $"{shot.DistanceKm:0.0} km; extending for separation.",
+                        awayFromTarget: true);
+                case AirToAirShotStatus.Unavailable:
+                    return AimAtTargetCommand(
+                        source,
+                        target,
+                        AirCombatIntent.Disengage,
+                        AirCombatManeuver.Extend,
+                        currentTime,
+                        currentTime.AddSeconds(30),
+                        target.Flight.FlightId,
+                        Guid.Empty,
+                        $"No valid {shot.Weapon.Name} envelope against the target; extending.",
+                        awayFromTarget: true);
+                default:
+                    return AimAtTargetCommand(
+                        source,
+                        target,
+                        AirCombatIntent.EngageTarget,
+                        AirCombatManeuver.Press,
+                        currentTime,
+                        currentTime.AddSeconds(15),
+                        target.Flight.FlightId,
+                        Guid.Empty,
+                        "Holding offensive geometry while existing shots resolve.");
+            }
         }
 
         public static bool EvaluateLaunch(
@@ -591,40 +733,14 @@ namespace Engine.Models
             OrdnanceTypeDefinition ordnance,
             out float launchQuality)
         {
-            launchQuality = 0f;
-            if (source == null || target == null || ordnance == null)
-                return false;
-
-            var distanceKm = DistanceKm(source.PositionFeet, target.PositionFeet);
-            var maximumRange = EffectiveMaximumRangeKm(ordnance, source);
-            var offNose = AngleOffNose(source, target.PositionFeet);
-            var targetAltitude = target.PositionFeet.y;
-            if (maximumRange <= 0f
-                || distanceKm < ordnance.MinimumRangeKm
-                || distanceKm > maximumRange
-                || targetAltitude < ordnance.MinimumTargetAltitudeFeet
-                || targetAltitude > ordnance.MaximumTargetAltitudeFeet
-                || offNose > ordnance.MaximumLaunchOffBoresightDegrees)
-                return false;
-
-            var rangeRatio = Mathf.Clamp01(distanceKm / Math.Max(0.01f, maximumRange));
-            var noEscapeRatio = Mathf.Clamp01(ordnance.NoEscapeRangeFraction);
-            var rangeQuality = rangeRatio <= noEscapeRatio
-                ? 1f
-                : Mathf.Lerp(
-                    1f,
-                    0.25f,
-                    (rangeRatio - noEscapeRatio) / Math.Max(0.01f, 1f - noEscapeRatio));
-            var noseQuality = 1f - 0.35f * Mathf.Clamp01(
-                offNose / Math.Max(1f, ordnance.MaximumLaunchOffBoresightDegrees));
-            var targetAspect = TargetAspect(source, target);
-            var aspectQuality = Mathf.Lerp(0.7f, 1f, targetAspect / 180f);
-            var radarQuality = ordnance.GuidanceMode == OrdnanceGuidanceMode.Infrared
-                ? 1f
-                : 0.65f + 0.35f * Mathf.Clamp01(sourceType.RadarQuality);
-            launchQuality = Mathf.Clamp01(
-                rangeQuality * noseQuality * aspectQuality * radarQuality);
-            return true;
+            var assessment = AssessShot(
+                source,
+                sourceType,
+                target,
+                ordnance,
+                minimumLaunchQuality: 0f);
+            launchQuality = assessment.LaunchQuality;
+            return assessment.HasValidLaunchGeometry;
         }
 
         public static float EffectiveMaximumRangeKm(
@@ -643,6 +759,206 @@ namespace Engine.Models
                 -0.05f,
                 0.2f);
             return ordnance.MaximumRangeKm * altitudeMultiplier * speedMultiplier;
+        }
+
+        public static float EffectiveLaunchEnvelopeKm(
+            OrdnanceTypeDefinition ordnance,
+            AirFlight source,
+            AirFlight target)
+        {
+            if (target == null)
+                return EffectiveLaunchEnvelopeKm(
+                    ordnance,
+                    source,
+                    Vector3.zero,
+                    0f,
+                    0f);
+
+            return EffectiveLaunchEnvelopeKm(
+                ordnance,
+                source,
+                target.PositionFeet,
+                target.HeadingDegrees,
+                target.SpeedKnots);
+        }
+
+        public static float EffectiveLaunchEnvelopeKm(
+            OrdnanceTypeDefinition ordnance,
+            AirFlight source,
+            IADSTrack target)
+        {
+            if (target == null)
+                return EffectiveLaunchEnvelopeKm(
+                    ordnance,
+                    source,
+                    Vector3.zero,
+                    0f,
+                    0f);
+
+            return EffectiveLaunchEnvelopeKm(
+                ordnance,
+                source,
+                target.LastKnownPositionFeet,
+                target.EstimatedHeadingDegrees,
+                target.EstimatedSpeedKnots);
+        }
+
+        public static float EffectiveLaunchEnvelopeKm(
+            OrdnanceTypeDefinition ordnance,
+            AirFlight source,
+            Vector3 targetPositionFeet,
+            float targetHeadingDegrees,
+            float targetSpeedKnots)
+        {
+            if (ordnance == null || source == null)
+                return 0f;
+
+            var shooterAdjustedRange = EffectiveMaximumRangeKm(ordnance, source);
+            if (ordnance.EmploymentCategory
+                != OrdnanceEmploymentCategory.AirToAirRadar)
+                return shooterAdjustedRange;
+
+            var lineOfSight = targetPositionFeet - source.PositionFeet;
+            lineOfSight.y = 0f;
+            if (lineOfSight.sqrMagnitude <= 1f)
+                return shooterAdjustedRange;
+
+            var targetVelocityKnots = Direction(targetHeadingDegrees)
+                                      * targetSpeedKnots;
+            var targetRadialSpeedKnots = Vector3.Dot(
+                targetVelocityKnots,
+                lineOfSight.normalized);
+            var radialSpeedFraction = targetRadialSpeedKnots
+                                      / Math.Max(1f, ordnance.EffectSpeedKnots);
+            var rangeAdjustment = 1f - Mathf.Clamp(
+                radialSpeedFraction,
+                -MaximumClosingRangeBonus,
+                MaximumOpeningRangePenalty);
+            return shooterAdjustedRange * rangeAdjustment;
+        }
+
+        private static AirToAirShotAssessment AssessShot(
+            AirCombatFlightView source,
+            AirCombatFlightView target,
+            OrdnanceTypeDefinition ordnance,
+            float minimumLaunchQuality)
+        {
+            return AssessShot(
+                source?.Flight,
+                source?.AircraftType,
+                target?.Flight,
+                ordnance,
+                minimumLaunchQuality);
+        }
+
+        private static AirToAirShotAssessment AssessShot(
+            AirFlight source,
+            AircraftTypeDefinition sourceType,
+            AirFlight target,
+            OrdnanceTypeDefinition ordnance,
+            float minimumLaunchQuality)
+        {
+            if (source == null || sourceType == null || target == null || ordnance == null)
+            {
+                return new AirToAirShotAssessment(
+                    ordnance,
+                    AirToAirShotStatus.Unavailable,
+                    0f,
+                    0f,
+                    0f,
+                    0f);
+            }
+
+            var distanceKm = DistanceKm(source.PositionFeet, target.PositionFeet);
+            var maximumRange = EffectiveLaunchEnvelopeKm(ordnance, source, target);
+            var offNose = AngleOffNose(source, target.PositionFeet);
+            var targetAltitude = target.PositionFeet.y;
+            var status = AirToAirShotStatus.Ready;
+            if (maximumRange <= 0f
+                || targetAltitude < ordnance.MinimumTargetAltitudeFeet
+                || targetAltitude > ordnance.MaximumTargetAltitudeFeet)
+            {
+                status = AirToAirShotStatus.Unavailable;
+            }
+            else if (distanceKm < ordnance.MinimumRangeKm)
+            {
+                status = AirToAirShotStatus.TooClose;
+            }
+            else if (distanceKm > maximumRange)
+            {
+                status = AirToAirShotStatus.TooFar;
+            }
+            else if (offNose > ordnance.MaximumLaunchOffBoresightDegrees)
+            {
+                status = AirToAirShotStatus.NeedsPointing;
+            }
+
+            var launchQuality = status == AirToAirShotStatus.Ready
+                ? CalculateLaunchQuality(
+                    source,
+                    sourceType,
+                    target,
+                    ordnance,
+                    distanceKm,
+                    maximumRange,
+                    offNose)
+                : 0f;
+            if (status == AirToAirShotStatus.Ready
+                && launchQuality < minimumLaunchQuality)
+                status = AirToAirShotStatus.LowQuality;
+
+            return new AirToAirShotAssessment(
+                ordnance,
+                status,
+                distanceKm,
+                maximumRange,
+                offNose,
+                launchQuality);
+        }
+
+        private static float CalculateLaunchQuality(
+            AirFlight source,
+            AircraftTypeDefinition sourceType,
+            AirFlight target,
+            OrdnanceTypeDefinition ordnance,
+            float distanceKm,
+            float maximumRangeKm,
+            float offNoseDegrees)
+        {
+            var rangeRatio = Mathf.Clamp01(
+                distanceKm / Math.Max(0.01f, maximumRangeKm));
+            var noEscapeRatio = Mathf.Clamp01(ordnance.NoEscapeRangeFraction);
+            var rangeQuality = rangeRatio <= noEscapeRatio
+                ? 1f
+                : Mathf.Lerp(
+                    1f,
+                    0.25f,
+                    (rangeRatio - noEscapeRatio)
+                    / Math.Max(0.01f, 1f - noEscapeRatio));
+            var noseQuality = 1f - 0.35f * Mathf.Clamp01(
+                offNoseDegrees
+                / Math.Max(1f, ordnance.MaximumLaunchOffBoresightDegrees));
+            var targetAspect = TargetAspect(source, target);
+            var aspectQuality = IsRadarGuided(ordnance)
+                ? RadarNotchQuality(targetAspect)
+                : Mathf.Lerp(0.7f, 1f, targetAspect / 180f);
+            var sensorQuality = ordnance.GuidanceMode == OrdnanceGuidanceMode.Infrared
+                ? 1f
+                : 0.65f + 0.35f * Mathf.Clamp01(sourceType.RadarQuality);
+            return Mathf.Clamp01(
+                rangeQuality
+                * noseQuality
+                * aspectQuality
+                * sensorQuality);
+        }
+
+        private static float RadarNotchQuality(float targetAspectDegrees)
+        {
+            var beamProximity = 1f - Math.Abs(targetAspectDegrees - 90f) / 90f;
+            return Mathf.Lerp(
+                1f,
+                RadarBeamAspectQuality,
+                Mathf.Clamp01(beamProximity));
         }
 
         public static float AngleOffNose(AirFlight source, Vector3 targetPosition)
@@ -2000,9 +2316,10 @@ namespace Engine.Models
                                  out var ordnance)
                              && IsAirToAir(ordnance)
                              && distanceKm >= ordnance.MinimumRangeKm
-                             && distanceKm <= EffectiveMaximumRangeKm(
+                             && distanceKm <= EffectiveLaunchEnvelopeKm(
                                  ordnance,
-                                 source.Flight)
+                                 source.Flight,
+                                 track)
                              && targetAltitudeFeet >= ordnance.MinimumTargetAltitudeFeet
                              && targetAltitudeFeet <= ordnance.MaximumTargetAltitudeFeet);
         }
@@ -2621,7 +2938,7 @@ namespace Engine.Models
             return horizontalDistance <= radiusFeet;
         }
 
-        private static OrdnanceTypeDefinition SelectWeapon(
+        private static AirToAirShotAssessment SelectShotAssessment(
             AirCombatFlightView source,
             AirCombatFlightView target,
             IReadOnlyDictionary<Guid, OrdnanceTypeDefinition> ordnanceTypes,
@@ -2631,11 +2948,11 @@ namespace Engine.Models
             return GetAvailableAirToAirWeapons(source, ordnanceTypes)
                 .Select(definition =>
                 {
-                    var canLaunch = EvaluateLaunch(
+                    var assessment = AssessShot(
                         source,
                         target,
                         definition,
-                        out var quality);
+                        doctrine.MinimumLaunchQuality);
                     var reserve = definition.EmploymentCategory
                                   == OrdnanceEmploymentCategory.Gun
                         ? 0
@@ -2646,35 +2963,52 @@ namespace Engine.Models
                                               > reserve;
                     return new
                     {
-                        Definition = definition,
-                        CanEmploy = canLaunch
-                                    && quality >= doctrine.MinimumLaunchQuality
-                                    && hasExpendableRounds,
+                        Assessment = assessment,
                         HasExpendableRounds = hasExpendableRounds,
-                        LaunchQuality = quality
+                        Definition = definition
                     };
                 })
-                .OrderByDescending(candidate => candidate.CanEmploy)
+                .Where(candidate => candidate.HasExpendableRounds)
+                .OrderBy(candidate => GetShotSetupPriority(
+                    candidate.Assessment.Status))
                 .ThenBy(candidate =>
-                    candidate.CanEmploy
+                    candidate.Assessment.Status == AirToAirShotStatus.Ready
                     && candidate.Definition.EmploymentCategory
                     == OrdnanceEmploymentCategory.Gun
                         ? 1
                         : 0)
-                .ThenByDescending(candidate => candidate.CanEmploy
-                    ? candidate.LaunchQuality
+                .ThenByDescending(candidate =>
+                    candidate.Assessment.Status == AirToAirShotStatus.Ready
+                    || candidate.Assessment.Status == AirToAirShotStatus.LowQuality
+                        ? candidate.Assessment.LaunchQuality
                     : 0f)
-                .ThenByDescending(candidate => candidate.HasExpendableRounds)
                 .ThenBy(candidate => GetWeaponSetupPriority(
                     candidate.Definition,
                     distanceKm))
-                .ThenByDescending(candidate => EffectiveMaximumRangeKm(
-                    candidate.Definition,
-                    source.Flight))
+                .ThenByDescending(candidate => candidate.Assessment.MaximumRangeKm)
                 .ThenByDescending(candidate => candidate.Definition.HitProbability)
                 .ThenBy(candidate => candidate.Definition.OrdnanceTypeDefinitionId)
-                .Select(candidate => candidate.Definition)
+                .Select(candidate => candidate.Assessment)
                 .FirstOrDefault();
+        }
+
+        private static int GetShotSetupPriority(AirToAirShotStatus status)
+        {
+            switch (status)
+            {
+                case AirToAirShotStatus.Ready:
+                    return 0;
+                case AirToAirShotStatus.NeedsPointing:
+                    return 1;
+                case AirToAirShotStatus.LowQuality:
+                    return 2;
+                case AirToAirShotStatus.TooFar:
+                    return 3;
+                case AirToAirShotStatus.TooClose:
+                    return 4;
+                default:
+                    return 5;
+            }
         }
 
         private static bool ShouldContinueIntoWvr(

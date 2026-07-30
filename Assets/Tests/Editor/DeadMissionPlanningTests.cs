@@ -366,18 +366,61 @@ namespace Tests.Editor
         public void DeadDoesNotPressForPoorDefensiveShot()
         {
             var scenario = CreateDeadAirCombatScenario(
-                hostileDistanceKm: 90f,
+                hostileDistanceKm: 110f,
                 includeHostileTrack: true);
+            var weapon = scenario.OrdnanceTypes[TestModule.Aim120OrdnanceTypeId];
+            var doctrine = AllianceAirDoctrine.CreateDefault();
+            var envelopeKm = AirCombatRules.EffectiveLaunchEnvelopeKm(
+                weapon,
+                scenario.Source.Flight,
+                scenario.Target.Flight);
+            AirCombatRules.EvaluateLaunch(
+                scenario.Source.Flight,
+                scenario.Source.AircraftType,
+                scenario.Target.Flight,
+                weapon,
+                out var launchQuality);
 
             var command = AirCombatRules.Decide(
                 scenario.Source,
                 scenario.Frame,
                 scenario.OrdnanceTypes,
-                AllianceAirDoctrine.CreateDefault());
+                doctrine);
+
+            Assert.That(envelopeKm, Is.GreaterThan(110f));
+            Assert.That(launchQuality, Is.LessThan(doctrine.MinimumLaunchQuality));
+            Assert.That(command.Intent, Is.EqualTo(AirCombatIntent.FollowMission));
+            Assert.That(command.Maneuver, Is.EqualTo(AirCombatManeuver.FollowRoute));
+            Assert.That(command.Employment, Is.Null);
+            StringAssert.Contains("DEAD route", command.Reason);
+        }
+
+        [Test]
+        public void DeadStaysOnRouteWhenOnlyReserveAirToAirOrdnanceRemains()
+        {
+            var scenario = CreateDeadAirCombatScenario(
+                hostileDistanceKm: 50f,
+                includeHostileTrack: true);
+            var doctrine = AllianceAirDoctrine.CreateDefault();
+            doctrine.MinimumAirToAirWeaponReserve = 2;
+            foreach (var aircraft in scenario.Source.LiveAircraft)
+            {
+                aircraft.SetLoadout(new[]
+                {
+                    new AircraftLoadoutItem(TestModule.Aim120OrdnanceTypeId, 2)
+                });
+            }
+
+            var command = AirCombatRules.Decide(
+                scenario.Source,
+                scenario.Frame,
+                scenario.OrdnanceTypes,
+                doctrine);
 
             Assert.That(command.Intent, Is.EqualTo(AirCombatIntent.FollowMission));
             Assert.That(command.Maneuver, Is.EqualTo(AirCombatManeuver.FollowRoute));
             Assert.That(command.Employment, Is.Null);
+            StringAssert.Contains("No expendable", command.Reason);
         }
 
         [Test]
@@ -428,6 +471,161 @@ namespace Tests.Editor
             Assert.That(
                 command.TargetFlightId,
                 Is.EqualTo(scenario.Target.Flight.FlightId));
+        }
+
+        [Test]
+        public void FighterEscortFiresValidShotInsidePreferredRange()
+        {
+            var scenario = CreateDeadAirCombatScenario(
+                hostileDistanceKm: 50f,
+                includeHostileTrack: true);
+            scenario.Source.Flight.Role = AirFlightRole.FighterEscort;
+            AttachProtectedDeadFlight(scenario);
+
+            var command = AirCombatRules.Decide(
+                scenario.Source,
+                scenario.Frame,
+                scenario.OrdnanceTypes,
+                AllianceAirDoctrine.CreateDefault());
+
+            Assert.That(command.Maneuver, Is.EqualTo(AirCombatManeuver.LaunchSetup));
+            Assert.That(command.Employment, Is.Not.Null);
+            Assert.That(
+                command.Employment.TargetFlightId,
+                Is.EqualTo(scenario.Target.Flight.FlightId));
+        }
+
+        [Test]
+        public void FighterEscortTurnsTowardThreatWhenInsidePreferredRangeButOffBoresight()
+        {
+            var scenario = CreateDeadAirCombatScenario(
+                hostileDistanceKm: 50f,
+                includeHostileTrack: true);
+            scenario.Source.Flight.Role = AirFlightRole.FighterEscort;
+            AttachProtectedDeadFlight(scenario);
+            scenario.Source.Flight.UpdateKinematics(
+                scenario.Source.Flight.PositionFeet,
+                heading: 180f,
+                currentSpeedKnots: scenario.Source.Flight.SpeedKnots);
+
+            var command = AirCombatRules.Decide(
+                scenario.Source,
+                scenario.Frame,
+                scenario.OrdnanceTypes,
+                AllianceAirDoctrine.CreateDefault());
+
+            var targetDirection = scenario.Target.Flight.PositionFeet
+                                  - scenario.Source.Flight.PositionFeet;
+            targetDirection.y = 0f;
+            var commandDirection = command.AimPointFeet
+                                   - scenario.Source.Flight.PositionFeet;
+            commandDirection.y = 0f;
+            Assert.That(command.Maneuver, Is.EqualTo(AirCombatManeuver.Press));
+            Assert.That(command.Employment, Is.Null);
+            Assert.That(Vector3.Dot(commandDirection, targetDirection), Is.GreaterThan(0f));
+            StringAssert.Contains("launch boresight", command.Reason);
+        }
+
+        [Test]
+        public void RadarMissileEnvelopeFavorsClosingOverOpeningTarget()
+        {
+            var scenario = CreateDeadAirCombatScenario(
+                hostileDistanceKm: 90f,
+                includeHostileTrack: true);
+            var weapon = scenario.OrdnanceTypes[TestModule.Aim120OrdnanceTypeId];
+
+            scenario.Target.Flight.UpdateKinematics(
+                scenario.Target.Flight.PositionFeet,
+                heading: 180f,
+                currentSpeedKnots: scenario.Target.Flight.SpeedKnots);
+            var closingCanLaunch = AirCombatRules.EvaluateLaunch(
+                scenario.Source.Flight,
+                scenario.Source.AircraftType,
+                scenario.Target.Flight,
+                weapon,
+                out _);
+            var closingRange = AirCombatRules.EffectiveLaunchEnvelopeKm(
+                weapon,
+                scenario.Source.Flight,
+                scenario.Target.Flight);
+
+            scenario.Target.Flight.UpdateKinematics(
+                scenario.Target.Flight.PositionFeet,
+                heading: 0f,
+                currentSpeedKnots: scenario.Target.Flight.SpeedKnots);
+            var openingCanLaunch = AirCombatRules.EvaluateLaunch(
+                scenario.Source.Flight,
+                scenario.Source.AircraftType,
+                scenario.Target.Flight,
+                weapon,
+                out _);
+            var openingRange = AirCombatRules.EffectiveLaunchEnvelopeKm(
+                weapon,
+                scenario.Source.Flight,
+                scenario.Target.Flight);
+
+            Assert.That(closingRange, Is.GreaterThan(openingRange));
+            Assert.That(closingCanLaunch, Is.True);
+            Assert.That(openingCanLaunch, Is.False);
+        }
+
+        [Test]
+        public void RadarLaunchEnvelopeDiffersFromShooterKinematicRange()
+        {
+            var scenario = CreateDeadAirCombatScenario(
+                hostileDistanceKm: 90f,
+                includeHostileTrack: true);
+            var weapon = scenario.OrdnanceTypes[TestModule.Aim120OrdnanceTypeId];
+            var kinematicRange = AirCombatRules.EffectiveMaximumRangeKm(
+                weapon,
+                scenario.Source.Flight);
+
+            var closingEnvelope = AirCombatRules.EffectiveLaunchEnvelopeKm(
+                weapon,
+                scenario.Source.Flight,
+                scenario.Target.Flight);
+            scenario.Target.Flight.UpdateKinematics(
+                scenario.Target.Flight.PositionFeet,
+                heading: 0f,
+                currentSpeedKnots: scenario.Target.Flight.SpeedKnots);
+            var openingEnvelope = AirCombatRules.EffectiveLaunchEnvelopeKm(
+                weapon,
+                scenario.Source.Flight,
+                scenario.Target.Flight);
+
+            Assert.That(closingEnvelope, Is.GreaterThan(kinematicRange));
+            Assert.That(openingEnvelope, Is.LessThan(kinematicRange));
+        }
+
+        [Test]
+        public void RadarLaunchQualityFallsInTheTargetBeam()
+        {
+            var scenario = CreateDeadAirCombatScenario(
+                hostileDistanceKm: 40f,
+                includeHostileTrack: true);
+            var weapon = scenario.OrdnanceTypes[TestModule.Aim120OrdnanceTypeId];
+
+            AirCombatRules.EvaluateLaunch(
+                scenario.Source.Flight,
+                scenario.Source.AircraftType,
+                scenario.Target.Flight,
+                weapon,
+                out var headOnQuality);
+
+            scenario.Target.Flight.UpdateKinematics(
+                scenario.Target.Flight.PositionFeet,
+                heading: 90f,
+                currentSpeedKnots: scenario.Target.Flight.SpeedKnots);
+            var beamCanLaunch = AirCombatRules.EvaluateLaunch(
+                scenario.Source.Flight,
+                scenario.Source.AircraftType,
+                scenario.Target.Flight,
+                weapon,
+                out var beamQuality);
+
+            Assert.That(beamCanLaunch, Is.True);
+            Assert.That(beamQuality, Is.LessThan(headOnQuality));
+            Assert.That(beamQuality, Is.GreaterThan(0f));
         }
 
         [Test]

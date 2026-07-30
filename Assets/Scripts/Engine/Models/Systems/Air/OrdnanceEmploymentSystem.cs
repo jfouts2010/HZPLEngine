@@ -957,6 +957,7 @@ namespace Engine.Models
             var distanceFeet = Vector3.Distance(
                 source.Flight.PositionFeet,
                 target.Flight.PositionFeet);
+            var releaseRangeKm = distanceFeet / AirspaceGeometry.FeetPerKilometer;
             var launchQuality = Mathf.Clamp01(Mathf.Min(pass.LaunchQuality, releaseQuality));
             var pending = CreatePendingOrdnanceEffect(new AuthorizedOrdnanceRelease
             {
@@ -971,12 +972,14 @@ namespace Engine.Models
                 SourcePositionFeet = source.Flight.PositionFeet,
                 Launches = launches,
                 SupportSourceFlightId = source.Flight.FlightId,
-                MaximumRangeKm = AirCombatRules.EffectiveMaximumRangeKm(
-                    ordnance,
-                    source.Flight),
+                MaximumRangeKm = Math.Max(
+                    AirCombatRules.EffectiveMaximumRangeKm(
+                        ordnance,
+                        source.Flight),
+                    releaseRangeKm),
                 ShooterSensorQuality = source.AircraftType.RadarQuality,
                 LaunchQuality = launchQuality,
-                ReleaseRangeKm = distanceFeet / AirspaceGeometry.FeetPerKilometer
+                ReleaseRangeKm = releaseRangeKm
             });
             PendingEffects.Add(pending);
             AddRecord(
