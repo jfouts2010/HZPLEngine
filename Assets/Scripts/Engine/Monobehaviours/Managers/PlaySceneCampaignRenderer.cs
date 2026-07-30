@@ -1749,7 +1749,7 @@ namespace Engine.Monobehaviours.Managers
                 $"Flight ID  {flight.FlightId:N}",
                 $"Flight  {GetFlightName(flight, squadron)}",
                 $"Alliance  {package.Alliance}",
-                $"Mission  {GetMissionLabel(flight.MissionType)}",
+                $"Mission  {GetFlightMissionLabel(flight)}",
                 $"Package  {package.PackageId:N}",
                 $"Aircraft  {flight.AircraftIds.Count}",
                 $"Lifecycle / execution  {flight.LifecycleState} / {flight.ExecutionPhase}",
@@ -2415,7 +2415,7 @@ namespace Engine.Monobehaviours.Managers
                     $"{GetAllianceLabel(alliance)} {GetFlightName(flight, squadron)}  •  {flight.ExecutionPhase}";
                 var fields = new List<AirCardField>
                 {
-                    new AirCardField("Mission", GetMissionLabel(flight.MissionType)),
+                    new AirCardField("Mission", GetFlightMissionLabel(flight)),
                     new AirCardField("Aircraft", flight.AircraftIds.Count.ToString()),
                     new AirCardField("Execution", $"{flight.LifecycleState} / {flight.ExecutionPhase}"),
                     new AirCardField(
@@ -2607,7 +2607,7 @@ namespace Engine.Monobehaviours.Managers
             };
             foreach (var flight in package.Flights)
                 lines.Add(
-                    $"FLIGHT  {ShortId(flight.FlightId)}  •  {GetMissionLabel(flight.MissionType)}  •  {flight.AircraftIds.Count}-ship  •  {flight.ExecutionPhase}");
+                    $"FLIGHT  {ShortId(flight.FlightId)}  •  {GetFlightMissionLabel(flight)}  •  {flight.AircraftIds.Count}-ship  •  {flight.ExecutionPhase}");
             return lines;
         }
 
@@ -2777,7 +2777,7 @@ namespace Engine.Monobehaviours.Managers
 
             flightDetailTitle.text = GetFlightName(flight, squadron);
             flightDetailSubtitle.text =
-                $"{GetAllianceLabel(alliance)}  •  {GetMissionLabel(flight.MissionType)}  •  " +
+                $"{GetAllianceLabel(alliance)}  •  {GetFlightMissionLabel(flight)}  •  " +
                 $"{flight.ExecutionPhase}";
             var previousScrollOffset = flightDetailScroll.scrollOffset;
             flightDetailContent.Clear();
@@ -2787,7 +2787,7 @@ namespace Engine.Monobehaviours.Managers
                 $"Flight ID: {flight.FlightId:N}",
                 $"Squadron: {squadron.Name}",
                 $"Package: {package.PackageId:N}",
-                $"Mission: {GetMissionLabel(flight.MissionType)}",
+                $"Mission: {GetFlightMissionLabel(flight)}",
                 $"Role in package: {(flight.IsRequired ? "Required" : "Supporting")}",
                 $"Assigned aircraft: {flight.AircraftIds.Count}");
 
@@ -2796,6 +2796,9 @@ namespace Engine.Monobehaviours.Managers
                 $"Lifecycle: {flight.LifecycleState}",
                 $"Phase: {flight.ExecutionPhase}",
                 $"Mission achieved: {(flight.MissionAchieved ? "Yes" : "No")}",
+                flight.IsFighterEscort
+                    ? $"Escort coverage: {flight.EscortCoverageMode}"
+                    : "Escort coverage: Not applicable",
                 $"Rendezvous hold: {(flight.IsWaitingAtRendezvous ? "Waiting" : "No")}",
                 $"Route progress: {Mathf.Clamp(flight.CurrentWaypointIndex + 1, 0, flight.Route.Count)} of {flight.Route.Count}",
                 $"Next action: {(nextWaypoint == null ? "None" : GetWaypointLabel(nextWaypoint.Action))}");
@@ -4708,7 +4711,9 @@ namespace Engine.Monobehaviours.Managers
             color.a = 0.78f;
             var center = GetMissionAreaMapCenter(area);
             var radius = GetMissionAreaMapRadius(area);
-            var label = GetAirIntentLabel(flight.MissionType);
+            var label = flight.IsFighterEscort
+                ? "ESCORT"
+                : GetAirIntentLabel(flight.MissionType);
 
             CreateAirIntentCircle(
                 $"Air Intent Area {ShortId(flight.FlightId)}",
@@ -4725,6 +4730,12 @@ namespace Engine.Monobehaviours.Managers
                 label,
                 WithAlpha(color, 0.92f),
                 24);
+
+            if (flight.IsFighterEscort)
+            {
+                CreateAirPatrolPattern(flight, center, radius, color);
+                return;
+            }
 
             switch (flight.MissionType)
             {
@@ -5238,6 +5249,15 @@ namespace Engine.Monobehaviours.Managers
                 AirMissionRequestType.ProvideAerialRefueling => "TANKER",
                 _ => "AIR"
             };
+        }
+
+        private static string GetFlightMissionLabel(AirFlight flight)
+        {
+            return flight != null && flight.IsFighterEscort
+                ? $"{GetMissionLabel(flight.MissionType)} Fighter Escort"
+                : flight == null
+                    ? "Unknown"
+                    : GetMissionLabel(flight.MissionType);
         }
 
         private void RefreshSamCoverageOverlay()
@@ -6049,7 +6069,7 @@ namespace Engine.Monobehaviours.Managers
             text.color = Color.white;
             text.text =
                 $"{GetFlightName(flight, squadron)} ×{flight.AircraftIds.Count}\n" +
-                $"{GetMissionLabel(flight.MissionType)} • {flight.PositionFeet.y / 1000f:0.#}k ft";
+                $"{GetFlightMissionLabel(flight)} • {flight.PositionFeet.y / 1000f:0.#}k ft";
             labelObject.GetComponent<MeshRenderer>().sortingOrder = 28;
         }
 

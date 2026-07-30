@@ -147,6 +147,173 @@ namespace Tests.Editor
         }
 
         [Test]
+        public void EscortedDeadLoadoutGivesDeadEffectFirstClaimOnCapacity()
+        {
+            var module = TestModule.GetTestModule();
+            var planner = new DeadLoadoutPlanner(
+                module,
+                _ => module.OrdnanceTypeDefinitions
+                    .Select(ordnance => ordnance.OrdnanceTypeDefinitionId)
+                    .ToList());
+            var aircraft = new AircraftTypeDefinition(
+                Guid.NewGuid(),
+                "Limited-capacity DEAD aircraft",
+                cruiseSpeedKnots: 450f,
+                combatSpeedKnots: 520f,
+                climbRateFeetPerMinute: 15000f,
+                descentRateFeetPerMinute: 10000f,
+                turnRateDegreesPerSecond: 3f,
+                nominalCruiseAltitudeFeet: 30000f,
+                serviceCeilingFeet: 45000f,
+                rangeKm: 1200f,
+                enduranceHours: 2f,
+                radarQuality: 0.6f,
+                radarDetectability: 0.9f,
+                radarDefense: 0.5f,
+                infraredDefense: 0.5f,
+                gunDefense: 0.5f,
+                survivability: 0.6f,
+                ordnanceCapacity: 6f,
+                compatibleOrdnanceTypeDefinitionIds: new List<Guid>
+                {
+                    TestModule.Aim120OrdnanceTypeId,
+                    TestModule.Agm88OrdnanceTypeId
+                },
+                airInterferenceCapability: 0.8f);
+            var components = new List<AirDefenseComponentIntelligenceReport>
+            {
+                new AirDefenseComponentIntelligenceReport
+                {
+                    ComponentId = Guid.NewGuid(),
+                    SamComponentDefinitionId = TestModule.FanSongComponentId
+                },
+                new AirDefenseComponentIntelligenceReport
+                {
+                    ComponentId = Guid.NewGuid(),
+                    SamComponentDefinitionId = TestModule.Sa2LauncherComponentId
+                }
+            };
+
+            var planned = planner.TryPlan(
+                aircraft,
+                Alliance.Bluefor,
+                components,
+                out var loadout,
+                out var reason,
+                requireSelfDefense: false);
+
+            Assert.That(planned, Is.True, reason);
+            Assert.That(loadout.MinimumEffectStoreCount, Is.EqualTo(2));
+            Assert.That(loadout.SelfDefenseShotCount, Is.Zero);
+            Assert.That(
+                loadout.Loadout.Single(item =>
+                    item.OrdnanceTypeDefinitionId
+                    == TestModule.Agm88OrdnanceTypeId).Count,
+                Is.EqualTo(2));
+        }
+
+        [Test]
+        public void EscortedDeadLoadoutCountsEveryMissionUsefulSelfDefenseShot()
+        {
+            var module = TestModule.GetTestModule();
+            var planner = new DeadLoadoutPlanner(
+                module,
+                _ => module.OrdnanceTypeDefinitions
+                    .Select(ordnance => ordnance.OrdnanceTypeDefinitionId)
+                    .ToList());
+            var aircraft = module.AircraftTypeDefinitions.First(definition =>
+                definition.AircraftTypeDefinitionId == TestModule.F16AircraftTypeId);
+            var components = new List<AirDefenseComponentIntelligenceReport>
+            {
+                new AirDefenseComponentIntelligenceReport
+                {
+                    ComponentId = Guid.NewGuid(),
+                    SamComponentDefinitionId = TestModule.FanSongComponentId
+                },
+                new AirDefenseComponentIntelligenceReport
+                {
+                    ComponentId = Guid.NewGuid(),
+                    SamComponentDefinitionId = TestModule.Sa2LauncherComponentId
+                }
+            };
+
+            var planned = planner.TryPlan(
+                aircraft,
+                Alliance.Bluefor,
+                components,
+                out var loadout,
+                out var reason,
+                requireSelfDefense: false);
+
+            Assert.That(planned, Is.True, reason);
+            var actualSelfDefenseShots = loadout.Loadout
+                .Where(item => module.OrdnanceTypeDefinitions.Any(ordnance =>
+                    ordnance.OrdnanceTypeDefinitionId
+                    == item.OrdnanceTypeDefinitionId
+                    && AirLoadoutPlanner.IsAirToAir(ordnance)
+                    && ordnance.GetEffectiveness(
+                        OrdnanceTargetCategory.Aircraft) > 0f))
+                .Sum(item => item.Count);
+            Assert.That(
+                actualSelfDefenseShots,
+                Is.GreaterThanOrEqualTo(aircraft.InternalGunBurstCount));
+            Assert.That(
+                loadout.SelfDefenseShotCount,
+                Is.EqualTo(actualSelfDefenseShots));
+        }
+
+        [Test]
+        public void DeadOrganicCombatPowerRequiresMissionUsefulSelfDefenseShots()
+        {
+            Assert.That(
+                AirPackageBuilder.CalculateOrganicDeadSelfDefenseCombatPower(
+                    aircraftCount: 2,
+                    combatPowerPerAircraft: 1f,
+                    missionUsefulShotsPerAircraft: 0),
+                Is.Zero);
+            Assert.That(
+                AirPackageBuilder.CalculateOrganicDeadSelfDefenseCombatPower(
+                    aircraftCount: 2,
+                    combatPowerPerAircraft: 1f,
+                    missionUsefulShotsPerAircraft:
+                    AirLoadoutPlanner.MinimumAirCombatShots),
+                Is.EqualTo(2f));
+        }
+
+        [Test]
+        public void SpatialBarcapGeometryAcceptsExplicitEscortWithoutCoverage()
+        {
+            var request = new AirMissionRequest
+            {
+                RequestType = AirMissionRequestType.BarrierCombatAirPatrol,
+                BarcapBarrier = new BarcapBarrierPlan
+                {
+                    BarrierTileIds = new List<Vector3Int> { Vector3Int.zero }
+                }
+            };
+            var escort = new AirFlight
+            {
+                MissionType = AirMissionRequestType.BarrierCombatAirPatrol,
+                Role = AirFlightRole.FighterEscort
+            };
+            var primary = new AirFlight
+            {
+                MissionType = AirMissionRequestType.BarrierCombatAirPatrol
+            };
+
+            Assert.That(
+                AllianceAirTaskingCommander.SatisfiesMissionGeometry(
+                    request,
+                    escort),
+                Is.True);
+            Assert.That(
+                AllianceAirTaskingCommander.SatisfiesMissionGeometry(
+                    request,
+                    primary),
+                Is.False);
+        }
+
+        [Test]
         public void HarmCannotAttackNonRadarSamComponents()
         {
             var module = TestModule.GetTestModule();
@@ -235,6 +402,746 @@ namespace Tests.Editor
             Assert.That(
                 command.Employment.TargetFlightId,
                 Is.EqualTo(scenario.Target.Flight.FlightId));
+        }
+
+        [Test]
+        public void FighterEscortPressesThreatToProtectedDeadFlight()
+        {
+            var scenario = CreateDeadAirCombatScenario(
+                hostileDistanceKm: 75f,
+                includeHostileTrack: true);
+            scenario.Source.Flight.Role = AirFlightRole.FighterEscort;
+            AttachProtectedDeadFlight(scenario);
+
+            var command = AirCombatRules.Decide(
+                scenario.Source,
+                scenario.Frame,
+                scenario.OrdnanceTypes,
+                AllianceAirDoctrine.CreateDefault());
+
+            Assert.That(command.Intent, Is.EqualTo(AirCombatIntent.EngageTarget));
+            Assert.That(
+                command.Maneuver,
+                Is.EqualTo(AirCombatManeuver.Intercept)
+                    .Or.EqualTo(AirCombatManeuver.Press)
+                    .Or.EqualTo(AirCombatManeuver.LaunchSetup));
+            Assert.That(
+                command.TargetFlightId,
+                Is.EqualTo(scenario.Target.Flight.FlightId));
+        }
+
+        [Test]
+        public void FighterEscortDropsRetainedContactForThreatTargetingProtectedDeadFlight()
+        {
+            var scenario = CreateDeadAirCombatScenario(
+                hostileDistanceKm: 75f,
+                includeHostileTrack: true);
+            scenario.Source.Flight.Role = AirFlightRole.FighterEscort;
+            var protectedFlight = AttachProtectedDeadFlight(scenario);
+            scenario.Source.Flight.TacticalState.Intent =
+                AirCombatIntent.EngageTarget;
+            scenario.Source.Flight.TacticalState.TargetFlightId =
+                scenario.Target.Flight.FlightId;
+
+            var attacker = CreateAirCombatFlight(
+                Alliance.Redfor,
+                AirMissionRequestType.OffensiveCounterAirSweep,
+                scenario.Target.AircraftType,
+                scenario.Source.Flight.PositionFeet
+                + Vector3.right * 60f * AirspaceGeometry.FeetPerKilometer,
+                headingDegrees: 270f,
+                TestModule.R27OrdnanceTypeId,
+                scenario.Frame.Time);
+            attacker.Flight.TacticalState.Intent = AirCombatIntent.EngageTarget;
+            attacker.Flight.TacticalState.TargetFlightId =
+                protectedFlight.Flight.FlightId;
+            AddTrackedHostileFlight(scenario, attacker);
+
+            var command = AirCombatRules.Decide(
+                scenario.Source,
+                scenario.Frame,
+                scenario.OrdnanceTypes,
+                AllianceAirDoctrine.CreateDefault());
+
+            Assert.That(command.Intent, Is.EqualTo(AirCombatIntent.EngageTarget));
+            Assert.That(
+                command.TargetFlightId,
+                Is.EqualTo(attacker.Flight.FlightId));
+        }
+
+        [Test]
+        public void FighterEscortCancelsLowerPriorityShotForProtectedFlightAttack()
+        {
+            var scenario = CreateDeadAirCombatScenario(
+                hostileDistanceKm: 75f,
+                includeHostileTrack: true);
+            scenario.Source.Flight.Role = AirFlightRole.FighterEscort;
+            var protectedFlight = AttachProtectedDeadFlight(scenario);
+            var attacker = CreateAirCombatFlight(
+                Alliance.Redfor,
+                AirMissionRequestType.OffensiveCounterAirSweep,
+                scenario.Target.AircraftType,
+                scenario.Source.Flight.PositionFeet
+                + Vector3.right * 60f * AirspaceGeometry.FeetPerKilometer,
+                headingDegrees: 270f,
+                TestModule.R27OrdnanceTypeId,
+                scenario.Frame.Time);
+            AddTrackedHostileFlight(scenario, attacker);
+            scenario.Frame.ActivePasses = new[]
+            {
+                new ActiveOrdnanceEmploymentPass
+                {
+                    SourceFlightId = scenario.Source.Flight.FlightId,
+                    TargetFlightId = scenario.Target.Flight.FlightId,
+                    TargetKind = OrdnanceEmploymentTargetKind.AirFlight,
+                    OrdnanceTypeDefinitionId = TestModule.Aim120OrdnanceTypeId,
+                    PlannedQuantity = 1,
+                    PreparationStartedAt = scenario.Frame.Time,
+                    ReleaseAt = scenario.Frame.Time.AddSeconds(30)
+                },
+                new ActiveOrdnanceEmploymentPass
+                {
+                    SourceFlightId = attacker.Flight.FlightId,
+                    TargetFlightId = protectedFlight.Flight.FlightId,
+                    TargetKind = OrdnanceEmploymentTargetKind.AirFlight,
+                    OrdnanceTypeDefinitionId = TestModule.R27OrdnanceTypeId,
+                    PlannedQuantity = 1,
+                    PreparationStartedAt = scenario.Frame.Time,
+                    ReleaseAt = scenario.Frame.Time.AddSeconds(20)
+                }
+            };
+
+            var command = AirCombatRules.Decide(
+                scenario.Source,
+                scenario.Frame,
+                scenario.OrdnanceTypes,
+                AllianceAirDoctrine.CreateDefault());
+
+            Assert.That(command.RequestsAirToAirPassCancellation, Is.True);
+            Assert.That(
+                command.TargetFlightId,
+                Is.EqualTo(attacker.Flight.FlightId));
+            StringAssert.Contains("protected flight", command.Reason);
+        }
+
+        [Test]
+        public void FighterEscortIgnoresContactCommittedAgainstDifferentFlight()
+        {
+            var scenario = CreateDeadAirCombatScenario(
+                hostileDistanceKm: 75f,
+                includeHostileTrack: true);
+            scenario.Source.Flight.Role = AirFlightRole.FighterEscort;
+            AttachProtectedDeadFlight(scenario);
+            scenario.Target.Flight.TacticalState.Intent =
+                AirCombatIntent.EngageTarget;
+            scenario.Target.Flight.TacticalState.TargetFlightId = Guid.NewGuid();
+
+            var command = AirCombatRules.Decide(
+                scenario.Source,
+                scenario.Frame,
+                scenario.OrdnanceTypes,
+                AllianceAirDoctrine.CreateDefault());
+
+            Assert.That(command.Intent, Is.EqualTo(AirCombatIntent.FollowMission));
+            Assert.That(command.Maneuver, Is.EqualTo(AirCombatManeuver.FollowRoute));
+            Assert.That(command.TargetFlightId, Is.EqualTo(Guid.Empty));
+        }
+
+        [Test]
+        public void FighterEscortDoesNotPursueThreatTurningAwayFromProtectedFlight()
+        {
+            var scenario = CreateDeadAirCombatScenario(
+                hostileDistanceKm: 75f,
+                includeHostileTrack: true);
+            scenario.Source.Flight.Role = AirFlightRole.FighterEscort;
+            AttachProtectedDeadFlight(scenario);
+            scenario.Frame.CurrentTracksByAlliance[Alliance.Bluefor][
+                scenario.Target.Flight.FlightId].EstimatedHeadingDegrees = 0f;
+
+            var command = AirCombatRules.Decide(
+                scenario.Source,
+                scenario.Frame,
+                scenario.OrdnanceTypes,
+                AllianceAirDoctrine.CreateDefault());
+
+            Assert.That(command.Intent, Is.EqualTo(AirCombatIntent.FollowMission));
+            Assert.That(command.Maneuver, Is.EqualTo(AirCombatManeuver.FollowRoute));
+            Assert.That(command.Employment, Is.Null);
+        }
+
+        [Test]
+        public void FighterEscortCancelsPreparedShotWhenThreatTurnsAway()
+        {
+            var scenario = CreateDeadAirCombatScenario(
+                hostileDistanceKm: 75f,
+                includeHostileTrack: true);
+            scenario.Source.Flight.Role = AirFlightRole.FighterEscort;
+            AttachProtectedDeadFlight(scenario);
+            scenario.Frame.CurrentTracksByAlliance[Alliance.Bluefor][
+                scenario.Target.Flight.FlightId].EstimatedHeadingDegrees = 0f;
+            scenario.Frame.ActivePasses = new[]
+            {
+                new ActiveOrdnanceEmploymentPass
+                {
+                    SourceFlightId = scenario.Source.Flight.FlightId,
+                    TargetFlightId = scenario.Target.Flight.FlightId,
+                    TargetKind = OrdnanceEmploymentTargetKind.AirFlight,
+                    OrdnanceTypeDefinitionId = TestModule.Aim120OrdnanceTypeId,
+                    PlannedQuantity = 1,
+                    PreparationStartedAt = scenario.Frame.Time,
+                    ReleaseAt = scenario.Frame.Time.AddSeconds(30)
+                }
+            };
+
+            var command = AirCombatRules.Decide(
+                scenario.Source,
+                scenario.Frame,
+                scenario.OrdnanceTypes,
+                AllianceAirDoctrine.CreateDefault());
+
+            Assert.That(command.Intent, Is.EqualTo(AirCombatIntent.FollowMission));
+            Assert.That(command.Maneuver, Is.EqualTo(AirCombatManeuver.FollowRoute));
+            Assert.That(command.RequestsAirToAirPassCancellation, Is.True);
+            Assert.That(command.Employment, Is.Null);
+        }
+
+        [Test]
+        public void FighterEscortKeepsPreparedShotAgainstAuthorizedThreat()
+        {
+            var scenario = CreateDeadAirCombatScenario(
+                hostileDistanceKm: 75f,
+                includeHostileTrack: true);
+            scenario.Source.Flight.Role = AirFlightRole.FighterEscort;
+            AttachProtectedDeadFlight(scenario);
+            scenario.Frame.ActivePasses = new[]
+            {
+                new ActiveOrdnanceEmploymentPass
+                {
+                    SourceFlightId = scenario.Source.Flight.FlightId,
+                    TargetFlightId = scenario.Target.Flight.FlightId,
+                    TargetKind = OrdnanceEmploymentTargetKind.AirFlight,
+                    OrdnanceTypeDefinitionId = TestModule.Aim120OrdnanceTypeId,
+                    PlannedQuantity = 1,
+                    PreparationStartedAt = scenario.Frame.Time,
+                    ReleaseAt = scenario.Frame.Time.AddSeconds(30)
+                }
+            };
+
+            var command = AirCombatRules.Decide(
+                scenario.Source,
+                scenario.Frame,
+                scenario.OrdnanceTypes,
+                AllianceAirDoctrine.CreateDefault());
+
+            Assert.That(command.Intent, Is.EqualTo(AirCombatIntent.EngageTarget));
+            Assert.That(command.Maneuver, Is.EqualTo(AirCombatManeuver.LaunchSetup));
+            Assert.That(command.RequestsAirToAirPassCancellation, Is.False);
+            Assert.That(
+                command.TargetFlightId,
+                Is.EqualTo(scenario.Target.Flight.FlightId));
+        }
+
+        [Test]
+        public void TrackIdentifiesAircraftTypeAtHalfQuality()
+        {
+            var track = new IADSTrack(
+                Guid.NewGuid(),
+                Vector3.zero,
+                estimatedAircraftCount: 1,
+                estimatedAirCombatPower: 1f,
+                estimatedHeadingDegrees: 0f,
+                estimatedSpeedKnots: 400f,
+                quality: 0.5f,
+                observedAt: DateTime.UtcNow);
+
+            track.IdentifyAircraftType(TestModule.Mig29AircraftTypeId);
+
+            Assert.That(track.HasIdentifiedAircraftType, Is.True);
+            Assert.That(
+                track.IdentifiedAircraftTypeDefinitionId,
+                Is.EqualTo(TestModule.Mig29AircraftTypeId));
+
+            var lowerQualityTrack = new IADSTrack(
+                Guid.NewGuid(),
+                Vector3.zero,
+                estimatedAircraftCount: 1,
+                estimatedAirCombatPower: 1f,
+                estimatedHeadingDegrees: 0f,
+                estimatedSpeedKnots: 400f,
+                quality: 0.49f,
+                observedAt: DateTime.UtcNow);
+
+            lowerQualityTrack.IdentifyAircraftType(TestModule.Mig29AircraftTypeId);
+
+            Assert.That(lowerQualityTrack.HasIdentifiedAircraftType, Is.False);
+        }
+
+        [Test]
+        public void FighterEscortIgnoresIdentifiedSupportAirframeApproachingPackage()
+        {
+            var scenario = CreateDeadAirCombatScenario(
+                hostileDistanceKm: 75f,
+                includeHostileTrack: true);
+            scenario.Source.Flight.Role = AirFlightRole.FighterEscort;
+            AttachProtectedDeadFlight(scenario);
+            scenario.Frame.CurrentTracksByAlliance[Alliance.Bluefor][
+                    scenario.Target.Flight.FlightId]
+                .IdentifiedAircraftTypeDefinitionId = TestModule.A50AircraftTypeId;
+
+            var command = AirCombatRules.Decide(
+                scenario.Source,
+                scenario.Frame,
+                scenario.OrdnanceTypes,
+                AllianceAirDoctrine.CreateDefault());
+
+            Assert.That(command.Intent, Is.EqualTo(AirCombatIntent.FollowMission));
+            Assert.That(command.TargetFlightId, Is.EqualTo(Guid.Empty));
+            Assert.That(command.ObservedThreatCandidateFlightId, Is.EqualTo(Guid.Empty));
+        }
+
+        [Test]
+        public void FighterEscortTreatsUnidentifiedApproachingAirframeConservatively()
+        {
+            var scenario = CreateDeadAirCombatScenario(
+                hostileDistanceKm: 75f,
+                includeHostileTrack: true);
+            scenario.Source.Flight.Role = AirFlightRole.FighterEscort;
+            AttachProtectedDeadFlight(scenario);
+            scenario.Frame.CurrentTracksByAlliance[Alliance.Bluefor][
+                    scenario.Target.Flight.FlightId]
+                .IdentifiedAircraftTypeDefinitionId = Guid.Empty;
+
+            var command = AirCombatRules.Decide(
+                scenario.Source,
+                scenario.Frame,
+                scenario.OrdnanceTypes,
+                AllianceAirDoctrine.CreateDefault());
+
+            Assert.That(command.Intent, Is.EqualTo(AirCombatIntent.EngageTarget));
+            Assert.That(
+                command.TargetFlightId,
+                Is.EqualTo(scenario.Target.Flight.FlightId));
+        }
+
+        [Test]
+        public void FighterEscortRequiresPersistentNonUrgentConvergence()
+        {
+            var scenario = CreateDeadAirCombatScenario(
+                hostileDistanceKm: 200f,
+                includeHostileTrack: true);
+            scenario.Source.Flight.Role = AirFlightRole.FighterEscort;
+            AttachProtectedDeadFlight(scenario);
+            scenario.Source.Flight.UpdateKinematics(
+                scenario.Source.Flight.PositionFeet
+                - Vector3.right * 150f * AirspaceGeometry.FeetPerKilometer,
+                scenario.Source.Flight.HeadingDegrees,
+                scenario.Source.Flight.SpeedKnots);
+
+            var first = AirCombatRules.Decide(
+                scenario.Source,
+                scenario.Frame,
+                scenario.OrdnanceTypes,
+                AllianceAirDoctrine.CreateDefault());
+            Assert.That(first.Intent, Is.EqualTo(AirCombatIntent.FollowMission));
+            Assert.That(
+                first.ObservedThreatCandidateFlightId,
+                Is.EqualTo(scenario.Target.Flight.FlightId));
+            scenario.Source.Flight.TacticalState.ObserveThreatCandidate(
+                first.ObservedThreatCandidateFlightId,
+                scenario.Frame.Time,
+                TimeSpan.FromSeconds(30));
+
+            scenario.Frame.Time = scenario.Frame.Time.AddSeconds(15);
+            var second = AirCombatRules.Decide(
+                scenario.Source,
+                scenario.Frame,
+                scenario.OrdnanceTypes,
+                AllianceAirDoctrine.CreateDefault());
+            Assert.That(second.Intent, Is.EqualTo(AirCombatIntent.FollowMission));
+            scenario.Source.Flight.TacticalState.ObserveThreatCandidate(
+                second.ObservedThreatCandidateFlightId,
+                scenario.Frame.Time,
+                TimeSpan.FromSeconds(30));
+
+            scenario.Frame.Time = scenario.Frame.Time.AddSeconds(15);
+            var third = AirCombatRules.Decide(
+                scenario.Source,
+                scenario.Frame,
+                scenario.OrdnanceTypes,
+                AllianceAirDoctrine.CreateDefault());
+
+            Assert.That(third.Intent, Is.EqualTo(AirCombatIntent.EngageTarget));
+            Assert.That(
+                third.TargetFlightId,
+                Is.EqualTo(scenario.Target.Flight.FlightId));
+        }
+
+        [Test]
+        public void ThreatObservationPersistenceExpiresAfterTrackGap()
+        {
+            var state = new FlightTacticalState();
+            var threatFlightId = Guid.NewGuid();
+            var firstObservation = DateTime.UtcNow;
+            var maximumGap = TimeSpan.FromSeconds(30);
+
+            state.ObserveThreatCandidate(
+                threatFlightId,
+                firstObservation,
+                maximumGap);
+            state.ObserveThreatCandidate(
+                threatFlightId,
+                firstObservation.AddSeconds(15),
+                maximumGap);
+
+            Assert.That(
+                state.HasPersistentThreatObservation(
+                    threatFlightId,
+                    firstObservation.AddSeconds(30),
+                    TimeSpan.FromSeconds(30),
+                    maximumGap),
+                Is.True);
+            Assert.That(
+                state.HasPersistentThreatObservation(
+                    threatFlightId,
+                    firstObservation.AddSeconds(46),
+                    TimeSpan.FromSeconds(30),
+                    maximumGap),
+                Is.False);
+        }
+
+        [Test]
+        public void BarcapIgnoresIdentifiedSupportAirframeApproachingPatrolArea()
+        {
+            var scenario = CreateDeadAirCombatScenario(
+                hostileDistanceKm: 70f,
+                includeHostileTrack: true);
+            var barcap = CreateAirCombatFlight(
+                Alliance.Bluefor,
+                AirMissionRequestType.BarrierCombatAirPatrol,
+                scenario.Source.AircraftType,
+                scenario.Source.Flight.PositionFeet,
+                headingDegrees: 0f,
+                TestModule.Aim120OrdnanceTypeId,
+                scenario.Frame.Time,
+                barcapStation: true);
+            scenario.Frame.Flights = new Dictionary<Guid, AirCombatFlightView>
+            {
+                { barcap.Flight.FlightId, barcap },
+                { scenario.Target.Flight.FlightId, scenario.Target }
+            };
+            scenario.Frame.CurrentTracksByAlliance[Alliance.Bluefor][
+                    scenario.Target.Flight.FlightId]
+                .IdentifiedAircraftTypeDefinitionId = TestModule.A50AircraftTypeId;
+
+            var assignments = AirCombatRules.BuildBarcapAssignments(
+                scenario.Frame,
+                scenario.OrdnanceTypes,
+                _ => AllianceAirDoctrine.CreateDefault());
+
+            Assert.That(assignments, Is.Empty);
+            scenario.Frame.BarcapTargetByFlightId = assignments;
+            var command = AirCombatRules.Decide(
+                barcap,
+                scenario.Frame,
+                scenario.OrdnanceTypes,
+                AllianceAirDoctrine.CreateDefault());
+            Assert.That(command.Intent, Is.EqualTo(AirCombatIntent.FollowMission));
+            Assert.That(command.TargetFlightId, Is.EqualTo(Guid.Empty));
+
+            scenario.Target.Flight.TacticalState.Intent =
+                AirCombatIntent.EngageTarget;
+            scenario.Target.Flight.TacticalState.TargetFlightId =
+                barcap.Flight.FlightId;
+            var selfDefenseCommand = AirCombatRules.Decide(
+                barcap,
+                scenario.Frame,
+                scenario.OrdnanceTypes,
+                AllianceAirDoctrine.CreateDefault());
+            Assert.That(
+                selfDefenseCommand.Intent,
+                Is.EqualTo(AirCombatIntent.EngageTarget));
+            Assert.That(
+                selfDefenseCommand.TargetFlightId,
+                Is.EqualTo(scenario.Target.Flight.FlightId));
+        }
+
+        [Test]
+        public void BarcapAssignsUrgentFighterApproachingPatrolArea()
+        {
+            var scenario = CreateDeadAirCombatScenario(
+                hostileDistanceKm: 70f,
+                includeHostileTrack: true);
+            var barcap = CreateAirCombatFlight(
+                Alliance.Bluefor,
+                AirMissionRequestType.BarrierCombatAirPatrol,
+                scenario.Source.AircraftType,
+                scenario.Source.Flight.PositionFeet,
+                headingDegrees: 0f,
+                TestModule.Aim120OrdnanceTypeId,
+                scenario.Frame.Time,
+                barcapStation: true);
+            scenario.Frame.Flights = new Dictionary<Guid, AirCombatFlightView>
+            {
+                { barcap.Flight.FlightId, barcap },
+                { scenario.Target.Flight.FlightId, scenario.Target }
+            };
+
+            var assignments = AirCombatRules.BuildBarcapAssignments(
+                scenario.Frame,
+                scenario.OrdnanceTypes,
+                _ => AllianceAirDoctrine.CreateDefault());
+
+            Assert.That(
+                assignments.TryGetValue(
+                    barcap.Flight.FlightId,
+                    out var assignedTargetId),
+                Is.True);
+            Assert.That(
+                assignedTargetId,
+                Is.EqualTo(scenario.Target.Flight.FlightId));
+        }
+
+        [Test]
+        public void BarcapCancelsPreparedShotWhenContactTurnsAwayFromPatrolArea()
+        {
+            var scenario = CreateDeadAirCombatScenario(
+                hostileDistanceKm: 70f,
+                includeHostileTrack: true);
+            var barcap = CreateAirCombatFlight(
+                Alliance.Bluefor,
+                AirMissionRequestType.BarrierCombatAirPatrol,
+                scenario.Source.AircraftType,
+                scenario.Source.Flight.PositionFeet,
+                headingDegrees: 0f,
+                TestModule.Aim120OrdnanceTypeId,
+                scenario.Frame.Time,
+                barcapStation: true);
+            scenario.Frame.Flights = new Dictionary<Guid, AirCombatFlightView>
+            {
+                { barcap.Flight.FlightId, barcap },
+                { scenario.Target.Flight.FlightId, scenario.Target }
+            };
+            scenario.Frame.CurrentTracksByAlliance[Alliance.Bluefor][
+                scenario.Target.Flight.FlightId].EstimatedHeadingDegrees = 0f;
+            scenario.Frame.BarcapTargetByFlightId =
+                AirCombatRules.BuildBarcapAssignments(
+                    scenario.Frame,
+                    scenario.OrdnanceTypes,
+                    _ => AllianceAirDoctrine.CreateDefault());
+            scenario.Frame.ActivePasses = new[]
+            {
+                new ActiveOrdnanceEmploymentPass
+                {
+                    SourceFlightId = barcap.Flight.FlightId,
+                    TargetFlightId = scenario.Target.Flight.FlightId,
+                    TargetKind = OrdnanceEmploymentTargetKind.AirFlight,
+                    OrdnanceTypeDefinitionId = TestModule.Aim120OrdnanceTypeId,
+                    PlannedQuantity = 1,
+                    PreparationStartedAt = scenario.Frame.Time,
+                    ReleaseAt = scenario.Frame.Time.AddSeconds(30)
+                }
+            };
+
+            var command = AirCombatRules.Decide(
+                barcap,
+                scenario.Frame,
+                scenario.OrdnanceTypes,
+                AllianceAirDoctrine.CreateDefault());
+
+            Assert.That(command.RequestsAirToAirPassCancellation, Is.True);
+            Assert.That(command.Intent, Is.EqualTo(AirCombatIntent.FollowMission));
+        }
+
+        [Test]
+        public void MaximumThreatRadiusUsesLargestApplicableSamEnvelope()
+        {
+            var siteId = Guid.NewGuid();
+            var altitudeFeet = 25000f;
+            var shortEnvelope = new KnownSamThreatEnvelope(
+                siteId,
+                Vector3.zero,
+                maximumSlantRangeFeet: 40f * AirspaceGeometry.FeetPerKilometer,
+                minimumAltitudeFeet: 0f,
+                maximumAltitudeFeet: 60000f);
+            var longEnvelope = new KnownSamThreatEnvelope(
+                siteId,
+                Vector3.zero,
+                maximumSlantRangeFeet: 80f * AirspaceGeometry.FeetPerKilometer,
+                minimumAltitudeFeet: 0f,
+                maximumAltitudeFeet: 60000f);
+
+            var radius = AirPackageBuilder.GetMaximumHorizontalThreatRadiusFeet(
+                new[] { shortEnvelope, longEnvelope },
+                altitudeFeet,
+                maneuverClearanceFeet: 0f);
+
+            Assert.That(
+                radius,
+                Is.EqualTo(longEnvelope.HorizontalRadiusFeetAtAltitude(
+                    altitudeFeet)).Within(0.01f));
+        }
+
+        [Test]
+        public void FighterEscortCompletesAtSafeReleaseInsteadOfScreenExit()
+        {
+            var now = new DateTime(2000, 1, 1, 12, 0, 0);
+            var airportId = Guid.NewGuid();
+            var area = new AirMissionArea(
+                Vector3Int.zero,
+                radiusKm: 40f,
+                tileDistanceKm: 20f);
+            var stationEntry = new AirWaypoint(
+                Vector3.forward,
+                AirWaypointAction.StationEntry,
+                now.AddMinutes(10),
+                area);
+            var flight = new AirFlight
+            {
+                MissionType =
+                    AirMissionRequestType.DestructionOfEnemyAirDefenses,
+                Role = AirFlightRole.FighterEscort
+            };
+            flight.MaterializeRoute(new[]
+            {
+                new AirWaypoint(
+                    Vector3.zero,
+                    AirWaypointAction.Takeoff,
+                    now,
+                    airportBuildingId: airportId),
+                stationEntry,
+                new AirWaypoint(
+                    Vector3.right,
+                    AirWaypointAction.StationEndpoint,
+                    now.AddMinutes(25),
+                    hasRepeat: true,
+                    repeatFromWaypointId: stationEntry.WaypointId,
+                    repeatUntil: now.AddMinutes(25)),
+                new AirWaypoint(
+                    Vector3.back,
+                    AirWaypointAction.MissionAction,
+                    now.AddMinutes(27),
+                    area),
+                new AirWaypoint(
+                    Vector3.zero,
+                    AirWaypointAction.Land,
+                    now.AddMinutes(40),
+                    airportBuildingId: airportId)
+            });
+
+            Assert.That(flight.TryTakeOff(now), Is.True);
+            flight.CrossCurrentWaypoint(now.AddMinutes(10));
+            flight.CrossCurrentWaypoint(now.AddMinutes(25));
+            Assert.That(flight.MissionAchieved, Is.False);
+
+            flight.CrossCurrentWaypoint(now.AddMinutes(27));
+            Assert.That(flight.MissionAchieved, Is.True);
+        }
+
+        [Test]
+        public void FighterEscortNeverInheritsDeadTargetSamPermission()
+        {
+            var scenario = CreateDeadAirCombatScenario(
+                hostileDistanceKm: 50f,
+                includeHostileTrack: false);
+            var targetSiteId = Guid.NewGuid();
+            scenario.Source.Flight.Role = AirFlightRole.FighterEscort;
+            scenario.Source.Flight.AuthorizedSurfaceThreatSiteId = targetSiteId;
+            scenario.Source.Flight
+                .UpdateSurfaceThreatPenetrationAuthorization(true);
+            SetBlueKnownThreat(
+                scenario,
+                CreateKnownThreat(
+                    targetSiteId,
+                    scenario.Source.Flight.PositionFeet));
+
+            var command = AirCombatRules.Decide(
+                scenario.Source,
+                scenario.Frame,
+                scenario.OrdnanceTypes,
+                AllianceAirDoctrine.CreateDefault());
+
+            Assert.That(
+                scenario.Source.Flight
+                    .AuthorizedSurfaceThreatPenetrationGranted,
+                Is.False);
+            Assert.That(
+                command.RequestsSurfaceThreatRecovery
+                || command.Maneuver == AirCombatManeuver.AvoidSurfaceThreat,
+                Is.True);
+        }
+
+        [Test]
+        public void CloseEscortFollowsExecutingProtectedElementWhenNoThreatExists()
+        {
+            var scenario = CreateDeadAirCombatScenario(
+                hostileDistanceKm: 50f,
+                includeHostileTrack: false);
+            scenario.Source.Flight.Role = AirFlightRole.FighterEscort;
+            var protectedFlight = AttachProtectedDeadFlight(scenario);
+            Assert.That(
+                protectedFlight.Flight.CrossCurrentWaypoint(
+                    scenario.Frame.Time),
+                Is.EqualTo(FlightWaypointTransition.Advanced));
+            Assert.That(
+                scenario.Source.Flight.UpdateEscortCoverageMode(
+                    AirEscortCoverageMode.CloseCover,
+                    scenario.Frame.Time,
+                    "Test close-cover transition."),
+                Is.True);
+
+            var command = AirCombatRules.Decide(
+                scenario.Source,
+                scenario.Frame,
+                scenario.OrdnanceTypes,
+                AllianceAirDoctrine.CreateDefault());
+
+            Assert.That(command.Intent, Is.EqualTo(AirCombatIntent.FollowMission));
+            Assert.That(
+                command.Maneuver,
+                Is.EqualTo(AirCombatManeuver.Intercept)
+                    .Or.EqualTo(AirCombatManeuver.Press));
+            Assert.That(command.HasAimPoint, Is.True);
+            Assert.That(
+                command.AimPointFeet.y,
+                Is.GreaterThan(protectedFlight.Flight.PositionFeet.y));
+            StringAssert.Contains("close cover", command.Reason);
+        }
+
+        [Test]
+        public void CloseEscortMayEnterConfirmedClearedSamEnvelope()
+        {
+            var scenario = CreateDeadAirCombatScenario(
+                hostileDistanceKm: 50f,
+                includeHostileTrack: false);
+            scenario.Source.Flight.Role = AirFlightRole.FighterEscort;
+            var protectedFlight = AttachProtectedDeadFlight(scenario);
+            protectedFlight.Flight.CrossCurrentWaypoint(scenario.Frame.Time);
+            scenario.Source.Flight.UpdateEscortCoverageMode(
+                AirEscortCoverageMode.CloseCover,
+                scenario.Frame.Time,
+                "Test close-cover transition.");
+            var clearedSiteId = Guid.NewGuid();
+            scenario.Source.Flight.ConfirmSurfaceThreatCleared(
+                clearedSiteId,
+                scenario.Frame.Time,
+                "Test target shooter-chain destruction.");
+            SetBlueKnownThreat(
+                scenario,
+                CreateKnownThreat(
+                    clearedSiteId,
+                    scenario.Source.Flight.PositionFeet));
+
+            var command = AirCombatRules.Decide(
+                scenario.Source,
+                scenario.Frame,
+                scenario.OrdnanceTypes,
+                AllianceAirDoctrine.CreateDefault());
+
+            Assert.That(command.RequestsSurfaceThreatRecovery, Is.False);
+            Assert.That(
+                command.Maneuver,
+                Is.EqualTo(AirCombatManeuver.Intercept)
+                    .Or.EqualTo(AirCombatManeuver.Press));
         }
 
         [Test]
@@ -520,6 +1427,35 @@ namespace Tests.Editor
                     .GetPriorityWeight(
                         AirMissionRequestType.DestructionOfEnemyAirDefenses),
                 Is.EqualTo(0.85f));
+
+            var commander = new AllianceAirTaskingCommander(
+                Alliance.Bluefor,
+                template.AirDoctrineByAlliance[Alliance.Bluefor]);
+            commander.BeginPlanningCycle(template.CampaignStartTime);
+            var requestGenerator = new AirMissionRequestGenerator(
+                new AirMissionPriorityService(module),
+                module,
+                alliance => template.OrdnanceAllowances[alliance]);
+
+            var bootstrapRequests = requestGenerator.Generate(
+                commander,
+                snapshot,
+                template.SimulationSettings.OperationalCadenceHours,
+                allowOffensiveMissions: false);
+            var establishedPictureRequests = requestGenerator.Generate(
+                commander,
+                snapshot,
+                template.SimulationSettings.OperationalCadenceHours,
+                allowOffensiveMissions: true);
+
+            Assert.That(bootstrapRequests, Has.None.Matches<AirMissionRequest>(
+                request => request.RequestType
+                           == AirMissionRequestType.OffensiveCounterAirSweep
+                           || request.RequestType
+                           == AirMissionRequestType.DestructionOfEnemyAirDefenses));
+            Assert.That(establishedPictureRequests, Has.Some.Matches<AirMissionRequest>(
+                request => request.RequestType
+                           == AirMissionRequestType.DestructionOfEnemyAirDefenses));
         }
 
         private static DeadAirCombatScenario CreateDeadAirCombatScenario(
@@ -564,7 +1500,7 @@ namespace Tests.Editor
             var tracks = new Dictionary<Guid, IADSTrack>();
             if (includeHostileTrack)
             {
-                tracks[target.Flight.FlightId] = new IADSTrack(
+                var targetTrack = new IADSTrack(
                     target.Flight.FlightId,
                     targetPosition,
                     target.LiveAircraft.Count,
@@ -574,6 +1510,9 @@ namespace Tests.Editor
                     target.Flight.SpeedKnots,
                     quality: 1f,
                     now);
+                targetTrack.IdentifyAircraftType(
+                    targetType.AircraftTypeDefinitionId);
+                tracks[target.Flight.FlightId] = targetTrack;
             }
 
             return new DeadAirCombatScenario
@@ -586,6 +1525,8 @@ namespace Tests.Editor
                     Time = now,
                     TileDistanceKm = 20f,
                     Flights = flights,
+                    AircraftTypes = module.AircraftTypeDefinitions.ToDictionary(
+                        definition => definition.AircraftTypeDefinitionId),
                     AirCommanders =
                         new Dictionary<Alliance, AllianceAirTaskingCommander>(),
                     CurrentTracksByAlliance =
@@ -636,6 +1577,65 @@ namespace Tests.Editor
             };
         }
 
+        private static AirCombatFlightView AttachProtectedDeadFlight(
+            DeadAirCombatScenario scenario)
+        {
+            var protectedFlight = CreateAirCombatFlight(
+                Alliance.Bluefor,
+                AirMissionRequestType.DestructionOfEnemyAirDefenses,
+                scenario.Source.AircraftType,
+                scenario.Source.Flight.PositionFeet,
+                scenario.Source.Flight.HeadingDegrees,
+                TestModule.Aim120OrdnanceTypeId,
+                scenario.Frame.Time);
+            protectedFlight.Package = scenario.Source.Package;
+            scenario.Source.Package.Flights.Add(protectedFlight.Flight);
+            scenario.Source.Flight.ProtectedFlightIds.Add(
+                protectedFlight.Flight.FlightId);
+            scenario.Frame.Flights = scenario.Frame.Flights
+                .Append(new KeyValuePair<Guid, AirCombatFlightView>(
+                    protectedFlight.Flight.FlightId,
+                    protectedFlight))
+                .ToDictionary(entry => entry.Key, entry => entry.Value);
+            return protectedFlight;
+        }
+
+        private static void AddTrackedHostileFlight(
+            DeadAirCombatScenario scenario,
+            AirCombatFlightView hostile)
+        {
+            scenario.Frame.Flights = scenario.Frame.Flights
+                .Append(new KeyValuePair<Guid, AirCombatFlightView>(
+                    hostile.Flight.FlightId,
+                    hostile))
+                .ToDictionary(entry => entry.Key, entry => entry.Value);
+            var blueTracks = scenario.Frame.CurrentTracksByAlliance[
+                    Alliance.Bluefor]
+                .ToDictionary(entry => entry.Key, entry => entry.Value);
+            var hostileTrack = new IADSTrack(
+                hostile.Flight.FlightId,
+                hostile.Flight.PositionFeet,
+                hostile.LiveAircraft.Count,
+                hostile.LiveAircraft.Count
+                * hostile.AircraftType.AirInterferenceCapability,
+                hostile.Flight.HeadingDegrees,
+                hostile.Flight.SpeedKnots,
+                quality: 1f,
+                scenario.Frame.Time);
+            hostileTrack.IdentifyAircraftType(
+                hostile.AircraftType.AircraftTypeDefinitionId);
+            blueTracks[hostile.Flight.FlightId] = hostileTrack;
+            scenario.Frame.CurrentTracksByAlliance =
+                new Dictionary<Alliance, IReadOnlyDictionary<Guid, IADSTrack>>
+                {
+                    { Alliance.Bluefor, blueTracks },
+                    {
+                        Alliance.Redfor,
+                        scenario.Frame.CurrentTracksByAlliance[Alliance.Redfor]
+                    }
+                };
+        }
+
         private static KnownSamThreatEnvelope CreateKnownThreat(
             Guid siteId,
             Vector3 flightPosition)
@@ -676,7 +1676,8 @@ namespace Tests.Editor
             Vector3 position,
             float headingDegrees,
             Guid airToAirOrdnanceTypeId,
-            DateTime now)
+            DateTime now,
+            bool barcapStation = false)
         {
             var squadron = new Squadron
             {
@@ -701,34 +1702,75 @@ namespace Tests.Editor
             });
             squadron.Aircraft.Add(aircraft);
             flight.AircraftIds.Add(aircraft.AircraftId);
-            flight.MaterializeRoute(new[]
+            var missionArea = new AirMissionArea(
+                Vector3Int.zero,
+                radiusKm: 40f,
+                tileDistanceKm: 20f);
+            if (barcapStation)
             {
-                new AirWaypoint(
+                var stationEntry = new AirWaypoint(
                     position,
-                    AirWaypointAction.Takeoff,
+                    AirWaypointAction.StationEntry,
                     now,
-                    airportBuildingId: squadron.AirportBuildingId),
-                new AirWaypoint(
-                    position + Vector3.forward
-                    * 200f
-                    * AirspaceGeometry.FeetPerKilometer,
-                    AirWaypointAction.MissionAction,
-                    now.AddHours(1),
-                    new AirMissionArea(
-                        Vector3Int.zero,
-                        radiusKm: 40f,
-                        tileDistanceKm: 20f)),
-                new AirWaypoint(
-                    position,
-                    AirWaypointAction.Land,
-                    now.AddHours(2),
-                    airportBuildingId: squadron.AirportBuildingId)
-            });
+                    missionArea);
+                flight.MaterializeRoute(new[]
+                {
+                    new AirWaypoint(
+                        position,
+                        AirWaypointAction.Takeoff,
+                        now,
+                        airportBuildingId: squadron.AirportBuildingId),
+                    stationEntry,
+                    new AirWaypoint(
+                        position + Vector3.right
+                        * 10f * AirspaceGeometry.FeetPerKilometer,
+                        AirWaypointAction.StationEndpoint,
+                        now.AddMinutes(2),
+                        hasRepeat: true,
+                        repeatFromWaypointId: stationEntry.WaypointId,
+                        repeatUntil: now.AddHours(1)),
+                    new AirWaypoint(
+                        position,
+                        AirWaypointAction.MissionAction,
+                        now.AddHours(1),
+                        missionArea),
+                    new AirWaypoint(
+                        position,
+                        AirWaypointAction.Land,
+                        now.AddHours(2),
+                        airportBuildingId: squadron.AirportBuildingId)
+                });
+            }
+            else
+            {
+                flight.MaterializeRoute(new[]
+                {
+                    new AirWaypoint(
+                        position,
+                        AirWaypointAction.Takeoff,
+                        now,
+                        airportBuildingId: squadron.AirportBuildingId),
+                    new AirWaypoint(
+                        position + Vector3.forward
+                        * 200f
+                        * AirspaceGeometry.FeetPerKilometer,
+                        AirWaypointAction.MissionAction,
+                        now.AddHours(1),
+                        missionArea),
+                    new AirWaypoint(
+                        position,
+                        AirWaypointAction.Land,
+                        now.AddHours(2),
+                        airportBuildingId: squadron.AirportBuildingId)
+                });
+            }
             Assert.That(flight.TryTakeOff(now), Is.True);
             flight.UpdateKinematics(
                 position,
                 headingDegrees,
                 aircraftType.CruiseSpeedKnots);
+            if (barcapStation)
+                flight.CrossCurrentWaypoint(now);
             var package = new AirPackage
             {
                 Alliance = alliance,

@@ -25,6 +25,9 @@ namespace Engine.Models
         private readonly AllianceAirTaskingCommander blueforCommander;
         private readonly AllianceAirTaskingCommander redforCommander;
         private readonly GameManager gameManager;
+        private DateTime offensiveMissionPlanningNotBefore;
+        private bool offensiveMissionPlanningEnabled;
+        private bool initialAirPictureReplanPending;
 
         public AirTaskingSystem(
             GameManager gameManager,
@@ -124,6 +127,15 @@ namespace Engine.Models
 
         public void Initialize()
         {
+            offensiveMissionPlanningEnabled = false;
+            initialAirPictureReplanPending = false;
+            // Bootstrap BARCAP and support sorties must be able to launch and
+            // contribute one complete assessment window before offensive
+            // requests consume the resulting air picture.
+            offensiveMissionPlanningNotBefore = gameManager.CurrentTime
+                                                + AirPackage.PreparationDelay
+                                                + AirControlAssessmentService
+                                                    .AssessmentInterval;
             airControlAssessmentService.Initialize(
                 gameManager.CurrentTime,
                 blueforCommander,
@@ -142,10 +154,22 @@ namespace Engine.Models
                 blueforCommander,
                 redforCommander);
             RecordAirControlObservations(currentTime);
+
+            if (offensiveMissionPlanningEnabled
+                || !airControlAssessmentService.HasCompletedAssessmentThrough(
+                    offensiveMissionPlanningNotBefore))
+            {
+                return;
+            }
+
+            offensiveMissionPlanningEnabled = true;
+            initialAirPictureReplanPending = true;
         }
 
         public void GameTurn(bool crossedOperationalCadenceBoundary)
         {
+            var rebuildGlobalPlan = crossedOperationalCadenceBoundary
+                                    || initialAirPictureReplanPending;
             foreach (var commander in GetCommanders())
             {
                 RevalidateAirportOperations(
@@ -154,10 +178,12 @@ namespace Engine.Models
                 commander.ValidatePackageIntegrity(
                     aircraftReservations,
                     gameManager.CurrentTime);
-                if (crossedOperationalCadenceBoundary)
+                if (rebuildGlobalPlan)
                     RebuildGlobalPlan(commander);
                 FulfillRequests(commander);
             }
+
+            initialAirPictureReplanPending = false;
         }
 
         public bool CancelPackage(
@@ -201,7 +227,8 @@ namespace Engine.Models
             var generatedRequests = requestGenerator.Generate(
                 commander,
                 snapshot,
-                cadenceHours);
+                cadenceHours,
+                offensiveMissionPlanningEnabled);
             commander.AddMissionRequests(generatedRequests, gameManager.CurrentTime);
         }
 

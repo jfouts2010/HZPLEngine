@@ -36,7 +36,8 @@ namespace Engine.Service
         public List<AirMissionRequest> Generate(
             AllianceAirTaskingCommander commander,
             AirPlanningSnapshot snapshot,
-            int operationalCadenceHours)
+            int operationalCadenceHours,
+            bool allowOffensiveMissions = true)
         {
             var generated = new List<AirMissionRequest>();
             var effectStart = snapshot.CurrentTime + AirPackage.PreparationDelay;
@@ -133,7 +134,7 @@ namespace Engine.Service
                 .ThenBy(candidate => candidate.FrontierTileId.y)
                 .ThenBy(candidate => candidate.FrontierTileId.z)
                 .FirstOrDefault();
-            if (selectedOcaCandidate != null)
+            if (allowOffensiveMissions && selectedOcaCandidate != null)
             {
                 var ocaRequest = CreateRequest(
                     commander,
@@ -166,7 +167,8 @@ namespace Engine.Service
                 request.RequestType
                 == AirMissionRequestType.DestructionOfEnemyAirDefenses
                 && !request.IsTerminal);
-            if (!hasUnresolvedDead
+            if (allowOffensiveMissions
+                && !hasUnresolvedDead
                 && deadCorridorPlanner.TryPlan(snapshot, out var deadCandidate))
             {
                 var deadRequest = CreateRequest(

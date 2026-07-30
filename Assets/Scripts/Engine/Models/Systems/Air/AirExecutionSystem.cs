@@ -190,6 +190,11 @@ namespace Engine.Models
                         command.AimPointFeet,
                         command.HasAimPoint,
                         command.Reason);
+                    view.Flight.TacticalState.ObserveThreatCandidate(
+                        command.ObservedThreatCandidateFlightId,
+                        cursor,
+                        TimeSpan.FromSeconds(
+                            TacticalDecisionStepSeconds * 2d));
                     if (command.ExhaustProactiveEngagement)
                         view.Flight.TacticalState.ProactiveEngagementExhausted = true;
                 }
@@ -440,6 +445,7 @@ namespace Engine.Models
                 Time = currentTime,
                 TileDistanceKm = gameManager.SimulationSettings.TileDistanceKM,
                 Flights = flights,
+                AircraftTypes = aircraftTypes,
                 AirCommanders = new Dictionary<Alliance, AllianceAirTaskingCommander>
                 {
                     { Alliance.Bluefor, airTaskingSystem.GetCommander(Alliance.Bluefor) },
@@ -829,9 +835,7 @@ namespace Engine.Models
                 if (currentReport == null)
                 {
                     var invalidatedFlightIds = package.Flights
-                        .Where(flight => flight.MissionType
-                                         == AirMissionRequestType
-                                             .DestructionOfEnemyAirDefenses
+                        .Where(flight => flight.IsDeadAttackFlight
                                          && flight.IsAirborne)
                         .Select(flight => flight.FlightId)
                         .ToList();
@@ -875,10 +879,49 @@ namespace Engine.Models
                                            || IsDeadCorridorStillBlocked(
                                                package.Alliance,
                                                request.DeadPlan);
+                if (!siteNoLongerHostile
+                    && minimumEffectAchievedByPackage
+                    && !hasFunctionalShooterChain)
+                {
+                    var protectedDeadFlightIds = package.Flights
+                        .Where(flight => flight.IsDeadAttackFlight)
+                        .Select(flight => flight.FlightId)
+                        .ToHashSet();
+                    var coverageChanged = package.Flights
+                        .Where(flight => flight.IsFighterEscort
+                                         && flight.ProtectedFlightIds.Any(
+                                             protectedDeadFlightIds.Contains))
+                        .OrderBy(flight => flight.FlightId)
+                        .Aggregate(
+                            false,
+                            (changed, escort) =>
+                            {
+                                var modeChanged = escort.UpdateEscortCoverageMode(
+                                    AirEscortCoverageMode.CloseCover,
+                                    currentTime,
+                                    "The protected objective can no longer fire; "
+                                    + "escort collapsed its forward screen to close cover.");
+                                var clearanceChanged =
+                                    escort.ConfirmSurfaceThreatCleared(
+                                        site.SiteId,
+                                        currentTime,
+                                        "The protected package permanently broke the "
+                                        + "target site's shooter chain; its former "
+                                        + "envelope is cleared for close cover.");
+                                return changed
+                                       || modeChanged
+                                       || clearanceChanged;
+                            });
+                    if (coverageChanged)
+                    {
+                        // The target envelope is derived from the now-broken
+                        // shooter chain. Rebuild the tactical picture before
+                        // the close-cover command is evaluated.
+                        knownSamThreatCache.Clear();
+                    }
+                }
                 foreach (var flight in package.Flights
-                             .Where(candidate => candidate.MissionType
-                                                 == AirMissionRequestType
-                                                     .DestructionOfEnemyAirDefenses
+                             .Where(candidate => candidate.IsDeadAttackFlight
                                                  && candidate.IsAirborne)
                              .OrderBy(candidate => candidate.FlightId))
                 {
@@ -1282,8 +1325,7 @@ namespace Engine.Models
             foreach (var command in commands.OrderBy(item => item.FlightId))
             {
                 if (!frame.Flights.TryGetValue(command.FlightId, out var view)
-                    || view.Flight.MissionType
-                    != AirMissionRequestType.DestructionOfEnemyAirDefenses
+                    || !view.Flight.IsDeadAttackFlight
                     || view.Flight.ExecutionPhase != FlightExecutionPhase.Executing
                     || view.Flight.AuthorizedSurfaceThreatSiteId == Guid.Empty
                     || command.Intent != AirCombatIntent.FollowMission
@@ -1537,7 +1579,7 @@ namespace Engine.Models
             AircraftTypeDefinition aircraftType,
             DateTime occurredAt)
         {
-            if (!IsTimeBasedAirCombatMission(flight.MissionType)
+            if (!IsTimeBasedAirCombatFlight(flight)
                 || flight.LifecycleState != AirTaskingLifecycleState.Active
                 || flight.ExecutionPhase == FlightExecutionPhase.Returning
                 || flight.ExecutionPhase == FlightExecutionPhase.Landing
@@ -2060,10 +2102,14 @@ namespace Engine.Models
                        out aircraftType);
         }
 
-        private static bool IsTimeBasedAirCombatMission(AirMissionRequestType missionType)
+        private static bool IsTimeBasedAirCombatFlight(AirFlight flight)
         {
-            return missionType == AirMissionRequestType.BarrierCombatAirPatrol
-                   || missionType == AirMissionRequestType.OffensiveCounterAirSweep;
+            return flight != null
+                   && (flight.IsFighterEscort
+                       || flight.MissionType
+                       == AirMissionRequestType.BarrierCombatAirPatrol
+                       || flight.MissionType
+                       == AirMissionRequestType.OffensiveCounterAirSweep);
         }
 
         private float GetGuidanceSpeedKnots(

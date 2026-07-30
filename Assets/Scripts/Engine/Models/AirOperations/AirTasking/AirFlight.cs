@@ -33,6 +33,18 @@ namespace Models.Gameplay.Campaign
         Failed = 4
     }
 
+    public enum AirFlightRole
+    {
+        PrimaryMission = 0,
+        FighterEscort = 1
+    }
+
+    public enum AirEscortCoverageMode
+    {
+        ForwardScreen = 0,
+        CloseCover = 1
+    }
+
     [Serializable]
     public sealed class FlightExecutionEvent
     {
@@ -110,9 +122,14 @@ namespace Models.Gameplay.Campaign
         public Guid FlightId = Guid.NewGuid();
         public Guid SquadronId;
         public AirMissionRequestType MissionType;
+        public AirFlightRole Role = AirFlightRole.PrimaryMission;
+        private AirEscortCoverageMode escortCoverageMode =
+            AirEscortCoverageMode.ForwardScreen;
         public Guid AuthorizedSurfaceThreatSiteId;
         public bool IsRequired = true;
         private List<Guid> aircraftIds = new List<Guid>();
+        private List<Guid> protectedFlightIds = new List<Guid>();
+        private List<Guid> clearedSurfaceThreatSiteIds = new List<Guid>();
         private List<PlannedAircraftLoadout> plannedAircraftLoadouts =
             new List<PlannedAircraftLoadout>();
         private AirTaskingLifecycleState lifecycleState = AirTaskingLifecycleState.Committed;
@@ -141,6 +158,10 @@ namespace Models.Gameplay.Campaign
             new List<AirSupportReservation>();
 
         public List<Guid> AircraftIds => aircraftIds;
+        public List<Guid> ProtectedFlightIds =>
+            protectedFlightIds ??= new List<Guid>();
+        public IReadOnlyCollection<Guid> ClearedSurfaceThreatSiteIds =>
+            (clearedSurfaceThreatSiteIds ??= new List<Guid>()).AsReadOnly();
         public List<PlannedAircraftLoadout> PlannedAircraftLoadouts => plannedAircraftLoadouts;
         public List<AirSupportReservation> SupportReservations => supportReservations;
         public AirTaskingLifecycleState LifecycleState => lifecycleState;
@@ -156,6 +177,14 @@ namespace Models.Gameplay.Campaign
             tacticalState ??= new FlightTacticalState();
         public bool IsWaitingAtRendezvous => isWaitingAtRendezvous;
         public bool MissionAchieved => missionAchieved;
+        public bool IsFighterEscort => Role == AirFlightRole.FighterEscort;
+        public AirEscortCoverageMode EscortCoverageMode => escortCoverageMode;
+        public bool IsCloseEscortActive =>
+            IsFighterEscort
+            && escortCoverageMode == AirEscortCoverageMode.CloseCover;
+        public bool IsDeadAttackFlight =>
+            MissionType == AirMissionRequestType.DestructionOfEnemyAirDefenses
+            && !IsFighterEscort;
         public bool AuthorizedSurfaceThreatPenetrationGranted =>
             authorizedSurfaceThreatPenetrationGranted;
         public DateTime PlannedTakeoffTime =>
@@ -459,8 +488,7 @@ namespace Models.Gameplay.Campaign
                         return FlightWaypointTransition.Advanced;
                     }
 
-                    if (MissionType
-                        != AirMissionRequestType.DestructionOfEnemyAirDefenses)
+                    if (!IsDeadAttackFlight && !IsFighterEscort)
                     {
                         missionAchieved = true;
                     }
@@ -470,9 +498,7 @@ namespace Models.Gameplay.Campaign
 
                 case AirWaypointAction.MissionAction:
                     executionPhase = FlightExecutionPhase.Executing;
-                    var isDeadStandoff = MissionType
-                                         == AirMissionRequestType
-                                             .DestructionOfEnemyAirDefenses;
+                    var isDeadStandoff = IsDeadAttackFlight;
                     if (!isDeadStandoff)
                         missionAchieved = true;
                     RecordEvent(
@@ -519,8 +545,7 @@ namespace Models.Gameplay.Campaign
             DateTime occurredAt,
             string reason)
         {
-            if (MissionType
-                    != AirMissionRequestType.DestructionOfEnemyAirDefenses
+            if (!IsDeadAttackFlight
                 || !IsAirborne
                 || missionAchieved == achieved)
                 return;
@@ -536,10 +561,53 @@ namespace Models.Gameplay.Campaign
         public void UpdateSurfaceThreatPenetrationAuthorization(bool granted)
         {
             authorizedSurfaceThreatPenetrationGranted =
-                MissionType
-                == AirMissionRequestType.DestructionOfEnemyAirDefenses
+                IsDeadAttackFlight
                 && IsAirborne
                 && granted;
+        }
+
+        public bool UpdateEscortCoverageMode(
+            AirEscortCoverageMode mode,
+            DateTime occurredAt,
+            string reason)
+        {
+            if (!IsFighterEscort
+                || !IsAirborne
+                || executionPhase == FlightExecutionPhase.Returning
+                || executionPhase == FlightExecutionPhase.Landing
+                || executionPhase == FlightExecutionPhase.Ended
+                || escortCoverageMode == mode)
+                return false;
+
+            escortCoverageMode = mode;
+            RecordEvent(
+                CurrentWaypoint,
+                occurredAt,
+                string.IsNullOrWhiteSpace(reason)
+                    ? $"Escort changed coverage mode to {mode}."
+                    : reason);
+            return true;
+        }
+
+        public bool ConfirmSurfaceThreatCleared(
+            Guid siteId,
+            DateTime occurredAt,
+            string reason)
+        {
+            if (siteId == Guid.Empty
+                || !IsAirborne
+                || (clearedSurfaceThreatSiteIds ??= new List<Guid>())
+                    .Contains(siteId))
+                return false;
+
+            clearedSurfaceThreatSiteIds.Add(siteId);
+            RecordEvent(
+                CurrentWaypoint,
+                occurredAt,
+                string.IsNullOrWhiteSpace(reason)
+                    ? $"Surface threat {siteId:N} was confirmed cleared."
+                    : reason);
+            return true;
         }
 
         public bool EndDeadAttackAndBeginRecovery(
@@ -547,8 +615,7 @@ namespace Models.Gameplay.Campaign
             bool achieved,
             string reason)
         {
-            if (MissionType
-                    != AirMissionRequestType.DestructionOfEnemyAirDefenses
+            if (!IsDeadAttackFlight
                 || !IsAirborne
                 || executionPhase == FlightExecutionPhase.Returning
                 || executionPhase == FlightExecutionPhase.Landing)

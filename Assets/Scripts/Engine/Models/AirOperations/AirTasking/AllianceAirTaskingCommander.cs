@@ -505,17 +505,12 @@ namespace Models.Gameplay.Campaign
             var flights = package.Flights;
             if (flights.Count == 0)
                 return "The package proposal must contain valid flights.";
-            var spatialBarcap = request.RequestType
-                                == AirMissionRequestType.BarrierCombatAirPatrol
-                                && request.BarcapBarrier?.BarrierTileIds?.Count > 0;
             foreach (var flight in flights)
             {
                 if (!flight.TryValidateRoute(out _))
                     return "A proposed flight has an invalid materialized route.";
-                var satisfiesMissionGeometry = spatialBarcap
-                    ? HasValidSpatialBarcapCoverage(request, flight)
-                    : request.MissionArea.Contains(
-                        flight.MissionArea.CenterTileId);
+                var satisfiesMissionGeometry =
+                    SatisfiesMissionGeometry(request, flight);
                 if (flight.PlannedTakeoffTime < package.CreatedAt + AirPackage.PreparationDelay
                     || flight.EffectStart < request.EffectStart
                     || flight.EffectEnd > request.EffectEnd
@@ -531,6 +526,16 @@ namespace Models.Gameplay.Campaign
                     || flight.MissionType != request.RequestType
                     || flight.AircraftIds.Count == 0))
                 return "A proposed flight is incomplete.";
+            var packageFlightIds = flights
+                .Select(flight => flight.FlightId)
+                .ToHashSet();
+            if (flights.Where(flight => flight.IsFighterEscort).Any(escort =>
+                    escort.ProtectedFlightIds.Count == 0
+                    || escort.ProtectedFlightIds.Any(id =>
+                        id == escort.FlightId
+                        || !packageFlightIds.Contains(id))
+                    || escort.AuthorizedSurfaceThreatSiteId != Guid.Empty))
+                return "A proposed fighter escort has an invalid protection assignment.";
             if (flights.Select(flight => flight.FlightId).Distinct().Count() != flights.Count)
                 return "The package proposal contains duplicate flight identifiers.";
 
@@ -542,14 +547,35 @@ namespace Models.Gameplay.Campaign
             if (supportingFlightIds.Any(id => id == Guid.Empty)
                 || supportingFlightIds.Distinct().Count() != supportingFlightIds.Count)
                 return "The package proposal contains invalid or duplicate support flights.";
+            var effectAircraftCount = flights
+                .Where(flight => !flight.IsFighterEscort)
+                .Sum(flight => flight.AircraftIds.Count);
             if (!request.IsSupportRequest
-                && aircraftIds.Count < (request.RequestType
+                && effectAircraftCount < (request.RequestType
                     == AirMissionRequestType.BarrierCombatAirPatrol
                         ? 1
                         : Math.Max(1, request.DesiredAircraftStrength)))
                 return "The package proposal cannot deliver the requested combat effect.";
 
             return string.Empty;
+        }
+
+        internal static bool SatisfiesMissionGeometry(
+            AirMissionRequest request,
+            AirFlight flight)
+        {
+            if (request == null || flight == null)
+                return false;
+            if (flight.IsFighterEscort)
+                return true;
+
+            var spatialBarcap = request.RequestType
+                                == AirMissionRequestType.BarrierCombatAirPatrol
+                                && request.BarcapBarrier?.BarrierTileIds?.Count > 0;
+            return spatialBarcap
+                ? HasValidSpatialBarcapCoverage(request, flight)
+                : request.MissionArea.Contains(
+                    flight.MissionArea.CenterTileId);
         }
 
         private static bool HasValidSpatialBarcapCoverage(

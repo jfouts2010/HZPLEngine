@@ -7,7 +7,7 @@ namespace Models.Gameplay.Campaign
     public sealed class IADSTrack
     {
         public const float MinimumCreationQuality = 0.10f;
-        public const float AircraftTypeIdentificationQualityThreshold = 0.75f;
+        public const float AircraftTypeIdentificationQualityThreshold = 0.5f;
 
         public Guid TrackId = Guid.NewGuid();
         public Guid FlightId;

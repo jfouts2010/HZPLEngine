@@ -166,7 +166,8 @@ namespace Engine.Service
         {
             if (flight == null
                 || squadron == null
-                || (flight.MissionType != AirMissionRequestType.BarrierCombatAirPatrol
+                || (!flight.IsFighterEscort
+                    && flight.MissionType != AirMissionRequestType.BarrierCombatAirPatrol
                     && flight.MissionType != AirMissionRequestType.OffensiveCounterAirSweep))
                 return Array.Empty<AirCombatProjection>();
 

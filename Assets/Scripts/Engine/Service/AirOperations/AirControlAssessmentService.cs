@@ -75,6 +75,11 @@ namespace Engine.Service
             return tileIds.Contains(tileId);
         }
 
+        public bool HasCompletedAssessmentThrough(DateTime assessmentTime)
+        {
+            return initialized && lastAssessmentAt >= assessmentTime;
+        }
+
         public void RecordContact(
             Alliance observingAlliance,
             Alliance contactAlliance,

@@ -63,6 +63,59 @@ namespace Models.Gameplay.Campaign
         public bool HasTacticalAimPoint;
         public Vector3 TacticalAimPointFeet;
         public string DecisionReason = string.Empty;
+        public Guid MonitoredThreatFlightId;
+        public DateTime ThreateningCourseFirstObservedAt;
+        public DateTime ThreateningCourseLastObservedAt;
+        public int ConsecutiveThreateningCourseObservations;
+
+        public void ObserveThreatCandidate(
+            Guid threatFlightId,
+            DateTime observedAt,
+            TimeSpan maximumObservationGap)
+        {
+            if (threatFlightId == Guid.Empty)
+            {
+                MonitoredThreatFlightId = Guid.Empty;
+                ThreateningCourseFirstObservedAt = default;
+                ThreateningCourseLastObservedAt = default;
+                ConsecutiveThreateningCourseObservations = 0;
+                return;
+            }
+
+            if (MonitoredThreatFlightId != threatFlightId
+                || ThreateningCourseLastObservedAt == default
+                || observedAt < ThreateningCourseLastObservedAt
+                || observedAt - ThreateningCourseLastObservedAt
+                > maximumObservationGap)
+            {
+                MonitoredThreatFlightId = threatFlightId;
+                ThreateningCourseFirstObservedAt = observedAt;
+                ThreateningCourseLastObservedAt = observedAt;
+                ConsecutiveThreateningCourseObservations = 1;
+                return;
+            }
+
+            ThreateningCourseLastObservedAt = observedAt;
+            ConsecutiveThreateningCourseObservations++;
+        }
+
+        public bool HasPersistentThreatObservation(
+            Guid threatFlightId,
+            DateTime observedAt,
+            TimeSpan requiredDuration,
+            TimeSpan maximumObservationGap)
+        {
+            return threatFlightId != Guid.Empty
+                   && MonitoredThreatFlightId == threatFlightId
+                   && ConsecutiveThreateningCourseObservations >= 2
+                   && ThreateningCourseFirstObservedAt != default
+                   && ThreateningCourseLastObservedAt != default
+                   && observedAt >= ThreateningCourseLastObservedAt
+                   && observedAt - ThreateningCourseLastObservedAt
+                   <= maximumObservationGap
+                   && observedAt - ThreateningCourseFirstObservedAt
+                   >= requiredDuration;
+        }
 
         public void Apply(
             AirCombatIntent nextIntent,
@@ -147,6 +200,7 @@ namespace Models.Gameplay.Campaign
         public bool RequestsWvrEngagement;
         public bool RequestsSurfaceThreatRecovery;
         public bool RequestsAirToAirPassCancellation;
+        public Guid ObservedThreatCandidateFlightId;
         public AirCombatEmploymentProposal Employment;
     }
 }

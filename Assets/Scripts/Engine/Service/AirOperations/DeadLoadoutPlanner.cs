@@ -33,7 +33,8 @@ namespace Engine.Service
             Alliance alliance,
             IReadOnlyList<AirDefenseComponentIntelligenceReport> components,
             out DeadAircraftLoadoutPlan plan,
-            out string reason)
+            out string reason,
+            bool requireSelfDefense = true)
         {
             plan = null;
             reason = string.Empty;
@@ -95,27 +96,25 @@ namespace Engine.Service
                 .ThenBy(ordnance => ordnance.Weight)
                 .ThenBy(ordnance => ordnance.OrdnanceTypeDefinitionId)
                 .ToList();
-            while (selfDefenseShots < AirLoadoutPlanner.MinimumAirCombatShots)
+            if (requireSelfDefense)
             {
-                var selected = airToAirCandidates
-                    .FirstOrDefault(ordnance => ordnance.Weight <= remainingCapacity);
-                if (selected == null)
-                    break;
-                Add(counts, selected.OrdnanceTypeDefinitionId, 1);
-                remainingCapacity -= selected.Weight;
-                selfDefenseShots++;
-            }
-            if (selfDefenseShots < AirLoadoutPlanner.MinimumAirCombatShots
-                && internalGun != null
-                && internalGun.GetEffectiveness(
-                    OrdnanceTargetCategory.Aircraft) > 0f)
-            {
-                selfDefenseShots += aircraftType.InternalGunBurstCount;
-            }
-            if (selfDefenseShots < AirLoadoutPlanner.MinimumAirCombatShots)
-            {
-                reason = "The aircraft cannot carry the minimum self-defense allowance.";
-                return false;
+                AddSelfDefenseStores(
+                    counts,
+                    airToAirCandidates,
+                    ref remainingCapacity,
+                    ref selfDefenseShots);
+                if (selfDefenseShots < AirLoadoutPlanner.MinimumAirCombatShots
+                    && internalGun != null
+                    && internalGun.GetEffectiveness(
+                        OrdnanceTargetCategory.Aircraft) > 0f)
+                {
+                    selfDefenseShots += aircraftType.InternalGunBurstCount;
+                }
+                if (selfDefenseShots < AirLoadoutPlanner.MinimumAirCombatShots)
+                {
+                    reason = "The aircraft cannot carry the minimum self-defense allowance.";
+                    return false;
+                }
             }
 
             var minimumEffectStores = 0;
@@ -151,6 +150,18 @@ namespace Engine.Service
                 return false;
             }
 
+            if (!requireSelfDefense)
+            {
+                // An attached escort carries the package's air-to-air burden.
+                // DEAD effect therefore receives first claim on capacity, while
+                // any remaining capacity may still provide organic protection.
+                AddSelfDefenseStores(
+                    counts,
+                    airToAirCandidates,
+                    ref remainingCapacity,
+                    ref selfDefenseShots);
+            }
+
             if (internalGun != null && aircraftType.InternalGunBurstCount > 0)
             {
                 counts[internalGun.OrdnanceTypeDefinitionId] =
@@ -161,12 +172,41 @@ namespace Engine.Service
                 .OrderBy(entry => entry.Key)
                 .Select(entry => new AircraftLoadoutItem(entry.Key, entry.Value))
                 .ToList();
+            var actualSelfDefenseShots = loadout
+                .Where(item => item.Count > 0
+                               && ordnanceTypes.TryGetValue(
+                                   item.OrdnanceTypeDefinitionId,
+                                   out var ordnance)
+                               && AirLoadoutPlanner.IsAirToAir(ordnance)
+                               && ordnance.GetEffectiveness(
+                                   OrdnanceTargetCategory.Aircraft) > 0f)
+                .Sum(item => item.Count);
             plan = new DeadAircraftLoadoutPlan(
                 loadout,
                 minimumEffectStores,
                 cleanupStores,
-                selfDefenseShots);
+                actualSelfDefenseShots);
             return true;
+        }
+
+        private static void AddSelfDefenseStores(
+            IDictionary<Guid, int> counts,
+            IReadOnlyList<OrdnanceTypeDefinition> candidates,
+            ref float remainingCapacity,
+            ref int selfDefenseShots)
+        {
+            while (selfDefenseShots < AirLoadoutPlanner.MinimumAirCombatShots)
+            {
+                var availableCapacity = remainingCapacity;
+                var selected = candidates.FirstOrDefault(
+                    ordnance => ordnance.Weight <= availableCapacity);
+                if (selected == null)
+                    return;
+
+                Add(counts, selected.OrdnanceTypeDefinitionId, 1);
+                remainingCapacity -= selected.Weight;
+                selfDefenseShots++;
+            }
         }
 
         private OrdnanceTypeDefinition SelectGroundStore(

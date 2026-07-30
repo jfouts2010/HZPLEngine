@@ -105,7 +105,7 @@ namespace Engine.Service
                         aircraftId,
                         out var plannedLoadout);
                     if (plannedLoadout == null
-                        && IsTimeBasedAirCombatMission(flight.MissionType))
+                        && IsTimeBasedAirCombatFlight(flight))
                     {
                         reason = "A time-based air-combat flight requires planned loadouts.";
                         return false;
@@ -121,7 +121,7 @@ namespace Engine.Service
                         return false;
                     }
 
-                    if (IsTimeBasedAirCombatMission(flight.MissionType)
+                    if (IsTimeBasedAirCombatFlight(flight)
                         && loadoutPlanner.CountMissionUsefulAirCombatShots(
                             plannedLoadout.Loadout)
                         < AirLoadoutPlanner.MinimumAirCombatShots)
@@ -189,10 +189,14 @@ namespace Engine.Service
             }
         }
 
-        private static bool IsTimeBasedAirCombatMission(AirMissionRequestType missionType)
+        private static bool IsTimeBasedAirCombatFlight(AirFlight flight)
         {
-            return missionType == AirMissionRequestType.BarrierCombatAirPatrol
-                   || missionType == AirMissionRequestType.OffensiveCounterAirSweep;
+            return flight != null
+                   && (flight.IsFighterEscort
+                       || flight.MissionType
+                       == AirMissionRequestType.BarrierCombatAirPatrol
+                       || flight.MissionType
+                       == AirMissionRequestType.OffensiveCounterAirSweep);
         }
 
         private sealed class AircraftAssignment
