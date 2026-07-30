@@ -52,6 +52,8 @@ namespace Models.Module
         public float MaximumSupportAngleDegrees { get; }
         public float AntiRadiationEmitterMemorySeconds { get; }
         public float AntiRadiationSilentQualityFloor { get; }
+        public int MaximumGroundTargetsPerWeapon { get; }
+        public float SecondaryGroundEffectMultiplier { get; }
         public Dictionary<OrdnanceTargetCategory, float> EffectivenessByTargetCategory { get; }
 
         public OrdnanceTypeDefinition(
@@ -77,7 +79,9 @@ namespace Models.Module
             float terminalLethality = 1f,
             float maximumSupportAngleDegrees = 70f,
             float antiRadiationEmitterMemorySeconds = 0f,
-            float antiRadiationSilentQualityFloor = 0f)
+            float antiRadiationSilentQualityFloor = 0f,
+            int maximumGroundTargetsPerWeapon = 1,
+            float secondaryGroundEffectMultiplier = 0f)
         {
             if (ordnanceTypeDefinitionId == Guid.Empty)
                 throw new ArgumentException("Ordnance type definition id is required.", nameof(ordnanceTypeDefinitionId));
@@ -114,6 +118,12 @@ namespace Models.Module
             AntiRadiationSilentQualityFloor = Math.Max(
                 0f,
                 Math.Min(1f, antiRadiationSilentQualityFloor));
+            MaximumGroundTargetsPerWeapon = Math.Max(
+                1,
+                maximumGroundTargetsPerWeapon);
+            SecondaryGroundEffectMultiplier = Math.Max(
+                0f,
+                Math.Min(1f, secondaryGroundEffectMultiplier));
             EffectivenessByTargetCategory = ClampEffectiveness(effectivenessByTargetCategory);
         }
 

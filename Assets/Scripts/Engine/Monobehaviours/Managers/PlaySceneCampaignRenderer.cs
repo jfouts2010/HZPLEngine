@@ -1419,9 +1419,14 @@ namespace Engine.Monobehaviours.Managers
                 () => BuildFlightInspectorLines(flightId));
         }
 
-        private void OpenOrdnancePassInspector(Guid employmentPassId)
+        private void OpenOrdnancePassInspector(
+            Guid employmentPassId,
+            Guid pendingEffectId = default)
         {
-            if (!TryFindOrdnanceReleaseRecord(employmentPassId, out var record))
+            if (!TryFindOrdnanceReleaseRecord(
+                    employmentPassId,
+                    pendingEffectId,
+                    out var record))
                 return;
 
             selectedOrdnancePassId = employmentPassId;
@@ -2463,7 +2468,7 @@ namespace Engine.Monobehaviours.Managers
                 {
                     new AirCardField("Ordnance", $"{record.Quantity}× {GetOrdnanceName(record.OrdnanceTypeDefinitionId)}"),
                     new AirCardField("Launches", $"{launches.Count} launches / {shots.Count} resolved shots"),
-                    new AirCardField("Outcome", $"Destroyed {hits} / Damaged {damaged} / Miss {misses} / Defeated {defeated} / Ineffective {ineffective}"),
+                    new AirCardField("Outcome", $"Hit {hits} / Damaged {damaged} / Miss {misses} / Defeated {defeated} / Ineffective {ineffective}"),
                     new AirCardField("Snapshot", $"Range {record.ReleaseRangeKm:0.0} km / P(hit) {record.HitProbability:P1}"),
                     new AirCardField("Source", GetSourceLabel(record)),
                     new AirCardField("Target", GetOrdnanceTargetLabel(record))
@@ -2472,7 +2477,9 @@ namespace Engine.Monobehaviours.Managers
                     GetRecordAlliance(record),
                     title,
                     fields,
-                    () => OpenOrdnancePassInspector(record.EmploymentPassId)));
+                    () => OpenOrdnancePassInspector(
+                        record.EmploymentPassId,
+                        record.PendingEffectId)));
             }
         }
 
@@ -3005,13 +3012,12 @@ namespace Engine.Monobehaviours.Managers
             OrdnanceEmploymentRecord record,
             OrdnanceLaunchDiagnostic launch)
         {
-            if (record.TargetKind
-                == OrdnanceEmploymentTargetKind.AirDefenseComponent)
+            if (record.TargetKind != OrdnanceEmploymentTargetKind.AirFlight)
             {
-                var componentName = GetSamComponentDisplayName(
+                return GetGroundTargetLabel(
+                    launch.GroundTarget ?? record.GroundTarget,
                     record.TargetSiteId,
                     record.TargetComponentId);
-                return $"SAM {ShortId(record.TargetSiteId)} / {componentName}";
             }
 
             return launch.TargetAircraftId == Guid.Empty
@@ -3200,20 +3206,34 @@ namespace Engine.Monobehaviours.Managers
                 $"ORDNANCE EMPLOYMENT ({records.Count})");
             foreach (var pass in activePasses)
             {
+                var opportunity = BuildGroundOpportunitySummary(
+                    pass.GroundOpportunityDescription,
+                    pass.GroundOpportunityTargets,
+                    singleStore: false);
                 AddFlightDetailMessage(
                     section,
                     $"PREPARING  •  {pass.PlannedQuantity} stores  •  " +
-                    $"release {pass.ReleaseAt:MM-dd HH:mm:ss}");
+                    $"release {pass.ReleaseAt:MM-dd HH:mm:ss}"
+                    + (string.IsNullOrWhiteSpace(opportunity)
+                        ? string.Empty
+                        : "\n" + opportunity));
             }
             foreach (var effect in pendingEffects)
             {
                 var direction = effect.TargetFlightId == flight.FlightId
                     ? "INCOMING"
                     : "OUTBOUND";
+                var opportunity = BuildGroundOpportunitySummary(
+                    effect.GroundOpportunityDescription,
+                    effect.GroundOpportunityTargets,
+                    singleStore: true);
                 AddFlightDetailMessage(
                     section,
                     $"{direction}  •  {effect.Quantity} stores  •  " +
-                    $"resolve {effect.ResolveAt:MM-dd HH:mm:ss}");
+                    $"resolve {effect.ResolveAt:MM-dd HH:mm:ss}"
+                    + (string.IsNullOrWhiteSpace(opportunity)
+                        ? string.Empty
+                        : "\n" + opportunity));
             }
             foreach (var record in records)
             {
@@ -3223,12 +3243,22 @@ namespace Engine.Monobehaviours.Managers
                     $"{GetEmploymentStageLabel(record.Stage)}\n{record.Detail}");
                 if (record.Stage == OrdnanceEmploymentRecordStage.OrdnanceReleased)
                 {
+                    var opportunity = BuildGroundOpportunitySummary(
+                        record.GroundOpportunityDescription,
+                        record.GroundOpportunityTargets,
+                        singleStore: true);
                     AddFlightDetailButton(
                         section,
                         $"Pass {ShortId(record.EmploymentPassId)}  •  " +
                         $"Range {record.ReleaseRangeKm:0.0} km  •  " +
-                        $"P(hit) {record.HitProbability:P1}\nClick to inspect pass and highlight ordnance visuals.",
-                        () => OpenOrdnancePassInspector(record.EmploymentPassId));
+                        $"P(hit) {record.HitProbability:P1}"
+                        + (string.IsNullOrWhiteSpace(opportunity)
+                            ? string.Empty
+                            : "\n" + opportunity)
+                        + "\nClick to inspect pass and highlight ordnance visuals.",
+                        () => OpenOrdnancePassInspector(
+                            record.EmploymentPassId,
+                            record.PendingEffectId));
                     foreach (var launch in GetRecordLaunches(record))
                     {
                         var shot = FindResolvedShot(record, launch.Sequence);
@@ -3240,10 +3270,12 @@ namespace Engine.Monobehaviours.Managers
                 foreach (var shot in record.Shots)
                 {
                     var shotTarget = record.TargetKind
-                                     == OrdnanceEmploymentTargetKind
-                                         .AirDefenseComponent
-                        ? $"SAM component {ShortId(record.TargetComponentId)}"
-                        : $"aircraft {ShortId(shot.TargetAircraftId)}";
+                                     == OrdnanceEmploymentTargetKind.AirFlight
+                        ? $"aircraft {ShortId(shot.TargetAircraftId)}"
+                        : GetGroundTargetLabel(
+                            shot.GroundTarget ?? record.GroundTarget,
+                            record.TargetSiteId,
+                            record.TargetComponentId);
                     AddFlightDetailMessage(
                         section,
                         $"Shot {shot.Sequence}  •  {shot.Result}  •  " +
@@ -3631,8 +3663,8 @@ namespace Engine.Monobehaviours.Managers
         {
             var resolvedShots = GetResolvedShots(record).ToList();
             var probabilityExplanation = record.TargetKind
-                                         == OrdnanceEmploymentTargetKind
-                                             .AirDefenseComponent
+                                         != OrdnanceEmploymentTargetKind
+                                             .AirFlight
                 ? "A ground-attack hit chance combines the store's base probability, suitability for the component category, and release-range penalty."
                 : record.SourceKind ==
                   OrdnanceEmploymentSourceKind.SamLauncher
@@ -3658,10 +3690,42 @@ namespace Engine.Monobehaviours.Managers
                 "LAUNCHES AND RESOLUTION"
             };
 
-            foreach (var launch in GetRecordLaunches(record))
+            var opportunity = BuildGroundOpportunitySummary(
+                record.GroundOpportunityDescription,
+                record.GroundOpportunityTargets,
+                singleStore: true);
+            if (!string.IsNullOrWhiteSpace(opportunity))
+            {
+                var insertionIndex = lines.IndexOf("WHY THIS PROBABILITY");
+                lines.InsertRange(
+                    insertionIndex,
+                    new[] { "ATTACK OPPORTUNITY" }
+                        .Concat(opportunity.Split('\n'))
+                        .Concat(new[] { string.Empty }));
+            }
+
+            var launches = GetRecordLaunches(record).ToList();
+            foreach (var launch in launches)
             {
                 var shot = resolvedShots.FirstOrDefault(item => item.Sequence == launch.Sequence);
                 lines.Add(BuildOrdnanceLaunchLine(record, launch, shot));
+                lines.Add("    " + BuildShotReasonLine(shot, record));
+            }
+
+            var launchSequences = launches
+                .Select(launch => launch.Sequence)
+                .ToHashSet();
+            foreach (var shot in resolvedShots.Where(shot =>
+                         !launchSequences.Contains(shot.Sequence)))
+            {
+                lines.Add(
+                    $"  Secondary effect {shot.Sequence}: "
+                    + GetGroundTargetLabel(
+                        shot.GroundTarget ?? record.GroundTarget,
+                        record.TargetSiteId,
+                        record.TargetComponentId)
+                    + $"  result {shot.Result}  roll "
+                    + (shot.Roll < 0f ? "—" : shot.Roll.ToString("0.000")));
                 lines.Add("    " + BuildShotReasonLine(shot, record));
             }
 
@@ -3677,21 +3741,33 @@ namespace Engine.Monobehaviours.Managers
         {
             if (shot == null)
                 return "Pending: no effect-resolution record exists for this launch yet.";
-            if (record.TargetKind
-                == OrdnanceEmploymentTargetKind.AirDefenseComponent)
+            if (record.TargetKind != OrdnanceEmploymentTargetKind.AirFlight)
             {
                 var groundRoll = shot.Roll < 0f ? 0f : shot.Roll;
                 var groundThreshold = shot.Probability > 0f
                     ? shot.Probability
                     : record.HitProbability;
+                var groundTarget = shot.GroundTarget ?? record.GroundTarget;
+                var groundTargetLabel = GetGroundTargetLabel(
+                    groundTarget,
+                    record.TargetSiteId,
+                    record.TargetComponentId);
+                var hitVerb = (groundTarget?.Kind
+                               == GroundAttackTargetKind.AirDefenseComponent)
+                              || (groundTarget == null
+                                  && record.TargetKind
+                                  == OrdnanceEmploymentTargetKind
+                                      .AirDefenseComponent)
+                    ? "Destroyed"
+                    : "Hit";
                 return shot.Result switch
                 {
                     OrdnanceShotResult.Hit =>
-                        $"Destroyed SAM component {ShortId(record.TargetComponentId)} "
+                        $"{hitVerb} {groundTargetLabel} "
                         + $"because roll {groundRoll:0.000} was below "
                         + $"P(hit) {groundThreshold:P1}.",
                     OrdnanceShotResult.Miss =>
-                        $"Missed SAM component {ShortId(record.TargetComponentId)} "
+                        $"Missed {groundTargetLabel} "
                         + $"because roll {groundRoll:0.000} was at or above "
                         + $"P(hit) {groundThreshold:P1}.",
                     _ => $"Ground effect result: {shot.Result}."
@@ -3747,9 +3823,12 @@ namespace Engine.Monobehaviours.Managers
             OrdnanceShotDiagnostic shot)
         {
             var targetLabel = record.TargetKind
-                              == OrdnanceEmploymentTargetKind.AirDefenseComponent
-                ? $"SAM component {ShortId(record.TargetComponentId)}"
-                : $"aircraft {ShortId(launch.TargetAircraftId)}";
+                              == OrdnanceEmploymentTargetKind.AirFlight
+                ? $"aircraft {ShortId(launch.TargetAircraftId)}"
+                : GetGroundTargetLabel(
+                    launch.GroundTarget ?? record.GroundTarget,
+                    record.TargetSiteId,
+                    record.TargetComponentId);
             return $"  Launch {launch.Sequence}: {GetLaunchSourceLabel(record, launch)} " +
                    $"→ {targetLabel}  " +
                    $"{GetOrdnanceName(launch.OrdnanceTypeDefinitionId)}" +
@@ -3769,6 +3848,7 @@ namespace Engine.Monobehaviours.Managers
                 {
                     Sequence = index,
                     SourceAircraftId = record.SourceAircraftId,
+                    GroundTarget = record.GroundTarget?.Clone(),
                     OrdnanceTypeDefinitionId = record.OrdnanceTypeDefinitionId,
                     ReleasedAt = record.OccurredAt
                 });
@@ -3812,12 +3892,16 @@ namespace Engine.Monobehaviours.Managers
 
         private bool TryFindOrdnanceReleaseRecord(
             Guid employmentPassId,
+            Guid pendingEffectId,
             out OrdnanceEmploymentRecord record)
         {
             record = gameManager.GetOrdnanceEmploymentRecords()
                 .Where(candidate => candidate.Stage == OrdnanceEmploymentRecordStage.OrdnanceReleased)
                 .OrderByDescending(candidate => candidate.OccurredAt)
-                .FirstOrDefault(candidate => candidate.EmploymentPassId == employmentPassId);
+                .FirstOrDefault(candidate =>
+                    candidate.EmploymentPassId == employmentPassId
+                    && (pendingEffectId == Guid.Empty
+                        || candidate.PendingEffectId == pendingEffectId));
             return record != null;
         }
 
@@ -3903,7 +3987,13 @@ namespace Engine.Monobehaviours.Managers
                 InspectFlightRoute(record.TargetFlightId);
             }
             else if (record.TargetKind
-                         == OrdnanceEmploymentTargetKind.AirDefenseComponent
+                     != OrdnanceEmploymentTargetKind.AirFlight
+                     && record.GroundTarget != null)
+            {
+                FocusTile(record.GroundTarget.TileId);
+            }
+            else if (record.TargetKind
+                     == OrdnanceEmploymentTargetKind.AirDefenseComponent
                      && gameManager.airDefenseSiteSystem.TryGetSite(
                          record.TargetSiteId,
                          out var site)
@@ -3928,14 +4018,85 @@ namespace Engine.Monobehaviours.Managers
 
         private string GetOrdnanceTargetLabel(OrdnanceEmploymentRecord record)
         {
-            if (record.TargetKind
-                == OrdnanceEmploymentTargetKind.AirDefenseComponent)
+            if (record.TargetKind != OrdnanceEmploymentTargetKind.AirFlight)
             {
-                return $"SAM {ShortId(record.TargetSiteId)} component "
-                       + ShortId(record.TargetComponentId);
+                return GetGroundTargetLabel(
+                    record.GroundTarget,
+                    record.TargetSiteId,
+                    record.TargetComponentId);
             }
 
             return GetFlightLabel(record.TargetFlightId);
+        }
+
+        private string GetGroundTargetLabel(
+            GroundAttackTargetReference target,
+            Guid fallbackSiteId,
+            Guid fallbackComponentId)
+        {
+            if (target == null)
+            {
+                return fallbackComponentId == Guid.Empty
+                    ? "ground target"
+                    : $"SAM {ShortId(fallbackSiteId)} / "
+                      + GetSamComponentDisplayName(
+                          fallbackSiteId,
+                          fallbackComponentId);
+            }
+
+            return target.Kind switch
+            {
+                GroundAttackTargetKind.AirDefenseComponent =>
+                    $"SAM {ShortId(target.ParentEntityId)} / "
+                    + GetSamComponentDisplayName(
+                        target.ParentEntityId,
+                        target.EntityId),
+                GroundAttackTargetKind.Division =>
+                    $"division {ShortId(target.EntityId)}",
+                GroundAttackTargetKind.Building =>
+                    $"building {ShortId(target.EntityId)}",
+                GroundAttackTargetKind.GroundedAircraft =>
+                    $"grounded aircraft {ShortId(target.EntityId)}",
+                GroundAttackTargetKind.TileInfrastructure =>
+                    $"infrastructure at {target.TileId.x},{target.TileId.z}",
+                _ => "ground target"
+            };
+        }
+
+        private static string BuildGroundOpportunitySummary(
+            string description,
+            IEnumerable<GroundAttackOpportunityTarget> targets,
+            bool singleStore)
+        {
+            var lines = new List<string>();
+            if (!string.IsNullOrWhiteSpace(description))
+                lines.Add("Opportunity  " + description.Trim());
+
+            var exposed = (targets
+                           ?? Enumerable.Empty<
+                               GroundAttackOpportunityTarget>())
+                .Where(target => target != null)
+                .Select(target => string.IsNullOrWhiteSpace(target.Description)
+                    ? target.TargetCategory.ToString()
+                    : target.Description.Trim())
+                .ToList();
+            if (exposed.Count == 0)
+                return string.Join("\n", lines);
+
+            if (!singleStore)
+            {
+                lines.Add("Exposed targets  " + string.Join(", ", exposed));
+                return string.Join("\n", lines);
+            }
+
+            lines.Add("Aimpoint  " + exposed[0]);
+            if (exposed.Count > 1)
+            {
+                lines.Add(
+                    "Nearby recipients  "
+                    + string.Join(", ", exposed.Skip(1)));
+            }
+            return string.Join("\n", lines);
         }
 
         private string GetLaunchSourceLabel(

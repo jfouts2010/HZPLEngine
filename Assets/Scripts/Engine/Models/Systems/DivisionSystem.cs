@@ -156,6 +156,24 @@ namespace Models.Gameplay.Campaign
             return true;
         }
 
+        public bool ApplyAirAttackDamage(
+            Guid divisionId,
+            float strengthDamage,
+            float organizationDamage)
+        {
+            if (!TryGetDivision(divisionId, out var division)
+                || division.Strength < 1f)
+                return false;
+
+            division.Strength = Mathf.Max(
+                0f,
+                division.Strength - Mathf.Max(0f, strengthDamage));
+            division.Organization = Mathf.Max(
+                0f,
+                division.Organization - Mathf.Max(0f, organizationDamage));
+            return true;
+        }
+
         public bool RemoveDivision(Guid divisionId)
         {
             EnsureIndex();

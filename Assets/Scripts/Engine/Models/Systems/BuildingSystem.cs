@@ -43,6 +43,20 @@ namespace Models.Gameplay.Campaign
                 .ToList();
         }
 
+        public bool ApplyDamage(Guid buildingId, int damage)
+        {
+            if (damage <= 0
+                || !TryGetBuilding(buildingId, out var building)
+                || building.Level == null
+                || building.FunctionalLevel <= 0)
+                return false;
+
+            building.Level.Damage = Math.Min(
+                building.Level.BuildLevel,
+                building.Level.Damage + damage);
+            return true;
+        }
+
         public void RebuildIndex()
         {
             buildingsByTileId = Buildings

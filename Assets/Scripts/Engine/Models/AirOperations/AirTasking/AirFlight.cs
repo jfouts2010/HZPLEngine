@@ -144,6 +144,8 @@ namespace Models.Gameplay.Campaign
         private bool isWaitingAtRendezvous;
         private bool missionAchieved;
         private bool authorizedSurfaceThreatPenetrationGranted;
+        private DateTime nextGroundAttackOpportunityAt;
+        private int groundAttackOpportunitySequence;
         private List<FlightExecutionEvent> executionEvents =
             new List<FlightExecutionEvent>();
         private List<AerialRefuelingRecord> aerialRefuelingRecords =
@@ -187,6 +189,10 @@ namespace Models.Gameplay.Campaign
             && !IsFighterEscort;
         public bool AuthorizedSurfaceThreatPenetrationGranted =>
             authorizedSurfaceThreatPenetrationGranted;
+        public DateTime NextGroundAttackOpportunityAt =>
+            nextGroundAttackOpportunityAt;
+        public int GroundAttackOpportunitySequence =>
+            groundAttackOpportunitySequence;
         public DateTime PlannedTakeoffTime =>
             GetRequiredWaypoint(AirWaypointAction.Takeoff).PlannedArrivalTime;
         public DateTime EffectStart => EffectWaypoints.First().PlannedArrivalTime;
@@ -564,6 +570,22 @@ namespace Models.Gameplay.Campaign
                 IsDeadAttackFlight
                 && IsAirborne
                 && granted;
+        }
+
+        public bool CanEvaluateGroundAttackOpportunity(DateTime occurredAt)
+        {
+            return IsAirborne
+                   && occurredAt >= nextGroundAttackOpportunityAt;
+        }
+
+        public int ConsumeGroundAttackOpportunity(
+            DateTime occurredAt,
+            double retrySeconds)
+        {
+            groundAttackOpportunitySequence++;
+            nextGroundAttackOpportunityAt = occurredAt.AddSeconds(
+                Math.Max(0d, retrySeconds));
+            return groundAttackOpportunitySequence;
         }
 
         public bool UpdateEscortCoverageMode(

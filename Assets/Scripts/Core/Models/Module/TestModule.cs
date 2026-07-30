@@ -338,7 +338,9 @@ namespace Models.Module
                     guidanceMode: OrdnanceGuidanceMode.Gps,
                     maximumRangeKm: 28f,
                     preparationSeconds: 45f,
-                    effectSpeedKnots: 550f),
+                    effectSpeedKnots: 550f,
+                    maximumGroundTargetsPerWeapon: 2,
+                    secondaryGroundEffectMultiplier: 0.35f),
                 new OrdnanceTypeDefinition(
                     Agm65OrdnanceTypeId,
                     "AGM-65 Maverick",
@@ -597,7 +599,22 @@ namespace Models.Module
                     4f,
                     2,
                     0.5f,
-                    0f),
+                    0f,
+                    groundTargetProfile: new List<GroundTargetProfileEntry>
+                    {
+                        new GroundTargetProfileEntry(
+                            "infantry position",
+                            OrdnanceTargetCategory.Infantry,
+                            1,
+                            0.85f,
+                            4),
+                        new GroundTargetProfileEntry(
+                            "support truck",
+                            OrdnanceTargetCategory.Vehicle,
+                            1,
+                            0.15f,
+                            2)
+                    }),
                 new BattalionDefinition(
                     BlueArmorBattalionId,
                     BlueCountryId,
@@ -613,7 +630,28 @@ namespace Models.Module
                     8f,
                     3,
                     1.2f,
-                    2.5f),
+                    2.5f,
+                    groundTargetProfile: new List<GroundTargetProfileEntry>
+                    {
+                        new GroundTargetProfileEntry(
+                            "tank",
+                            OrdnanceTargetCategory.Vehicle,
+                            3,
+                            0.75f,
+                            4),
+                        new GroundTargetProfileEntry(
+                            "support truck",
+                            OrdnanceTargetCategory.Vehicle,
+                            1,
+                            0.2f,
+                            2),
+                        new GroundTargetProfileEntry(
+                            "dismounted crew",
+                            OrdnanceTargetCategory.Infantry,
+                            1,
+                            0.05f,
+                            1)
+                    }),
                 new BattalionDefinition(
                     RedMotorRifleBattalionId,
                     RedCountryId,
@@ -629,7 +667,28 @@ namespace Models.Module
                     6f,
                     2,
                     0.7f,
-                    0.6f),
+                    0.6f,
+                    groundTargetProfile: new List<GroundTargetProfileEntry>
+                    {
+                        new GroundTargetProfileEntry(
+                            "motor-rifle infantry",
+                            OrdnanceTargetCategory.Infantry,
+                            1,
+                            0.55f,
+                            3),
+                        new GroundTargetProfileEntry(
+                            "infantry fighting vehicle",
+                            OrdnanceTargetCategory.Vehicle,
+                            2,
+                            0.3f,
+                            3),
+                        new GroundTargetProfileEntry(
+                            "support truck",
+                            OrdnanceTargetCategory.Vehicle,
+                            1,
+                            0.15f,
+                            2)
+                    }),
                 new BattalionDefinition(
                     RedTankBattalionId,
                     RedCountryId,
@@ -645,7 +704,28 @@ namespace Models.Module
                     7f,
                     3,
                     1.1f,
-                    2.3f)
+                    2.3f,
+                    groundTargetProfile: new List<GroundTargetProfileEntry>
+                    {
+                        new GroundTargetProfileEntry(
+                            "tank",
+                            OrdnanceTargetCategory.Vehicle,
+                            3,
+                            0.7f,
+                            4),
+                        new GroundTargetProfileEntry(
+                            "support truck",
+                            OrdnanceTargetCategory.Vehicle,
+                            1,
+                            0.2f,
+                            2),
+                        new GroundTargetProfileEntry(
+                            "dismounted crew",
+                            OrdnanceTargetCategory.Infantry,
+                            1,
+                            0.1f,
+                            1)
+                    })
             };
         }
 

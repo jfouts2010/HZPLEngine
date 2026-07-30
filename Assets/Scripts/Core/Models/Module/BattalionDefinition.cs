@@ -1,7 +1,33 @@
 using System;
+using System.Collections.Generic;
 
 namespace Models.Module
 {
+    public sealed class GroundTargetProfileEntry
+    {
+        public string Description { get; }
+        public OrdnanceTargetCategory TargetCategory { get; }
+        public int TargetToughness { get; }
+        public float PresenceWeight { get; }
+        public int MaximumPerOpportunity { get; }
+
+        public GroundTargetProfileEntry(
+            string description,
+            OrdnanceTargetCategory targetCategory,
+            int targetToughness,
+            float presenceWeight,
+            int maximumPerOpportunity)
+        {
+            Description = string.IsNullOrWhiteSpace(description)
+                ? targetCategory.ToString()
+                : description.Trim();
+            TargetCategory = targetCategory;
+            TargetToughness = Math.Max(1, targetToughness);
+            PresenceWeight = Math.Max(0f, presenceWeight);
+            MaximumPerOpportunity = Math.Max(1, maximumPerOpportunity);
+        }
+    }
+
     public sealed class BattalionDefinition
     {
         public Guid BattalionDefinitionId { get; }
@@ -19,6 +45,7 @@ namespace Models.Module
         public int CombatWidth { get; private set; }
         public float SupplyConsumption { get; private set; }
         public float FuelConsumption { get; private set; }
+        public IReadOnlyList<GroundTargetProfileEntry> GroundTargetProfile { get; }
 
         public BattalionDefinition(
             Guid battalionDefinitionId,
@@ -35,7 +62,8 @@ namespace Models.Module
             float speed,
             int combatWidth,
             float supplyConsumption,
-            float fuelConsumption)
+            float fuelConsumption,
+            IReadOnlyList<GroundTargetProfileEntry> groundTargetProfile = null)
         {
             if (battalionDefinitionId == Guid.Empty)
                 throw new ArgumentException("Battalion definition id is required.", nameof(battalionDefinitionId));
@@ -58,6 +86,9 @@ namespace Models.Module
             CombatWidth = combatWidth;
             SupplyConsumption = supplyConsumption;
             FuelConsumption = fuelConsumption;
+            GroundTargetProfile = groundTargetProfile == null
+                ? Array.Empty<GroundTargetProfileEntry>()
+                : new List<GroundTargetProfileEntry>(groundTargetProfile).AsReadOnly();
         }
     }
 }

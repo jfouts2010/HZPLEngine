@@ -117,6 +117,13 @@ namespace Engine.Models
             GetLand(tileId).ChangeControl(controller);
         }
 
+        public bool ApplyInfrastructureDamage(Vector3Int tileId, int damage)
+        {
+            return damage > 0
+                   && TryGetLand(tileId, out var landTile)
+                   && landTile.ApplyInfrastructureDamage(damage);
+        }
+
         private static List<Tile> CopyGeography(
             IReadOnlyList<Tile> templateTiles,
             ICollection<string> errors)
@@ -336,6 +343,17 @@ namespace Engine.Models
         internal void ChangeControl(Alliance controller)
         {
             state.Controller = controller;
+        }
+
+        internal bool ApplyInfrastructureDamage(int damage)
+        {
+            if (damage <= 0 || state.Infrastructure.FunctionalLevel <= 0)
+                return false;
+
+            state.Infrastructure.Damage = Math.Min(
+                state.Infrastructure.BuildLevel,
+                state.Infrastructure.Damage + damage);
+            return true;
         }
     }
 

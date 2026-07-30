@@ -27,6 +27,9 @@ namespace Engine.Models
         private readonly KnownSamThreatAssessment knownSamThreatAssessment;
         private readonly IAirRouteGeometryPlanner deadCorridorRoutePlanner;
         private readonly AirportOperationsService airportOperations;
+        private readonly GroundAttackOpportunityService
+            groundAttackOpportunityService;
+        private readonly GroundAttackDecisionService groundAttackDecisionService;
         private readonly Dictionary<Alliance, IReadOnlyList<KnownSamThreatEnvelope>>
             knownSamThreatCache =
                 new Dictionary<Alliance, IReadOnlyList<KnownSamThreatEnvelope>>();
@@ -46,6 +49,10 @@ namespace Engine.Models
                 .ToDictionary(definition => definition.OrdnanceTypeDefinitionId);
             airDefenseComponentDefinitions = module.SamComponentDefinitions
                 .ToDictionary(definition => definition.SamComponentDefinitionId);
+            groundAttackOpportunityService =
+                new GroundAttackOpportunityService(
+                    airDefenseComponentDefinitions);
+            groundAttackDecisionService = new GroundAttackDecisionService();
             knownSamThreatAssessment = new KnownSamThreatAssessment(
                 module.SamComponentDefinitions,
                 module.OrdnanceTypeDefinitions);
@@ -1157,103 +1164,114 @@ namespace Engine.Models
             IReadOnlyCollection<Guid> authorizedComponentIds,
             DateTime currentTime)
         {
-            var authorized = new HashSet<Guid>(
-                authorizedComponentIds ?? Array.Empty<Guid>());
+            if (flight == null
+                || squadron == null
+                || site == null
+                || !flight.CanEvaluateGroundAttackOpportunity(currentTime)
+                || ordnanceEmploymentSystem.ActivePasses.Any(pass =>
+                    pass.SourceFlightId == flight.FlightId
+                    && pass.TargetKind
+                    != OrdnanceEmploymentTargetKind.AirFlight)
+                || ordnanceEmploymentSystem.PendingEffects.Any(effect =>
+                    effect.SourceFlightId == flight.FlightId
+                    && effect.TargetKind
+                    != OrdnanceEmploymentTargetKind.AirFlight))
+                return;
+
+            var sequence = flight.ConsumeGroundAttackOpportunity(
+                currentTime,
+                retrySeconds: 60d);
+            var opportunity = groundAttackOpportunityService
+                .RollDeadOpportunity(
+                    flight.FlightId,
+                    sequence,
+                    site,
+                    siteTileId,
+                    authorizedComponentIds,
+                    currentTime,
+                    ordnanceEmploymentSystem.HasActiveOrPendingEffect);
+            if (!opportunity.HasTargets)
+                return;
+
+            var sourceAircraft = squadron.Aircraft
+                .Where(aircraft => aircraft.AssignedFlightId == flight.FlightId
+                                   && aircraft.Status
+                                   != CampaignAircraftStatus.Lost
+                                   && aircraft.Status
+                                   != CampaignAircraftStatus.Damaged)
+                .ToList();
+            if (!groundAttackDecisionService.TryPlan(
+                    opportunity,
+                    sourceAircraft,
+                    ordnanceTypes,
+                    (target, ordnance) =>
+                        IsSuitableDeadOpportunityTarget(
+                            site,
+                            target,
+                            ordnance)
+                        && IsWithinGroundReleaseRange(
+                            flight,
+                            siteTileId,
+                            ordnance),
+                    out var plan))
+                return;
+
+            ordnanceEmploymentSystem.TryStartGroundAttackPass(
+                flight.FlightId,
+                plan,
+                currentTime);
+        }
+
+        private bool IsSuitableDeadOpportunityTarget(
+            SamSite site,
+            GroundAttackOpportunityTarget target,
+            OrdnanceTypeDefinition ordnance)
+        {
+            if (site == null
+                || target?.Target?.Kind
+                != GroundAttackTargetKind.AirDefenseComponent)
+                return false;
+
+            var component = site.Components.FirstOrDefault(candidate =>
+                candidate != null
+                && candidate.ComponentId == target.Target.EntityId
+                && !candidate.IsDamaged);
+            if (component == null
+                || !airDefenseComponentDefinitions.TryGetValue(
+                    component.SamComponentDefinitionId,
+                    out var definition)
+                || !DeadLoadoutPlanner.CanAttackComponent(
+                    ordnance,
+                    definition))
+                return false;
+
+            var isAntiRadiation = ordnance.EmploymentCategory
+                                  == OrdnanceEmploymentCategory.AntiRadiation
+                                  || ordnance.GuidanceMode
+                                  == OrdnanceGuidanceMode.AntiRadiation;
+            return !isAntiRadiation
+                   || component is RadarAirDefenseComponent
+                   {
+                       IsEmitting: true
+                   };
+        }
+
+        private bool IsWithinGroundReleaseRange(
+            AirFlight flight,
+            Vector3Int targetTileId,
+            OrdnanceTypeDefinition ordnance)
+        {
+            if (flight == null || ordnance == null)
+                return false;
+
             var targetPosition = AirspaceGeometry.TileCenterFeet(
-                siteTileId,
+                targetTileId,
                 gameManager.SimulationSettings.TileDistanceKM);
             var distanceKm = HorizontalDistanceKm(
                 flight.PositionFeet,
                 targetPosition);
-            var functionalFireControlRemains = site.Components.Any(component =>
-                component != null
-                && !component.IsDamaged
-                && authorized.Contains(component.ComponentId)
-                && airDefenseComponentDefinitions.TryGetValue(
-                    component.SamComponentDefinitionId,
-                    out var definition)
-                && definition is RadarAirDefenseComponentDefinition
-                {
-                    ProvidesWeaponQualityTrack: true
-                });
-            foreach (var target in site.Components
-                         .Where(component => component != null
-                                             && !component.IsDamaged
-                                             && authorized.Contains(
-                                                 component.ComponentId)
-                                             && !ordnanceEmploymentSystem
-                                                 .HasActiveOrPendingEffect(
-                                                     component.ComponentId))
-                         .Select(component => new
-                         {
-                             Component = component,
-                             Definition = airDefenseComponentDefinitions
-                                 .TryGetValue(
-                                     component.SamComponentDefinitionId,
-                                     out var definition)
-                                 ? definition
-                                 : null
-                         })
-                         .Where(candidate => candidate.Definition != null)
-                         .Where(candidate => !functionalFireControlRemains
-                                             || candidate.Definition
-                                             is RadarAirDefenseComponentDefinition
-                                             {
-                                                 ProvidesWeaponQualityTrack: true
-                                             })
-                         .OrderBy(candidate => GetDeadTargetPriority(
-                             candidate.Definition))
-                         .ThenBy(candidate => ordnanceEmploymentSystem.Records.Count(
-                             record => record.TargetKind
-                                       == OrdnanceEmploymentTargetKind
-                                           .AirDefenseComponent
-                                       && record.TargetComponentId
-                                       == candidate.Component.ComponentId
-                                       && record.Stage
-                                       == OrdnanceEmploymentRecordStage
-                                           .OrdnanceReleased))
-                         .ThenBy(candidate => candidate.Component.ComponentId))
-            {
-                var weaponId = squadron.Aircraft
-                    .Where(aircraft => aircraft.AssignedFlightId == flight.FlightId
-                                       && aircraft.Status
-                                       != CampaignAircraftStatus.Lost
-                                       && aircraft.Status
-                                       != CampaignAircraftStatus.Damaged)
-                    .SelectMany(aircraft => aircraft.Loadout)
-                    .Where(item => item.Count > 0
-                                   && ordnanceTypes.TryGetValue(
-                                       item.OrdnanceTypeDefinitionId,
-                                       out var ordnance)
-                                   && DeadLoadoutPlanner.CanAttackComponent(
-                                       ordnance,
-                                       target.Definition)
-                                   && distanceKm >= ordnance.MinimumRangeKm
-                                   && distanceKm <= ordnance.MaximumRangeKm)
-                    .Select(item => ordnanceTypes[
-                        item.OrdnanceTypeDefinitionId])
-                    .OrderByDescending(ordnance =>
-                        target.Definition.TargetCategory
-                        == OrdnanceTargetCategory.Radar
-                        && ordnance.EmploymentCategory
-                        == OrdnanceEmploymentCategory.AntiRadiation)
-                    .ThenByDescending(ordnance => ordnance.MaximumRangeKm)
-                    .ThenByDescending(ordnance => ordnance.GetEffectiveness(
-                        target.Definition.TargetCategory))
-                    .ThenBy(ordnance => ordnance.OrdnanceTypeDefinitionId)
-                    .Select(ordnance => ordnance.OrdnanceTypeDefinitionId)
-                    .FirstOrDefault();
-                if (weaponId == Guid.Empty)
-                    continue;
-
-                if (ordnanceEmploymentSystem.TryStartAirToGroundPass(
-                        flight.FlightId,
-                        site.SiteId,
-                        target.Component.ComponentId,
-                        weaponId,
-                        currentTime))
-                    return;
-            }
+            return distanceKm >= ordnance.MinimumRangeKm
+                   && distanceKm <= ordnance.MaximumRangeKm;
         }
 
         private bool CanApproachDeadFireControlRadar(
@@ -1505,18 +1523,10 @@ namespace Engine.Models
             var packageFlightIds = package.Flights
                 .Select(flight => flight.FlightId)
                 .ToHashSet();
-            var componentsHitByPackage = ordnanceEmploymentSystem.Records
-                .Where(record => record.Stage
-                                 == OrdnanceEmploymentRecordStage.EffectResolved
-                                 && record.TargetKind
-                                 == OrdnanceEmploymentTargetKind
-                                     .AirDefenseComponent
-                                 && record.TargetSiteId == site.SiteId
-                                 && packageFlightIds.Contains(record.SourceFlightId)
-                                 && record.Shots.Any(shot =>
-                                     shot.Result == OrdnanceShotResult.Hit))
-                .Select(record => record.TargetComponentId)
-                .ToHashSet();
+            var componentsHitByPackage = GetHitAirDefenseComponentIds(
+                ordnanceEmploymentSystem.Records,
+                site.SiteId,
+                packageFlightIds);
             if (componentsHitByPackage.Count == 0)
                 return false;
 
@@ -1538,20 +1548,50 @@ namespace Engine.Models
             return wouldHaveFireControlRadar && wouldHaveLauncher;
         }
 
-        private static int GetDeadTargetPriority(
-            AirDefenseComponentDefinition definition)
+        internal static HashSet<Guid> GetHitAirDefenseComponentIds(
+            IEnumerable<OrdnanceEmploymentRecord> records,
+            Guid siteId,
+            IReadOnlyCollection<Guid> sourceFlightIds)
         {
-            return definition switch
+            var hits = new HashSet<Guid>();
+            if (records == null
+                || siteId == Guid.Empty
+                || sourceFlightIds == null)
+                return hits;
+
+            foreach (var record in records.Where(record =>
+                         record != null
+                         && record.Stage
+                         == OrdnanceEmploymentRecordStage.EffectResolved
+                         && record.TargetKind
+                         == OrdnanceEmploymentTargetKind.AirDefenseComponent
+                         && record.TargetSiteId == siteId
+                         && sourceFlightIds.Contains(record.SourceFlightId)))
             {
-                RadarAirDefenseComponentDefinition
+                foreach (var shot in record.Shots
+                             ?? new List<OrdnanceShotDiagnostic>())
                 {
-                    ProvidesWeaponQualityTrack: true
-                } => 0,
-                LauncherAirDefenseComponentDefinition => 1,
-                RadarAirDefenseComponentDefinition => 2,
-                CommandAirDefenseComponentDefinition => 3,
-                _ => 4
-            };
+                    if (shot == null || shot.Result != OrdnanceShotResult.Hit)
+                        continue;
+
+                    var groundTarget = shot.GroundTarget;
+                    if (groundTarget != null)
+                    {
+                        if (groundTarget.Kind
+                            == GroundAttackTargetKind.AirDefenseComponent
+                            && groundTarget.ParentEntityId == siteId
+                            && groundTarget.EntityId != Guid.Empty)
+                        {
+                            hits.Add(groundTarget.EntityId);
+                        }
+                    }
+                    else if (record.TargetComponentId != Guid.Empty)
+                    {
+                        hits.Add(record.TargetComponentId);
+                    }
+                }
+            }
+            return hits;
         }
 
         private static float HorizontalDistanceKm(Vector3 first, Vector3 second)

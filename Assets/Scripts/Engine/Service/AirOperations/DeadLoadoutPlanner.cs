@@ -7,6 +7,43 @@ using Models.Module;
 
 namespace Engine.Service
 {
+    public static class AirToGroundWeaponRules
+    {
+        public static bool IsAirToGround(OrdnanceTypeDefinition ordnance)
+        {
+            return ordnance != null
+                   && (ordnance.EmploymentCategory
+                       == OrdnanceEmploymentCategory.AntiRadiation
+                       || ordnance.EmploymentCategory
+                       == OrdnanceEmploymentCategory.AirToGroundPrecision
+                       || ordnance.EmploymentCategory
+                       == OrdnanceEmploymentCategory.AirToGroundUnguided
+                       || ordnance.EmploymentCategory
+                       == OrdnanceEmploymentCategory.Gun);
+        }
+
+        public static bool CanAffect(
+            OrdnanceTypeDefinition ordnance,
+            OrdnanceTargetCategory targetCategory,
+            int targetToughness,
+            float effectMultiplier = 1f)
+        {
+            if (!IsAirToGround(ordnance)
+                || effectMultiplier <= 0f
+                || ordnance.EffectPower * effectMultiplier
+                < Math.Max(1, targetToughness)
+                || ordnance.GetEffectiveness(targetCategory) <= 0f)
+                return false;
+
+            var isAntiRadiation =
+                ordnance.EmploymentCategory
+                == OrdnanceEmploymentCategory.AntiRadiation
+                || ordnance.GuidanceMode == OrdnanceGuidanceMode.AntiRadiation;
+            return !isAntiRadiation
+                   || targetCategory == OrdnanceTargetCategory.Radar;
+        }
+    }
+
     public sealed class DeadLoadoutPlanner
     {
         private readonly IReadOnlyDictionary<Guid, OrdnanceTypeDefinition>
@@ -249,33 +286,20 @@ namespace Engine.Service
 
         public static bool IsAirToGround(OrdnanceTypeDefinition ordnance)
         {
-            return ordnance.EmploymentCategory
-                       == OrdnanceEmploymentCategory.AntiRadiation
-                   || ordnance.EmploymentCategory
-                       == OrdnanceEmploymentCategory.AirToGroundPrecision
-                   || ordnance.EmploymentCategory
-                       == OrdnanceEmploymentCategory.AirToGroundUnguided
-                   || ordnance.EmploymentCategory
-                       == OrdnanceEmploymentCategory.Gun;
+            return AirToGroundWeaponRules.IsAirToGround(ordnance);
         }
 
         public static bool CanAttackComponent(
             OrdnanceTypeDefinition ordnance,
             AirDefenseComponentDefinition target)
         {
-            if (ordnance == null
-                || target == null
-                || !IsAirToGround(ordnance)
-                || ordnance.EffectPower < target.TargetToughness
-                || ordnance.GetEffectiveness(target.TargetCategory) <= 0f)
+            if (target == null
+                || !AirToGroundWeaponRules.CanAffect(
+                    ordnance,
+                    target.TargetCategory,
+                    target.TargetToughness))
                 return false;
-
-            var isAntiRadiation =
-                ordnance.EmploymentCategory
-                == OrdnanceEmploymentCategory.AntiRadiation
-                || ordnance.GuidanceMode == OrdnanceGuidanceMode.AntiRadiation;
-            return !isAntiRadiation
-                   || target.TargetCategory == OrdnanceTargetCategory.Radar;
+            return true;
         }
 
         private static void Add(

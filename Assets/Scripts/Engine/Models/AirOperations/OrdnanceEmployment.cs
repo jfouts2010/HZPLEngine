@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using Models.Module;
+using UnityEngine;
 
 namespace Models.Gameplay.Campaign
 {
@@ -31,7 +33,109 @@ namespace Models.Gameplay.Campaign
     public enum OrdnanceEmploymentTargetKind
     {
         AirFlight = 0,
-        AirDefenseComponent = 1
+        AirDefenseComponent = 1,
+        GroundTarget = 2
+    }
+
+    public enum GroundAttackTargetKind
+    {
+        None = 0,
+        AirDefenseComponent = 1,
+        Division = 2,
+        Building = 3,
+        GroundedAircraft = 4,
+        TileInfrastructure = 5
+    }
+
+    public enum GroundAttackOpportunityQuality
+    {
+        None = 0,
+        Fleeting = 1,
+        Normal = 2,
+        Excellent = 3
+    }
+
+    [Serializable]
+    public sealed class GroundAttackTargetReference
+    {
+        public GroundAttackTargetKind Kind;
+        public Guid EntityId;
+        public Guid ParentEntityId;
+        public Vector3Int TileId;
+
+        public bool Matches(GroundAttackTargetReference other)
+        {
+            return other != null
+                   && Kind == other.Kind
+                   && EntityId == other.EntityId
+                   && ParentEntityId == other.ParentEntityId
+                   && TileId == other.TileId;
+        }
+
+        public GroundAttackTargetReference Clone()
+        {
+            return new GroundAttackTargetReference
+            {
+                Kind = Kind,
+                EntityId = EntityId,
+                ParentEntityId = ParentEntityId,
+                TileId = TileId
+            };
+        }
+    }
+
+    [Serializable]
+    public sealed class GroundAttackOpportunityTarget
+    {
+        public GroundAttackTargetReference Target =
+            new GroundAttackTargetReference();
+        public OrdnanceTargetCategory TargetCategory;
+        public int TargetToughness = 1;
+        public float MissionPriority = 1f;
+        public bool CanBePrimaryTarget = true;
+        public string Description = string.Empty;
+
+        public GroundAttackOpportunityTarget Clone()
+        {
+            return new GroundAttackOpportunityTarget
+            {
+                Target = Target?.Clone() ?? new GroundAttackTargetReference(),
+                TargetCategory = TargetCategory,
+                TargetToughness = TargetToughness,
+                MissionPriority = MissionPriority,
+                CanBePrimaryTarget = CanBePrimaryTarget,
+                Description = Description
+            };
+        }
+    }
+
+    [Serializable]
+    public sealed class GroundAttackOpportunity
+    {
+        public Guid OpportunityId = Guid.NewGuid();
+        public DateTime GeneratedAt;
+        public GroundAttackOpportunityQuality Quality;
+        public int MaximumReleases;
+        public Vector3Int TargetTileId;
+        public List<GroundAttackOpportunityTarget> Targets =
+            new List<GroundAttackOpportunityTarget>();
+        public string Description = string.Empty;
+
+        public bool HasTargets => MaximumReleases > 0
+                                  && Targets != null
+                                  && Targets.Count > 0;
+    }
+
+    [Serializable]
+    public sealed class GroundAttackPassPlan
+    {
+        public Guid OrdnanceTypeDefinitionId;
+        public Vector3Int TargetTileId;
+        public List<GroundAttackOpportunityTarget> PrimaryTargets =
+            new List<GroundAttackOpportunityTarget>();
+        public List<GroundAttackOpportunityTarget> OpportunityTargets =
+            new List<GroundAttackOpportunityTarget>();
+        public string OpportunityDescription = string.Empty;
     }
 
     public enum OrdnanceDefeatReason
@@ -47,6 +151,7 @@ namespace Models.Gameplay.Campaign
         public int Sequence;
         public Guid SourceAircraftId;
         public Guid TargetAircraftId;
+        public GroundAttackTargetReference GroundTarget;
         public float Probability;
         public float Roll;
         public bool TargetWasAlreadyDamaged;
@@ -62,6 +167,7 @@ namespace Models.Gameplay.Campaign
         public int Sequence;
         public Guid SourceAircraftId;
         public Guid TargetAircraftId;
+        public GroundAttackTargetReference GroundTarget;
         public Guid OrdnanceTypeDefinitionId;
         public DateTime ReleasedAt;
     }
@@ -76,6 +182,12 @@ namespace Models.Gameplay.Campaign
         public OrdnanceEmploymentTargetKind TargetKind;
         public Guid TargetSiteId;
         public Guid TargetComponentId;
+        public Vector3Int GroundTargetTileId;
+        public List<GroundAttackOpportunityTarget> GroundPrimaryTargets =
+            new List<GroundAttackOpportunityTarget>();
+        public List<GroundAttackOpportunityTarget> GroundOpportunityTargets =
+            new List<GroundAttackOpportunityTarget>();
+        public string GroundOpportunityDescription = string.Empty;
         public Guid OrdnanceTypeDefinitionId;
         public int PlannedQuantity;
         public DateTime PreparationStartedAt;
@@ -97,6 +209,10 @@ namespace Models.Gameplay.Campaign
         public OrdnanceEmploymentTargetKind TargetKind;
         public Guid TargetSiteId;
         public Guid TargetComponentId;
+        public GroundAttackOpportunityTarget GroundPrimaryTarget;
+        public List<GroundAttackOpportunityTarget> GroundOpportunityTargets =
+            new List<GroundAttackOpportunityTarget>();
+        public string GroundOpportunityDescription = string.Empty;
         public Guid OrdnanceTypeDefinitionId;
         public int Quantity;
         public float HitProbability;
@@ -141,6 +257,10 @@ namespace Models.Gameplay.Campaign
         public OrdnanceEmploymentTargetKind TargetKind;
         public Guid TargetSiteId;
         public Guid TargetComponentId;
+        public GroundAttackTargetReference GroundTarget;
+        public List<GroundAttackOpportunityTarget> GroundOpportunityTargets =
+            new List<GroundAttackOpportunityTarget>();
+        public string GroundOpportunityDescription = string.Empty;
         public Guid OrdnanceTypeDefinitionId;
         public int Quantity;
         public DateTime OccurredAt;
