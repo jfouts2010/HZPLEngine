@@ -107,9 +107,8 @@ namespace Engine.Service
                 : 0f;
             var urgency = request.RequestType switch
             {
-                AirMissionRequestType.BarrierCombatAirPatrol => Mathf.Max(
-                    barcapFrontPriority,
-                    barcapHostilePressure),
+                AirMissionRequestType.BarrierCombatAirPatrol => Mathf.Sqrt(
+                    barcapFrontPriority * barcapHostilePressure),
                 AirMissionRequestType.OffensiveCounterAirSweep => Mathf.Max(
                     friendlyDeficit,
                     observedHostilePressure),

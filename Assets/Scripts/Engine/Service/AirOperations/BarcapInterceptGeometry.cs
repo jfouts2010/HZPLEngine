@@ -9,10 +9,161 @@ namespace Engine.Service
 {
     public static class BarcapInterceptGeometry
     {
+        public const float DefaultStationTrackHalfLengthTiles = 0.5f;
         private const float KilometersPerNauticalMile = 1.852f;
-        private const float MaximumResponseMinutes = 10f;
+        public const float MaximumResponseMinutes = 10f;
         private const float MinimumRepresentativeThreatSpeedKnots = 300f;
         private const float PlanningCommitMarginMinutes = 1.5f;
+
+        public static (Vector3 Entry, Vector3 Endpoint) GetStationTrackEndpoints(
+            Vector3Int stationTileId,
+            Vector3Int threatReferenceTileId,
+            float tileDistanceKm,
+            float altitudeFeet)
+        {
+            var stationCenter = AirspaceGeometry.TileCenterFeet(
+                stationTileId,
+                tileDistanceKm,
+                altitudeFeet);
+            var threatCenter = AirspaceGeometry.TileCenterFeet(
+                threatReferenceTileId,
+                tileDistanceKm,
+                altitudeFeet);
+            var threatDirection = threatCenter - stationCenter;
+            threatDirection.y = 0f;
+            if (threatDirection.sqrMagnitude < 1f)
+                threatDirection = Vector3.forward;
+            threatDirection.Normalize();
+            var trackDirection = new Vector3(
+                -threatDirection.z,
+                0f,
+                threatDirection.x);
+            var offset = trackDirection
+                         * Math.Max(0f, tileDistanceKm)
+                         * AirspaceGeometry.FeetPerKilometer
+                         * DefaultStationTrackHalfLengthTiles;
+            return (stationCenter - offset, stationCenter + offset);
+        }
+
+        public static IReadOnlyList<Vector3Int> GetDefensiveStationTiles(
+            IEnumerable<Vector3Int> friendlyTileIds,
+            Vector3Int barrierTileId,
+            Vector3Int threatReferenceTileId)
+        {
+            var friendlyTiles = (friendlyTileIds ?? Enumerable.Empty<Vector3Int>())
+                .ToHashSet();
+            if (!friendlyTiles.Contains(barrierTileId))
+                return Array.Empty<Vector3Int>();
+
+            var stations = new List<Vector3Int> { barrierTileId };
+            var station = barrierTileId;
+            var threatCenter = AirspaceGeometry.TileCenterFeet(
+                threatReferenceTileId,
+                1f);
+            var barrierCenter = AirspaceGeometry.TileCenterFeet(
+                barrierTileId,
+                1f);
+            var rearward = barrierCenter - threatCenter;
+            rearward.y = 0f;
+            if (rearward.sqrMagnitude < 0.001f)
+                rearward = Vector3.forward;
+            rearward.Normalize();
+            while (true)
+            {
+                var currentThreatDistance = AirMissionArea.HexDistance(
+                    station,
+                    threatReferenceTileId);
+                var next = AirspaceGeometry.NeighborTiles(station)
+                    .Where(friendlyTiles.Contains)
+                    .Where(tile => AirMissionArea.HexDistance(
+                                       tile,
+                                       threatReferenceTileId)
+                                   > currentThreatDistance)
+                    .OrderByDescending(tile => Vector3.Dot(
+                        AirspaceGeometry.TileCenterFeet(tile, 1f)
+                        - barrierCenter,
+                        rearward))
+                    .ThenByDescending(tile => AirMissionArea.HexDistance(
+                        tile,
+                        threatReferenceTileId))
+                    .ThenBy(tile => tile.x)
+                    .ThenBy(tile => tile.y)
+                    .ThenBy(tile => tile.z)
+                    .Select(tile => (Vector3Int?)tile)
+                    .FirstOrDefault();
+                if (!next.HasValue || next.Value == station)
+                    break;
+                station = next.Value;
+                stations.Add(station);
+            }
+
+            return stations;
+        }
+
+        public static bool CanReachOperationalBarrierFromStation(
+            Vector3Int stationTileId,
+            Vector3Int barrierTileId,
+            Vector3Int threatReferenceTileId,
+            float tileDistanceKm,
+            float weaponReleaseStandoffKm,
+            float responseRadiusKm)
+        {
+            var track = GetStationTrackEndpoints(
+                stationTileId,
+                threatReferenceTileId,
+                tileDistanceKm,
+                0f);
+            var releasePoint = GetOperationalBarrierPointsFeet(
+                    new[] { barrierTileId },
+                    threatReferenceTileId,
+                    tileDistanceKm,
+                    weaponReleaseStandoffKm)
+                .FirstOrDefault();
+            var worstStationDistanceKm = Math.Max(
+                Vector3.Distance(track.Entry, releasePoint),
+                Vector3.Distance(track.Endpoint, releasePoint))
+                / AirspaceGeometry.FeetPerKilometer;
+            return worstStationDistanceKm <= Math.Max(0f, responseRadiusKm) + 0.001f;
+        }
+
+        public static IReadOnlyList<Vector3Int> GetContiguousCoveredBarrierRun(
+            IReadOnlyList<Vector3Int> orderedBarrierTiles,
+            Vector3Int centerTileId,
+            Vector3Int stationTileId,
+            BarcapStationCoverage coverage,
+            float tileDistanceKm)
+        {
+            if (orderedBarrierTiles == null
+                || orderedBarrierTiles.Count == 0
+                || coverage == null)
+                return Array.Empty<Vector3Int>();
+
+            var coverable = orderedBarrierTiles
+                .Where(tile => CanReachOperationalBarrierFromStation(
+                    stationTileId,
+                    tile,
+                    coverage.ThreatReferenceTileId,
+                    tileDistanceKm,
+                    coverage.WeaponReleaseStandoffKm,
+                    coverage.PlannedResponseRadiusKm))
+                .ToHashSet();
+            var centerIndex = orderedBarrierTiles.ToList().IndexOf(centerTileId);
+            if (centerIndex < 0 || !coverable.Contains(centerTileId))
+                return Array.Empty<Vector3Int>();
+
+            var start = centerIndex;
+            while (start > 0 && coverable.Contains(orderedBarrierTiles[start - 1]))
+                start--;
+            var end = centerIndex;
+            while (end + 1 < orderedBarrierTiles.Count
+                   && coverable.Contains(orderedBarrierTiles[end + 1]))
+                end++;
+
+            return orderedBarrierTiles
+                .Skip(start)
+                .Take(end - start + 1)
+                .ToList();
+        }
 
         public static float CalculateResponseRadiusKm(
             AircraftTypeDefinition aircraftType,

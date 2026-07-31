@@ -83,9 +83,9 @@ namespace Engine.Service
                     objective.Airport.AirportTileId,
                     snapshot.TileDistanceKm,
                     altitudeFeet);
-                var maneuverClearanceFeet = AirspaceGeometry.SamManeuverClearanceFeet(
-                    origin.AircraftType,
-                    origin.AircraftType.CruiseSpeedKnots);
+                var maneuverClearanceFeet = AirspaceGeometry
+                    .ConservativeSamManeuverClearanceFeet(
+                        origin.AircraftType);
                 var geometry = routePlanner.Plan(
                     new AirRouteGeometryPlanningContext(
                         originPosition,

@@ -295,13 +295,17 @@ namespace Engine.Service
                 .Select(squadron => priorityService.GetAircraftType(
                     squadron.AircraftTypeDefinitionId))
                 .Where(priorityService.CanPerformAirCombat)
+                // Sizing assumes best-case warning; the package builder recomputes
+                // the radius from actual IADS coverage when it places a station.
                 .Select(type => BarcapInterceptGeometry.CalculateResponseRadiusKm(
                     type,
                     plan.RepresentativeThreatSpeedKnots,
                     threatDistanceKm,
                     plan.WeaponReleaseStandoffKm,
                     priorityService.GetLongestAirToAirWeaponRangeKm(type)
-                    * PreferredLaunchRangeFraction))
+                    * PreferredLaunchRangeFraction,
+                    sensorWarningMinutes:
+                        BarcapInterceptGeometry.MaximumResponseMinutes))
                 .ToList();
             var bestRadius = availableRadii.Count > 0
                 ? availableRadii.Max()

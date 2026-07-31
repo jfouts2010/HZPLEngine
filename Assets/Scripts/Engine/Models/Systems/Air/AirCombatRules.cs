@@ -116,6 +116,7 @@ namespace Engine.Models
         private const float BarcapThreatLookaheadMinutes = 20f;
         private const float BarcapResponsePaddingTiles = 2f;
         private const float BarcapCommitMarginMinutes = 1.5f;
+        private const float BarcapReleaseMarginMinutes = 5f;
         private const float BarcapBoundaryToleranceTiles = 0.1f;
         private const float BarcapDefensiveBufferTiles = 0.15f;
         private const float EscortThreatLookaheadMinutes = 10f;
@@ -365,6 +366,38 @@ namespace Engine.Models
                     || state.Maneuver == AirCombatManeuver.BreakRight
                     || state.Maneuver == AirCombatManeuver.Drag
                     || state.Maneuver == AirCombatManeuver.Extend))
+            {
+                return Command(
+                    source,
+                    state.Intent,
+                    state.Maneuver,
+                    state.TargetFlightId,
+                    state.SupportedPendingEffectId,
+                    frame.Time,
+                    state.MinimumManeuverEndAt,
+                    state.PreferredSide,
+                    state.TacticalAimPointFeet,
+                    Math.Max(1f, source.AircraftType.CombatSpeedKnots),
+                    $"Continuing committed {state.Maneuver} maneuver.");
+            }
+
+            // BuildBvrManeuverCommand asks for a minimum commit on Intercept and
+            // Press so a pursuit is not re-derived from scratch every tactical
+            // step. Honour it while the target still exists and the merge
+            // decision has not come due.
+            if (state.MinimumManeuverEndAt > frame.Time
+                && state.HasTacticalAimPoint
+                && state.Intent == AirCombatIntent.EngageTarget
+                && (state.Maneuver == AirCombatManeuver.Intercept
+                    || state.Maneuver == AirCombatManeuver.Press)
+                && state.TargetFlightId != Guid.Empty
+                && frame.Flights.TryGetValue(
+                    state.TargetFlightId,
+                    out var committedTarget)
+                && DistanceKm(
+                    flight.PositionFeet,
+                    committedTarget.Flight.PositionFeet)
+                > WvrDecisionRangeKm)
             {
                 return Command(
                     source,
@@ -1957,8 +1990,19 @@ namespace Engine.Models
                 source,
                 crossingFeet,
                 ordnanceTypes);
-            return minutesToEntry
-                   <= interceptMinutes + BarcapCommitMarginMinutes;
+            // Committing shortens the run to the crossing point, which would
+            // immediately fail a single-threshold gate and send the flight back
+            // to station. Release on a wider margin than we commit on so an
+            // engagement that has already started stays committed.
+            var isCommittedToTrack =
+                source.Flight.TacticalState.Intent
+                == AirCombatIntent.EngageTarget
+                && source.Flight.TacticalState.TargetFlightId
+                == track.FlightId;
+            var marginMinutes = isCommittedToTrack
+                ? BarcapReleaseMarginMinutes
+                : BarcapCommitMarginMinutes;
+            return minutesToEntry <= interceptMinutes + marginMinutes;
         }
 
         private static bool TryGetBarcapThreatGeometry(
@@ -2420,10 +2464,9 @@ namespace Engine.Models
                 return command;
 
             var currentPosition = source.Flight.PositionFeet;
-            var maneuverClearanceFeet =
-                AirspaceGeometry.SamManeuverClearanceFeet(
-                    source.AircraftType,
-                    source.AircraftType.CombatSpeedKnots);
+            var maneuverClearanceFeet = AirspaceGeometry
+                .ConservativeSamManeuverClearanceFeet(
+                    source.AircraftType);
             var activePass = frame.ActivePasses
                 .Where(pass => pass.SourceFlightId == source.Flight.FlightId
                                && pass.TargetKind
@@ -2634,10 +2677,9 @@ namespace Engine.Models
             var sourceFeetPerSecond =
                 Math.Max(1f, source.AircraftType.CombatSpeedKnots)
                 * AirspaceGeometry.FeetPerNauticalMile / 3600f;
-            var maneuverClearanceFeet =
-                AirspaceGeometry.SamManeuverClearanceFeet(
-                    source.AircraftType,
-                    source.AircraftType.CombatSpeedKnots);
+            var maneuverClearanceFeet = AirspaceGeometry
+                .ConservativeSamManeuverClearanceFeet(
+                    source.AircraftType);
             var predictedSource = source.Flight.PositionFeet;
             var predictedHeading = source.Flight.HeadingDegrees;
             var predictionSeconds = 0d;

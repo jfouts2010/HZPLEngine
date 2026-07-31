@@ -22,7 +22,6 @@ namespace Engine.Service
         private const float BarcapAndOcaAltitudeFeet = 40000f;
         private const float AwacsAltitudeFeet = 35000f;
         private const float TankerAltitudeFeet = 25000f;
-        private const float DefaultStationTrackHalfLengthTiles = 0.5f;
         private const float MaximumSupportStationHostileInterference = 0.10f;
         private const float MeaningfulOcaPresence = 0.10f;
         private const float MeaningfulBarcapPressure = 0.10f;
@@ -632,10 +631,13 @@ namespace Engine.Service
             var gapCenterTile = SelectLargestBarrierGapCenter(
                 barrier,
                 uncoveredBarrierTiles);
-            var defensiveStationTiles = GetDefensiveBarcapStationTiles(
+            var defensiveStationTiles = BarcapInterceptGeometry
+                .GetDefensiveStationTiles(
+                gameManager.tileSystem.LandTiles
+                    .Where(tile => tile.Controller == request.Alliance)
+                    .Select(tile => tile.TileId),
                 gapCenterTile,
-                request.BarcapBarrier.ThreatReferenceTileId,
-                request.Alliance);
+                request.BarcapBarrier.ThreatReferenceTileId);
             var releaseStandoffKm =
                 BarcapBarrierPlan.ResolveWeaponReleaseStandoffKm(
                     request.BarcapBarrier.WeaponReleaseStandoffKm);
@@ -682,7 +684,8 @@ namespace Engine.Service
                         {
                             var coverable = responseRadiusByTile
                                 .Where(entry =>
-                                    CanReachOperationalBarrierFromStation(
+                                    BarcapInterceptGeometry
+                                        .CanReachOperationalBarrierFromStation(
                                         candidateStation,
                                         entry.Key,
                                         request.BarcapBarrier
@@ -720,51 +723,6 @@ namespace Engine.Service
                 .ToList();
         }
 
-        private static bool CanReachOperationalBarrierFromStation(
-            Vector3Int stationTile,
-            Vector3Int barrierTile,
-            Vector3Int threatTile,
-            float tileDistanceKm,
-            float weaponReleaseStandoffKm,
-            float responseRadiusKm)
-        {
-            var stationCenter = AirspaceGeometry.TileCenterFeet(
-                stationTile,
-                tileDistanceKm);
-            var releasePoint = BarcapInterceptGeometry
-                .GetOperationalBarrierPointsFeet(
-                    new[] { barrierTile },
-                    threatTile,
-                    tileDistanceKm,
-                    weaponReleaseStandoffKm)
-                .FirstOrDefault();
-            var threatCenter = AirspaceGeometry.TileCenterFeet(
-                threatTile,
-                tileDistanceKm);
-            var threatDirection = threatCenter - stationCenter;
-            threatDirection.y = 0f;
-            if (threatDirection.sqrMagnitude < 1f)
-                threatDirection = Vector3.forward;
-            threatDirection.Normalize();
-            var trackDirection = new Vector3(
-                -threatDirection.z,
-                0f,
-                threatDirection.x);
-            var trackOffsetFeet = trackDirection
-                                   * DefaultStationTrackHalfLengthTiles
-                                   * tileDistanceKm
-                                   * AirspaceGeometry.FeetPerKilometer;
-            var worstStationDistanceKm = Math.Max(
-                Vector3.Distance(
-                    stationCenter - trackOffsetFeet,
-                    releasePoint),
-                Vector3.Distance(
-                    stationCenter + trackOffsetFeet,
-                    releasePoint))
-                / AirspaceGeometry.FeetPerKilometer;
-            return worstStationDistanceKm <= responseRadiusKm + 0.001f;
-        }
-
         private static List<Vector3Int> SelectContiguousBarrierRun(
             IReadOnlyList<Vector3Int> barrier,
             IReadOnlyCollection<Vector3Int> coverable,
@@ -787,61 +745,6 @@ namespace Engine.Service
                 .Skip(start)
                 .Take(end - start + 1)
                 .ToList();
-        }
-
-        private IReadOnlyList<Vector3Int> GetDefensiveBarcapStationTiles(
-            Vector3Int barrierTile,
-            Vector3Int threatTile,
-            Alliance alliance)
-        {
-            var friendlyTiles = gameManager.tileSystem.LandTiles
-                .Where(tile => tile.Controller == alliance)
-                .Select(tile => tile.TileId)
-                .ToHashSet();
-            if (!friendlyTiles.Contains(barrierTile))
-                return Array.Empty<Vector3Int>();
-
-            var stations = new List<Vector3Int> { barrierTile };
-            var station = barrierTile;
-            var threatCenter = AirspaceGeometry.TileCenterFeet(
-                threatTile,
-                1f);
-            var barrierCenter = AirspaceGeometry.TileCenterFeet(
-                barrierTile,
-                1f);
-            var rearward = barrierCenter - threatCenter;
-            rearward.y = 0f;
-            if (rearward.sqrMagnitude < 0.001f)
-                rearward = Vector3.forward;
-            rearward.Normalize();
-            while (true)
-            {
-                var currentThreatDistance = AirMissionArea.HexDistance(
-                    station,
-                    threatTile);
-                var next = AirspaceGeometry.NeighborTiles(station)
-                    .Where(friendlyTiles.Contains)
-                    .Where(tile => AirMissionArea.HexDistance(tile, threatTile)
-                                   > currentThreatDistance)
-                    .OrderByDescending(tile => Vector3.Dot(
-                        AirspaceGeometry.TileCenterFeet(tile, 1f)
-                        - barrierCenter,
-                        rearward))
-                    .ThenByDescending(tile => AirMissionArea.HexDistance(
-                        tile,
-                        threatTile))
-                    .ThenBy(tile => tile.x)
-                    .ThenBy(tile => tile.y)
-                    .ThenBy(tile => tile.z)
-                    .Select(tile => (Vector3Int?)tile)
-                    .FirstOrDefault();
-                if (!next.HasValue || next.Value == station)
-                    break;
-                station = next.Value;
-                stations.Add(station);
-            }
-
-            return stations;
         }
 
         private void GetBarcapWeaponPlanningValues(
@@ -1572,9 +1475,9 @@ namespace Engine.Service
                 {
                     var escortClearance = plans
                         .Where(plan => plan.Flight.IsFighterEscort)
-                        .Select(plan => AirspaceGeometry.SamManeuverClearanceFeet(
-                            plan.AircraftType,
-                            plan.AircraftType.CruiseSpeedKnots))
+                        .Select(plan => AirspaceGeometry
+                            .ConservativeSamManeuverClearanceFeet(
+                                plan.AircraftType))
                         .DefaultIfEmpty(0f)
                         .Max();
                     if (targetSamThreats.Any(threat =>
@@ -1603,10 +1506,9 @@ namespace Engine.Service
 
             foreach (var plan in plans)
             {
-                var maneuverClearanceFeet =
-                    AirspaceGeometry.SamManeuverClearanceFeet(
-                        plan.AircraftType,
-                        plan.AircraftType.CruiseSpeedKnots);
+                var maneuverClearanceFeet = AirspaceGeometry
+                    .ConservativeSamManeuverClearanceFeet(
+                        plan.AircraftType);
                 var missionOrigin = hasRendezvous ? rendezvousPosition : plan.BasePositionFeet;
                 // Only the DEAD attack element may accept exposure to the
                 // assigned site. Its fighter escort remains outside that
@@ -2030,30 +1932,18 @@ namespace Engine.Service
                                    ?? SelectBarcapThreatTile(
                                        commander,
                                        request.MissionArea);
-                var threatCenter = AirspaceGeometry.TileCenterFeet(
+                var stationTileId = AirspaceGeometry
+                    .TileCoordinateFromPositionFeet(
+                        stationCenter,
+                        tileDistanceKm);
+                var track = BarcapInterceptGeometry.GetStationTrackEndpoints(
+                    stationTileId,
                     threatTileId,
                     tileDistanceKm,
                     missionCenter.y);
-                var threatDirection = threatCenter - stationCenter;
-                threatDirection.y = 0f;
-                if (threatDirection.sqrMagnitude < 1f)
-                {
-                    threatDirection = stationCenter - missionOrigin;
-                    threatDirection.y = 0f;
-                }
-                if (threatDirection.sqrMagnitude < 1f)
-                    threatDirection = Vector3.forward;
-                threatDirection.Normalize();
-                var trackDirection = new Vector3(
-                    -threatDirection.z,
-                    0f,
-                    threatDirection.x);
-                var barcapTrackOffset = BuildDefensiveBarcapTrackOffset(
-                    trackDirection,
-                    tileDistanceFeet);
-                plan.MissionEntryPosition = stationCenter - barcapTrackOffset;
-                plan.MissionPushPosition = stationCenter + barcapTrackOffset;
-                plan.MissionExitPosition = stationCenter + barcapTrackOffset;
+                plan.MissionEntryPosition = track.Entry;
+                plan.MissionPushPosition = track.Endpoint;
+                plan.MissionExitPosition = track.Endpoint;
                 return;
             }
 
@@ -2088,7 +1978,8 @@ namespace Engine.Service
 
             var trackOffset = Vector3.right
                               * tileDistanceFeet
-                              * DefaultStationTrackHalfLengthTiles;
+                              * BarcapInterceptGeometry
+                                  .DefaultStationTrackHalfLengthTiles;
             plan.MissionEntryPosition = missionCenter - trackOffset;
             plan.MissionPushPosition = missionCenter + trackOffset;
             plan.MissionExitPosition = missionCenter + trackOffset;
@@ -2171,17 +2062,6 @@ namespace Engine.Service
                 return missionArea.CenterTileId;
 
             return threat.TileId;
-        }
-
-        private static Vector3 BuildDefensiveBarcapTrackOffset(
-            Vector3 trackDirection,
-            float tileDistanceFeet)
-        {
-            // Coverage calculation includes this maximum displacement so a
-            // patrol is credited only when either end of its track can respond.
-            return trackDirection
-                   * tileDistanceFeet
-                   * DefaultStationTrackHalfLengthTiles;
         }
 
         private static Vector3Int SelectOcaEntryTile(

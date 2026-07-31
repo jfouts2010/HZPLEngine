@@ -3177,9 +3177,7 @@ namespace Engine.Models
 
         private static string ShortId(Guid id)
         {
-            return id == Guid.Empty
-                ? "------"
-                : id.ToString("N").Substring(0, 6).ToUpperInvariant();
+            return SimLogNames.ShortId(id);
         }
 
         private sealed class AuthorizedOrdnanceRelease

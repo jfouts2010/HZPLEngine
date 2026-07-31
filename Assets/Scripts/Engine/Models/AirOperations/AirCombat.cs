@@ -117,7 +117,11 @@ namespace Models.Gameplay.Campaign
                    >= requiredDuration;
         }
 
-        public void Apply(
+        /// <summary>
+        /// Returns true when the intent or maneuver actually changed, so callers
+        /// can record the transition instead of every repeated decision.
+        /// </summary>
+        public bool Apply(
             AirCombatIntent nextIntent,
             AirCombatManeuver nextManeuver,
             DateTime occurredAt,
@@ -154,6 +158,7 @@ namespace Models.Gameplay.Campaign
             TacticalAimPointFeet = aimPointFeet;
             HasTacticalAimPoint = hasAimPoint;
             DecisionReason = reason ?? string.Empty;
+            return intentChanged || maneuverChanged;
         }
 
         public void ClearCombat(DateTime occurredAt, string reason)

@@ -41,6 +41,8 @@ namespace Engine.Monobehaviours.Managers
         private readonly Dictionary<string, Sprite> spritesByKey = new Dictionary<string, Sprite>();
         private readonly Dictionary<string, Sprite> unitCounterSpritesByKey = new Dictionary<string, Sprite>();
         private readonly Dictionary<string, Sprite> combatBubbleSpritesByScore = new Dictionary<string, Sprite>();
+        private readonly Dictionary<AirPlatformClass, AirMarkerSprites> airMarkerSpritesByClass =
+            new Dictionary<AirPlatformClass, AirMarkerSprites>();
         private UnityEngine.Tilemaps.Tile airControlRenderTile;
         private Sprite movementArrowHeadSprite;
         private Material movementArrowMaterial;
@@ -70,7 +72,11 @@ namespace Engine.Monobehaviours.Managers
         private const float AirIntentLineWidth = 0.052f;
         private const float AirIntentAreaLineWidth = 0.038f;
         private const float AirEngagementLineWidth = 0.060f;
-        private const float AirMarkerRadius = 0.12f;
+        private const int AirMarkerPixelSize = 96;
+        private const int AirMarkerSupersample = 3;
+        private const int AirMarkerOutlinePixels = 4;
+        private const float AirMarkerWorldPerShapeUnit = 0.13f;
+        private const float AirMarkerHighlightScale = 1.25f;
         private const float SamCoverageLineWidth = 0.022f;
         private const float SamIconRadius = 0.16f;
         private static readonly Color RailwayLineColor = new Color(0.38f, 0.32f, 0.24f);
@@ -2671,8 +2677,8 @@ namespace Engine.Monobehaviours.Managers
             {
                 if (!child.name.StartsWith("Air Flight ", StringComparison.Ordinal))
                     continue;
-                var line = child.GetComponent<LineRenderer>();
-                if (line == null)
+                var icon = child.Find("Flight Icon");
+                if (icon == null)
                     continue;
                 var selected = selectedFlightId != Guid.Empty
                                && child.name.EndsWith(ShortId(selectedFlightId), StringComparison.Ordinal);
@@ -2680,22 +2686,21 @@ namespace Engine.Monobehaviours.Managers
                                         && child.name.EndsWith(ShortId(highlightedOrdnanceSourceFlightId), StringComparison.Ordinal);
                 var targetHighlighted = highlightedOrdnanceTargetFlightId != Guid.Empty
                                         && child.name.EndsWith(ShortId(highlightedOrdnanceTargetFlightId), StringComparison.Ordinal);
-                line.startWidth = selected || sourceHighlighted || targetHighlighted ? 0.085f : 0.055f;
-                line.endWidth = selected || sourceHighlighted || targetHighlighted ? 0.085f : 0.055f;
+                icon.localScale = selected || sourceHighlighted || targetHighlighted
+                    ? Vector3.one * AirMarkerHighlightScale
+                    : Vector3.one;
+                Color? color = null;
                 if (selected)
                 {
-                    line.startColor = new Color(1f, 0.88f, 0.22f);
-                    line.endColor = new Color(1f, 0.88f, 0.22f);
+                    color = new Color(1f, 0.88f, 0.22f);
                 }
                 else if (sourceHighlighted)
                 {
-                    line.startColor = new Color(0.25f, 1f, 0.72f);
-                    line.endColor = new Color(0.25f, 1f, 0.72f);
+                    color = new Color(0.25f, 1f, 0.72f);
                 }
                 else if (targetHighlighted)
                 {
-                    line.startColor = new Color(1f, 0.33f, 0.25f);
-                    line.endColor = new Color(1f, 0.33f, 0.25f);
+                    color = new Color(1f, 0.33f, 0.25f);
                 }
                 else
                 {
@@ -2704,10 +2709,13 @@ namespace Engine.Monobehaviours.Managers
                     if (pick.FlightId != Guid.Empty
                         && TryFindFlight(pick.FlightId, out _, out var package, out _))
                     {
-                        line.startColor = GetAirAllianceColor(package.Alliance);
-                        line.endColor = GetAirAllianceColor(package.Alliance);
+                        color = GetAirAllianceColor(package.Alliance);
                     }
                 }
+
+                var body = icon.Find("Flight Body")?.GetComponent<SpriteRenderer>();
+                if (body != null && color.HasValue)
+                    body.color = color.Value;
             }
         }
 
@@ -3599,7 +3607,7 @@ namespace Engine.Monobehaviours.Managers
 
         private static string ShortId(Guid id)
         {
-            return id == Guid.Empty ? "——" : id.ToString("N").Substring(0, 6).ToUpperInvariant();
+            return id == Guid.Empty ? "——" : SimLogNames.ShortId(id);
         }
 
         private static string GetAllianceLabel(Alliance alliance)
@@ -6180,6 +6188,253 @@ namespace Engine.Monobehaviours.Managers
                    && TryFindCounterAirGuidance(package, flight, out _, out _);
         }
 
+        private enum AirPlatformClass
+        {
+            Fighter,
+            Strike,
+            AirborneC2,
+            Tanker,
+            Support
+        }
+
+        private sealed class AirMarkerSprites
+        {
+            public Sprite Outline;
+            public Sprite Body;
+            public Sprite Detail;
+        }
+
+        private readonly struct AirMarkerShape
+        {
+            public readonly Vector2[][] BodyPolygons;
+            public readonly Vector2[][] DetailPolygons;
+            public readonly float Scale;
+            public readonly float HalfExtent;
+
+            public AirMarkerShape(Vector2[][] bodyPolygons, Vector2[][] detailPolygons, float scale)
+            {
+                BodyPolygons = bodyPolygons;
+                DetailPolygons = detailPolygons ?? new Vector2[0][];
+                Scale = scale;
+
+                var extent = 0f;
+                foreach (var polygon in BodyPolygons)
+                {
+                    foreach (var point in polygon)
+                        extent = Mathf.Max(extent, Mathf.Max(Mathf.Abs(point.x), Mathf.Abs(point.y)));
+                }
+
+                // Leave room for the outline pass so dilation never clips at the texture edge.
+                HalfExtent = extent
+                             * (1f + 2f * (AirMarkerOutlinePixels + 1f) / AirMarkerPixelSize);
+            }
+        }
+
+        // Planforms are authored as half outlines in shape units, x forward along the flight
+        // heading and y out to the right wing, then mirrored into closed filled polygons.
+        private static readonly Vector2[] FighterHalfOutline =
+        {
+            new Vector2(1.68f, 0f),
+            new Vector2(1.18f, 0.13f),
+            new Vector2(0.58f, 0.18f),
+            new Vector2(0.20f, 0.30f),
+            new Vector2(-0.48f, 1.02f),
+            new Vector2(-0.76f, 0.98f),
+            new Vector2(-0.38f, 0.30f),
+            new Vector2(-0.72f, 0.24f),
+            new Vector2(-0.88f, 0.60f),
+            new Vector2(-1.09f, 0.57f),
+            new Vector2(-1.03f, 0.20f),
+            new Vector2(-1.34f, 0.12f),
+            new Vector2(-1.46f, 0f)
+        };
+
+        private static readonly Vector2[] StrikeHalfOutline =
+        {
+            new Vector2(1.58f, 0f),
+            new Vector2(1.10f, 0.16f),
+            new Vector2(0.55f, 0.24f),
+            new Vector2(0.22f, 0.38f),
+            new Vector2(-0.28f, 1.24f),
+            new Vector2(-0.64f, 1.21f),
+            new Vector2(-0.50f, 0.42f),
+            new Vector2(-0.79f, 0.30f),
+            new Vector2(-0.93f, 0.77f),
+            new Vector2(-1.17f, 0.74f),
+            new Vector2(-1.13f, 0.25f),
+            new Vector2(-1.42f, 0.14f),
+            new Vector2(-1.52f, 0f)
+        };
+
+        private static readonly Vector2[] HeavyHalfOutline =
+        {
+            new Vector2(1.62f, 0f),
+            new Vector2(1.34f, 0.14f),
+            new Vector2(0.66f, 0.22f),
+            new Vector2(0.30f, 0.36f),
+            new Vector2(0.12f, 1.56f),
+            new Vector2(-0.11f, 1.56f),
+            new Vector2(-0.30f, 0.34f),
+            new Vector2(-0.94f, 0.24f),
+            new Vector2(-1.03f, 0.82f),
+            new Vector2(-1.29f, 0.80f),
+            new Vector2(-1.30f, 0.22f),
+            new Vector2(-1.54f, 0.13f),
+            new Vector2(-1.62f, 0f)
+        };
+
+        private static readonly Dictionary<AirPlatformClass, AirMarkerShape> AirMarkerShapes =
+            BuildAirMarkerShapes();
+
+        private static Dictionary<AirPlatformClass, AirMarkerShape> BuildAirMarkerShapes()
+        {
+            var fighterBody = MirrorAirMarkerOutline(FighterHalfOutline);
+            var strikeBody = MirrorAirMarkerOutline(StrikeHalfOutline);
+            var heavyBody = MirrorAirMarkerOutline(HeavyHalfOutline);
+
+            return new Dictionary<AirPlatformClass, AirMarkerShape>
+            {
+                [AirPlatformClass.Fighter] = new AirMarkerShape(
+                    new[] { fighterBody },
+                    new[]
+                    {
+                        // The canopy gives even the smallest marker a clear nose direction.
+                        BuildAirMarkerBar(new Vector2(0.62f, 0f), 0.27f, 0.08f)
+                    },
+                    1.00f),
+
+                // Broad wings and paired pylons distinguish strike aircraft from fighters.
+                [AirPlatformClass.Strike] = new AirMarkerShape(
+                    new[] { strikeBody },
+                    new[]
+                    {
+                        BuildAirMarkerBar(new Vector2(0.58f, 0f), 0.24f, 0.08f),
+                        BuildAirMarkerBar(new Vector2(-0.08f, 0.64f), 0.34f, 0.11f),
+                        BuildAirMarkerBar(new Vector2(-0.08f, -0.64f), 0.34f, 0.11f)
+                    },
+                    1.05f),
+
+                // The dark center leaves an alliance-colored rotodome ring.
+                [AirPlatformClass.AirborneC2] = new AirMarkerShape(
+                    new[]
+                    {
+                        heavyBody,
+                        BuildAirMarkerCircle(new Vector2(-0.30f, 0f), 0.62f, 24)
+                    },
+                    new[]
+                    {
+                        BuildAirMarkerCircle(new Vector2(-0.30f, 0f), 0.36f, 20),
+                        BuildAirMarkerBar(new Vector2(0.12f, 1.08f), 0.20f, 0.10f),
+                        BuildAirMarkerBar(new Vector2(0.12f, -1.08f), 0.20f, 0.10f)
+                    },
+                    1.15f),
+
+                // A tapered refuelling boom trails aft without resembling a second tailplane.
+                [AirPlatformClass.Tanker] = new AirMarkerShape(
+                    new[]
+                    {
+                        heavyBody,
+                        new[]
+                        {
+                            new Vector2(-1.20f, 0.17f),
+                            new Vector2(-2.30f, 0.07f),
+                            new Vector2(-2.30f, -0.07f),
+                            new Vector2(-1.20f, -0.17f)
+                        }
+                    },
+                    BuildHeavyAircraftEngineDetails(),
+                    1.15f),
+
+                [AirPlatformClass.Support] = new AirMarkerShape(
+                    new[] { heavyBody },
+                    BuildHeavyAircraftEngineDetails(),
+                    1.10f)
+            };
+        }
+
+        private static Vector2[] MirrorAirMarkerOutline(IReadOnlyList<Vector2> halfOutline)
+        {
+            var points = new List<Vector2>(halfOutline.Count * 2);
+            points.AddRange(halfOutline);
+            for (var i = halfOutline.Count - 2; i > 0; i--)
+                points.Add(new Vector2(halfOutline[i].x, -halfOutline[i].y));
+
+            return points.ToArray();
+        }
+
+        private static Vector2[] BuildAirMarkerCircle(Vector2 center, float radius, int segmentCount)
+        {
+            var points = new Vector2[segmentCount];
+            for (var i = 0; i < segmentCount; i++)
+            {
+                var angle = i / (float)segmentCount * Mathf.PI * 2f;
+                points[i] = center
+                            + new Vector2(Mathf.Cos(angle) * radius, Mathf.Sin(angle) * radius);
+            }
+
+            return points;
+        }
+
+        private static Vector2[] BuildAirMarkerBar(Vector2 center, float halfLength, float halfWidth)
+        {
+            return new[]
+            {
+                new Vector2(center.x + halfLength, center.y + halfWidth),
+                new Vector2(center.x - halfLength, center.y + halfWidth),
+                new Vector2(center.x - halfLength, center.y - halfWidth),
+                new Vector2(center.x + halfLength, center.y - halfWidth)
+            };
+        }
+
+        private static Vector2[][] BuildHeavyAircraftEngineDetails()
+        {
+            return new[]
+            {
+                BuildAirMarkerBar(new Vector2(0.13f, 0.62f), 0.22f, 0.10f),
+                BuildAirMarkerBar(new Vector2(0.13f, -0.62f), 0.22f, 0.10f),
+                BuildAirMarkerBar(new Vector2(0.11f, 1.12f), 0.20f, 0.10f),
+                BuildAirMarkerBar(new Vector2(0.11f, -1.12f), 0.20f, 0.10f)
+            };
+        }
+
+        private static AirPlatformClass GetAirPlatformClass(AircraftTypeDefinition aircraftType)
+        {
+            if (aircraftType == null)
+                return AirPlatformClass.Fighter;
+
+            if (aircraftType.SupportCapability == AirSupportCapability.AirborneC2)
+                return AirPlatformClass.AirborneC2;
+            if (aircraftType.SupportCapability == AirSupportCapability.AerialRefueling)
+                return AirPlatformClass.Tanker;
+            if (aircraftType.OrdnanceCapacity <= 0f)
+                return AirPlatformClass.Support;
+
+            return aircraftType.WvrCombatRating >= 0.35f
+                   || aircraftType.AirInterferenceCapability >= 0.5f
+                ? AirPlatformClass.Fighter
+                : AirPlatformClass.Strike;
+        }
+
+        private static AircraftTypeDefinition GetAircraftType(Squadron squadron)
+        {
+            if (squadron == null)
+                return null;
+
+            return ModuleSingleton.Instance?.ActiveModule?.AircraftTypeDefinitions
+                .FirstOrDefault(definition =>
+                    definition.AircraftTypeDefinitionId == squadron.AircraftTypeDefinitionId);
+        }
+
+        private static string GetAircraftTypeShortName(AircraftTypeDefinition aircraftType)
+        {
+            if (aircraftType == null || string.IsNullOrWhiteSpace(aircraftType.Name))
+                return string.Empty;
+
+            var name = aircraftType.Name.Trim();
+            var separator = name.IndexOf(' ');
+            return separator > 0 ? name.Substring(0, separator) : name;
+        }
+
         private void CreateAirMarker(AirFlight flight, Alliance alliance)
         {
             var markerObject = new GameObject($"Air Flight {ShortId(flight.FlightId)}");
@@ -6196,32 +6451,32 @@ namespace Engine.Monobehaviours.Managers
                 flight.FlightId,
                 markerObject.transform.localPosition));
 
-            var markerLine = markerObject.AddComponent<LineRenderer>();
-            markerLine.useWorldSpace = false;
-            markerLine.loop = true;
-            markerLine.positionCount = 3;
-            var heading = flight.HeadingDegrees * Mathf.Deg2Rad;
-            var forward = new Vector3(Mathf.Sin(heading), Mathf.Cos(heading), 0f);
-            var right = new Vector3(forward.y, -forward.x, 0f);
-            markerLine.SetPositions(new[]
-            {
-                forward * (AirMarkerRadius * 1.35f) + new Vector3(0f, 0f, -0.34f),
-                -forward * AirMarkerRadius + right * AirMarkerRadius + new Vector3(0f, 0f, -0.34f),
-                -forward * AirMarkerRadius - right * AirMarkerRadius + new Vector3(0f, 0f, -0.34f)
-            });
-            markerLine.startWidth = 0.055f;
-            markerLine.endWidth = 0.055f;
-            markerLine.numCornerVertices = 2;
-            markerLine.material = GetMovementArrowMaterial();
-            markerLine.startColor = GetAirAllianceColor(alliance);
-            markerLine.endColor = GetAirAllianceColor(alliance);
-            markerLine.sortingOrder = 27;
-
             var squadron = gameManager.squadronSystem.Squadrons
                 .First(candidate => candidate.SquadronId == flight.SquadronId);
+            var aircraftType = GetAircraftType(squadron);
+            var platformClass = GetAirPlatformClass(aircraftType);
+            var shape = AirMarkerShapes[platformClass];
+            var sprites = GetAirMarkerSprites(platformClass);
+
+            // The icon carries the heading rotation so the label stays upright.
+            var iconObject = new GameObject("Flight Icon");
+            iconObject.transform.SetParent(markerObject.transform, false);
+            iconObject.transform.localPosition = new Vector3(0f, 0f, -0.34f);
+            iconObject.transform.localRotation = Quaternion.Euler(0f, 0f, -flight.HeadingDegrees);
+
+            AddAirMarkerLayer(iconObject.transform, "Flight Outline", sprites.Outline, 26);
+            var body = AddAirMarkerLayer(iconObject.transform, "Flight Body", sprites.Body, 27);
+            if (body != null)
+                body.color = GetAirAllianceColor(alliance);
+            AddAirMarkerLayer(iconObject.transform, "Flight Detail", sprites.Detail, 28);
+
+            var typeName = GetAircraftTypeShortName(aircraftType);
             var labelObject = new GameObject("Flight Label");
             labelObject.transform.SetParent(markerObject.transform, false);
-            labelObject.transform.localPosition = new Vector3(0.17f, 0.11f, -0.36f);
+            labelObject.transform.localPosition = new Vector3(
+                shape.HalfExtent * AirMarkerWorldPerShapeUnit * shape.Scale + 0.03f,
+                0.09f,
+                -0.36f);
             var text = labelObject.AddComponent<TextMesh>();
             text.anchor = TextAnchor.LowerLeft;
             text.alignment = TextAlignment.Left;
@@ -6229,9 +6484,189 @@ namespace Engine.Monobehaviours.Managers
             text.fontSize = 22;
             text.color = Color.white;
             text.text =
-                $"{GetFlightName(flight, squadron)} ×{flight.AircraftIds.Count}\n" +
-                $"{GetFlightMissionLabel(flight)} • {flight.PositionFeet.y / 1000f:0.#}k ft";
-            labelObject.GetComponent<MeshRenderer>().sortingOrder = 28;
+                $"{GetFlightName(flight, squadron)} ×{flight.AircraftIds.Count}\n"
+                + (string.IsNullOrEmpty(typeName) ? string.Empty : $"{typeName} • ")
+                + $"{GetFlightMissionLabel(flight)} • {flight.PositionFeet.y / 1000f:0.#}k ft";
+            labelObject.GetComponent<MeshRenderer>().sortingOrder = 29;
+
+            // Shadow copy keeps the label readable over bright terrain.
+            var shadowObject = new GameObject("Flight Label Shadow");
+            shadowObject.transform.SetParent(labelObject.transform, false);
+            shadowObject.transform.localPosition = new Vector3(0.008f, -0.008f, 0.01f);
+            var shadowText = shadowObject.AddComponent<TextMesh>();
+            shadowText.anchor = text.anchor;
+            shadowText.alignment = text.alignment;
+            shadowText.characterSize = text.characterSize;
+            shadowText.fontSize = text.fontSize;
+            shadowText.color = new Color(0.02f, 0.03f, 0.05f, 0.85f);
+            shadowText.text = text.text;
+            shadowObject.GetComponent<MeshRenderer>().sortingOrder = 28;
+        }
+
+        private static SpriteRenderer AddAirMarkerLayer(
+            Transform parent,
+            string layerName,
+            Sprite sprite,
+            int sortingOrder)
+        {
+            if (sprite == null)
+                return null;
+
+            var layerObject = new GameObject(layerName);
+            layerObject.transform.SetParent(parent, false);
+            var renderer = layerObject.AddComponent<SpriteRenderer>();
+            renderer.sprite = sprite;
+            renderer.sortingOrder = sortingOrder;
+            return renderer;
+        }
+
+        private AirMarkerSprites GetAirMarkerSprites(AirPlatformClass platformClass)
+        {
+            if (airMarkerSpritesByClass.TryGetValue(platformClass, out var sprites))
+                return sprites;
+
+            var shape = AirMarkerShapes[platformClass];
+            sprites = new AirMarkerSprites
+            {
+                Outline = CreateAirMarkerSprite(
+                    shape,
+                    shape.BodyPolygons,
+                    AirMarkerOutlinePixels,
+                    new Color(0.04f, 0.05f, 0.08f, 0.92f)),
+                Body = CreateAirMarkerSprite(shape, shape.BodyPolygons, 0, Color.white),
+                Detail = shape.DetailPolygons.Length == 0
+                    ? null
+                    : CreateAirMarkerSprite(
+                        shape,
+                        shape.DetailPolygons,
+                        0,
+                        new Color(0.05f, 0.06f, 0.09f, 0.95f))
+            };
+            airMarkerSpritesByClass[platformClass] = sprites;
+            return sprites;
+        }
+
+        private static Sprite CreateAirMarkerSprite(
+            AirMarkerShape shape,
+            Vector2[][] polygons,
+            int dilationPixels,
+            Color color)
+        {
+            var coverage = RasterizeAirMarkerCoverage(shape, polygons);
+            if (dilationPixels > 0)
+                coverage = DilateAirMarkerCoverage(coverage, dilationPixels);
+
+            var pixels = new Color[coverage.Length];
+            for (var i = 0; i < coverage.Length; i++)
+                pixels[i] = new Color(color.r, color.g, color.b, color.a * coverage[i]);
+
+            var texture = new Texture2D(AirMarkerPixelSize, AirMarkerPixelSize);
+            texture.filterMode = FilterMode.Bilinear;
+            texture.wrapMode = TextureWrapMode.Clamp;
+            texture.SetPixels(pixels);
+            texture.Apply();
+
+            var worldSize = 2f * shape.HalfExtent * AirMarkerWorldPerShapeUnit * shape.Scale;
+            return Sprite.Create(
+                texture,
+                new Rect(0, 0, AirMarkerPixelSize, AirMarkerPixelSize),
+                new Vector2(0.5f, 0.5f),
+                AirMarkerPixelSize / worldSize);
+        }
+
+        // Supersampled coverage of the shape, sampled with the nose pointing up the texture.
+        private static float[] RasterizeAirMarkerCoverage(AirMarkerShape shape, Vector2[][] polygons)
+        {
+            var coverage = new float[AirMarkerPixelSize * AirMarkerPixelSize];
+            var shapeUnitsPerPixel = 2f * shape.HalfExtent / AirMarkerPixelSize;
+            var sampleWeight = 1f / (AirMarkerSupersample * AirMarkerSupersample);
+
+            for (var y = 0; y < AirMarkerPixelSize; y++)
+            {
+                for (var x = 0; x < AirMarkerPixelSize; x++)
+                {
+                    var covered = 0f;
+                    for (var sampleY = 0; sampleY < AirMarkerSupersample; sampleY++)
+                    {
+                        for (var sampleX = 0; sampleX < AirMarkerSupersample; sampleX++)
+                        {
+                            // Texture x is the right wing axis, texture y is the nose axis.
+                            var point = new Vector2(
+                                (y + (sampleY + 0.5f) / AirMarkerSupersample) * shapeUnitsPerPixel
+                                - shape.HalfExtent,
+                                (x + (sampleX + 0.5f) / AirMarkerSupersample) * shapeUnitsPerPixel
+                                - shape.HalfExtent);
+                            if (IsInsideAirMarkerShape(polygons, point))
+                                covered += sampleWeight;
+                        }
+                    }
+
+                    coverage[y * AirMarkerPixelSize + x] = covered;
+                }
+            }
+
+            return coverage;
+        }
+
+        private static float[] DilateAirMarkerCoverage(float[] coverage, int radius)
+        {
+            var dilated = new float[coverage.Length];
+            var radiusSquared = radius * radius;
+
+            for (var y = 0; y < AirMarkerPixelSize; y++)
+            {
+                for (var x = 0; x < AirMarkerPixelSize; x++)
+                {
+                    var strongest = 0f;
+                    for (var offsetY = -radius; offsetY <= radius; offsetY++)
+                    {
+                        var sampleY = y + offsetY;
+                        if (sampleY < 0 || sampleY >= AirMarkerPixelSize)
+                            continue;
+
+                        for (var offsetX = -radius; offsetX <= radius; offsetX++)
+                        {
+                            var sampleX = x + offsetX;
+                            if (sampleX < 0 || sampleX >= AirMarkerPixelSize)
+                                continue;
+                            if (offsetX * offsetX + offsetY * offsetY > radiusSquared)
+                                continue;
+
+                            strongest = Mathf.Max(
+                                strongest,
+                                coverage[sampleY * AirMarkerPixelSize + sampleX]);
+                        }
+                    }
+
+                    dilated[y * AirMarkerPixelSize + x] = strongest;
+                }
+            }
+
+            return dilated;
+        }
+
+        private static bool IsInsideAirMarkerShape(Vector2[][] polygons, Vector2 point)
+        {
+            foreach (var polygon in polygons)
+            {
+                var inside = false;
+                for (int i = 0, previous = polygon.Length - 1; i < polygon.Length; previous = i++)
+                {
+                    var current = polygon[i];
+                    var last = polygon[previous];
+                    if (current.y > point.y != last.y > point.y
+                        && point.x < (last.x - current.x) * (point.y - current.y)
+                        / (last.y - current.y) + current.x)
+                    {
+                        inside = !inside;
+                    }
+                }
+
+                if (inside)
+                    return true;
+            }
+
+            return false;
         }
 
         private Vector3 AirPositionToMapPosition(Vector3 positionFeet)

@@ -63,6 +63,7 @@ namespace Engine.Monobehaviours.Managers
         public List<SupplyCapitalStartingCondition> SupplyCapitals = new List<SupplyCapitalStartingCondition>();
         private GroundTaskingSystem _groundTaskingSystem;
         private AirTaskingSystem _airTaskingSystem;
+        private SimulationLogWriter _simulationLogWriter;
         private AirExecutionSystem _airExecutionSystem;
         private OrdnanceEmploymentSystem _ordnanceEmploymentSystem;
         private IADSSystem _IADSSystem;
@@ -169,8 +170,20 @@ namespace Engine.Monobehaviours.Managers
             _nextGameTurnAt = CurrentTime.AddMinutes(
                 SimulationSettings.SimulationTickMinutes);
             _gameTurnSnapshot = CaptureTurnSnapshot();
+            _simulationLogWriter = new SimulationLogWriter(
+                this,
+                _airTaskingSystem,
+                activeModule,
+                _campaignStartTime);
             IsGamePaused = true;
             _campaignStarted = true;
+        }
+
+        private void OnDisable()
+        {
+            // Exiting play mode or unloading the scene should still leave a
+            // readable log for sorties that were still airborne.
+            _simulationLogWriter?.FlushIncompleteFlights();
         }
 
         public GroundTaskingCommander GetGroundTaskingCommander(Alliance alliance)
@@ -460,6 +473,7 @@ namespace Engine.Monobehaviours.Managers
             RefreshAllianceIntelligence();
             BuildTurnChanges(_gameTurnSnapshot);
             LastTurnCompletedAt = CurrentTime;
+            _simulationLogWriter?.OnTurnCompleted();
             GameTurnCompleted?.Invoke();
             LastTurnStartedAt = CurrentTime;
             _nextGameTurnAt = CurrentTime.AddMinutes(

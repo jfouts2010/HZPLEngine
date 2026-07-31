@@ -58,12 +58,20 @@ namespace Models.Gameplay.Campaign
         private DateTime occurredAt;
         [SerializeField, FormerlySerializedAs("Detail")]
         private string detail = string.Empty;
+        [SerializeField]
+        private string code = string.Empty;
 
         public Guid EventId => eventId;
         public Guid WaypointId => waypointId;
         public AirWaypointAction Action => action;
         public DateTime OccurredAt => occurredAt;
         public string Detail => detail;
+
+        /// <summary>
+        /// Stable uppercase log vocabulary for this event. Empty means the code
+        /// is derived from <see cref="Action"/> when the event is written out.
+        /// </summary>
+        public string Code => code;
 
         public FlightExecutionEvent()
         {
@@ -73,12 +81,14 @@ namespace Models.Gameplay.Campaign
             Guid waypointId,
             AirWaypointAction action,
             DateTime occurredAt,
-            string detail)
+            string detail,
+            string code = "")
         {
             this.waypointId = waypointId;
             this.action = action;
             this.occurredAt = occurredAt;
             this.detail = detail;
+            this.code = code ?? string.Empty;
         }
     }
 
@@ -119,6 +129,9 @@ namespace Models.Gameplay.Campaign
     [Serializable]
     public sealed class AirFlight
     {
+        public const int MaximumExecutionEvents = 1024;
+        public const string TacticalTransitionCode = "DECIDE";
+
         public Guid FlightId = Guid.NewGuid();
         public Guid SquadronId;
         public AirMissionRequestType MissionType;
@@ -148,6 +161,7 @@ namespace Models.Gameplay.Campaign
         private int groundAttackOpportunitySequence;
         private List<FlightExecutionEvent> executionEvents =
             new List<FlightExecutionEvent>();
+        private int droppedExecutionEventCount;
         private List<AerialRefuelingRecord> aerialRefuelingRecords =
             new List<AerialRefuelingRecord>();
         [NonSerialized] private ReadOnlyCollection<AirWaypoint> routeView;
@@ -195,7 +209,10 @@ namespace Models.Gameplay.Campaign
             groundAttackOpportunitySequence;
         public DateTime PlannedTakeoffTime =>
             GetRequiredWaypoint(AirWaypointAction.Takeoff).PlannedArrivalTime;
-        public DateTime EffectStart => EffectWaypoints.First().PlannedArrivalTime;
+        public DateTime EffectStart =>
+            (MissionType == AirMissionRequestType.BarrierCombatAirPatrol
+                ? EffectWaypoints.Last()
+                : EffectWaypoints.First()).PlannedArrivalTime;
         public bool HasSustainedEffect =>
             route.Any(waypoint => waypoint.Action == AirWaypointAction.StationEndpoint
                                   && waypoint.HasRepeat);
@@ -229,7 +246,9 @@ namespace Models.Gameplay.Campaign
             }
         }
         public AirMissionArea MissionArea =>
-            EffectWaypoints.First().EffectArea
+            (MissionType == AirMissionRequestType.BarrierCombatAirPatrol
+                ? EffectWaypoints.Last()
+                : EffectWaypoints.First()).EffectArea
             ?? throw new InvalidOperationException(
                 $"Flight {FlightId} effect waypoint has no mission area.");
         public Guid LaunchAirportBuildingId =>
@@ -238,6 +257,11 @@ namespace Models.Gameplay.Campaign
             GetRequiredWaypoint(AirWaypointAction.Land, last: true).AirportBuildingId;
         public IReadOnlyList<FlightExecutionEvent> ExecutionEvents =>
             executionEventView ??= executionEvents.AsReadOnly();
+        /// <summary>
+        /// Events discarded by <see cref="MaximumExecutionEvents"/>, so readers
+        /// can tell a short history from a truncated one.
+        /// </summary>
+        public int DroppedExecutionEventCount => droppedExecutionEventCount;
         public IReadOnlyList<AerialRefuelingRecord> AerialRefuelingRecords =>
             aerialRefuelingRecordView ??=
                 (aerialRefuelingRecords ??= new List<AerialRefuelingRecord>())
@@ -318,7 +342,7 @@ namespace Models.Gameplay.Campaign
         public BarcapStationCoverage PlannedBarcapCoverage =>
             EffectWaypoints
                 .Select(waypoint => waypoint.BarcapCoverage)
-                .FirstOrDefault(coverage => coverage != null);
+                .LastOrDefault(coverage => coverage != null);
 
         public void MaterializeRoute(
             IEnumerable<AirWaypoint> waypoints)
@@ -727,6 +751,77 @@ namespace Models.Gameplay.Campaign
             executionPhase = FlightExecutionPhase.Returning;
         }
 
+        public bool TryReplaceUnflownBarcapStationRoute(
+            DateTime occurredAt,
+            string reason,
+            IEnumerable<AirWaypoint> replacementWaypoints)
+        {
+            if (MissionType != AirMissionRequestType.BarrierCombatAirPatrol
+                || lifecycleState != AirTaskingLifecycleState.Active
+                || !IsAirborne
+                || executionPhase == FlightExecutionPhase.Returning
+                || executionPhase == FlightExecutionPhase.Landing
+                || currentWaypointIndex < 0
+                || currentWaypointIndex > route.Count)
+                return false;
+
+            var replacement = replacementWaypoints?.ToList();
+            if (replacement == null
+                || replacement.Count == 0
+                || replacement[replacement.Count - 1].Action
+                != AirWaypointAction.Land
+                || !replacement.Any(waypoint =>
+                    waypoint.Action == AirWaypointAction.StationEntry
+                    && waypoint.BarcapCoverage != null))
+                return false;
+
+            var previousWaypoint = CurrentWaypoint;
+            var amendedRoute = route
+                .Take(Mathf.Clamp(currentWaypointIndex, 0, route.Count))
+                .ToList();
+            var openStation = amendedRoute
+                .LastOrDefault(waypoint =>
+                    waypoint.Action == AirWaypointAction.StationEntry
+                    && !amendedRoute.Any(candidate =>
+                        candidate.Action == AirWaypointAction.StationEndpoint
+                        && candidate.RepeatFromWaypointId == waypoint.WaypointId));
+            if (openStation != null)
+            {
+                var stationExitTime = amendedRoute.Count == 0
+                    ? occurredAt
+                    : amendedRoute[amendedRoute.Count - 1].PlannedArrivalTime > occurredAt
+                        ? amendedRoute[amendedRoute.Count - 1].PlannedArrivalTime
+                        : occurredAt;
+                amendedRoute.Add(new AirWaypoint(
+                    positionFeet,
+                    AirWaypointAction.StationEndpoint,
+                    stationExitTime,
+                    hasRepeat: true,
+                    repeatFromWaypointId: openStation.WaypointId,
+                    repeatUntil: stationExitTime));
+            }
+
+            var replacementStartIndex = amendedRoute.Count;
+            amendedRoute.AddRange(replacement);
+            if (!TryValidateRoute(amendedRoute, out _))
+                return false;
+
+            route = amendedRoute;
+            routeView = null;
+            currentWaypointIndex = replacementStartIndex;
+            executionPhase = FlightExecutionPhase.Outbound;
+            isWaitingAtRendezvous = false;
+            missionAchieved = false;
+            RecordEvent(
+                previousWaypoint,
+                occurredAt,
+                string.IsNullOrWhiteSpace(reason)
+                    ? "BARCAP station was displaced rearward."
+                    : reason,
+                AirWaypointAction.Transit);
+            return true;
+        }
+
         public FlightCancellationResult AbortAndReplaceRecoveryRoute(
             DateTime occurredAt,
             string reason,
@@ -804,17 +899,44 @@ namespace Models.Gameplay.Campaign
                 AirWaypointAction.ReturnToBase);
         }
 
+        /// <summary>
+        /// Records a tactical intent or maneuver change. The caller formats the
+        /// detail because it holds the doctrine and target context; this type
+        /// only owns the event list.
+        /// </summary>
+        public void RecordTacticalTransition(DateTime occurredAt, string detail)
+        {
+            RecordEvent(
+                CurrentWaypoint,
+                occurredAt,
+                detail,
+                AirWaypointAction.Transit,
+                TacticalTransitionCode);
+        }
+
         private void RecordEvent(
             AirWaypoint waypoint,
             DateTime occurredAt,
             string detail,
-            AirWaypointAction fallbackAction = AirWaypointAction.Transit)
+            AirWaypointAction fallbackAction = AirWaypointAction.Transit,
+            string code = "")
         {
             executionEvents.Add(new FlightExecutionEvent(
                 waypoint?.WaypointId ?? Guid.Empty,
                 waypoint?.Action ?? fallbackAction,
                 occurredAt,
-                detail));
+                detail,
+                code));
+
+            // A long-lived station flight can outlive its own history. Drop the
+            // oldest entries but remember how many, so the log can say so
+            // instead of silently starting mid-sortie.
+            var excess = executionEvents.Count - MaximumExecutionEvents;
+            if (excess <= 0)
+                return;
+
+            executionEvents.RemoveRange(0, excess);
+            droppedExecutionEventCount += excess;
         }
 
         private void EnsureAbortRouteHasMissionSemantics(

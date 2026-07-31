@@ -143,6 +143,19 @@ namespace Engine.Service
                        aircraftType.TurnRateDegreesPerSecond)
                    + 1000f;
         }
+
+        public static float ConservativeSamManeuverClearanceFeet(
+            AircraftTypeDefinition aircraftType)
+        {
+            if (aircraftType == null)
+                return 0f;
+
+            return SamManeuverClearanceFeet(
+                aircraftType,
+                Math.Max(
+                    aircraftType.CruiseSpeedKnots,
+                    aircraftType.CombatSpeedKnots));
+        }
     }
 
     public sealed class KnownSamThreatEnvelope
