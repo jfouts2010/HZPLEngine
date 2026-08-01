@@ -2474,8 +2474,14 @@ namespace Engine.Models
                 .OrderBy(pass => pass.ReleaseAt)
                 .ThenBy(pass => pass.EmploymentPassId)
                 .FirstOrDefault();
-            var currentlyInsideThreat = threats.Any(threat =>
-                threat != null && threat.Contains(currentPosition));
+            var currentContainingThreat = threats
+                .Where(threat => threat != null
+                                 && threat.Contains(
+                                     currentPosition,
+                                     maneuverClearanceFeet))
+                .OrderBy(threat => threat.SiteId)
+                .FirstOrDefault();
+            var currentlyInsideThreat = currentContainingThreat != null;
             if (KnownSamThreatGeometry.TryCreateEgressAimPoint(
                     currentPosition,
                     threats,
@@ -2494,7 +2500,10 @@ namespace Engine.Models
                     AirCombatManeuverSide.None,
                     egressAimPoint,
                     Math.Max(1f, source.AircraftType.CombatSpeedKnots),
-                    "Leaving a known SAM engagement envelope.");
+                    "Leaving known SAM engagement envelope from site "
+                    + $"{ShortId(currentContainingThreat.SiteId)}; "
+                    + $"current={FormatAirPosition(currentPosition)}; "
+                    + $"egress={FormatAirPosition(egressAimPoint)}.");
                 egress.RequestsAirToAirPassCancellation = activePass != null;
                 return egress;
             }
@@ -2505,7 +2514,10 @@ namespace Engine.Models
                 command.Employment = null;
                 command.RequestsAirToAirPassCancellation = activePass != null;
                 command.Reason =
-                    "Unable to find a safe egress from overlapping known SAM coverage; recovering.";
+                    "Unable to find a safe egress from overlapping known SAM "
+                    + $"coverage at {FormatAirPosition(currentPosition)}; "
+                    + $"firstContainingSite={ShortId(currentContainingThreat.SiteId)}; "
+                    + "recovering.";
                 return command;
             }
 
@@ -2516,8 +2528,12 @@ namespace Engine.Models
             if (!command.HasAimPoint && source.Flight.CurrentWaypoint == null)
                 return command;
 
-            var desiredInsideThreat = threats.Any(threat =>
-                threat != null && threat.Contains(desiredAimPoint));
+            var desiredContainingThreat = threats
+                .Where(threat => threat != null
+                                 && threat.Contains(desiredAimPoint))
+                .OrderBy(threat => threat.SiteId)
+                .FirstOrDefault();
+            var desiredInsideThreat = desiredContainingThreat != null;
             if (desiredInsideThreat
                 && command.Intent != AirCombatIntent.EngageTarget)
             {
@@ -2526,7 +2542,9 @@ namespace Engine.Models
                 command.Employment = null;
                 command.RequestsAirToAirPassCancellation = activePass != null;
                 command.Reason =
-                    "Assigned route now terminates inside known SAM coverage; recovering.";
+                    "Assigned route now terminates inside known SAM coverage "
+                    + $"from site {ShortId(desiredContainingThreat.SiteId)} at "
+                    + $"{FormatAirPosition(desiredAimPoint)}; recovering.";
                 return command;
             }
 
@@ -2556,8 +2574,6 @@ namespace Engine.Models
                 command.RequestsAirToAirPassCancellation = activePass != null;
                 desiredAimPoint = source.Flight.CurrentWaypoint?.PositionFeet
                                   ?? command.AimPointFeet;
-                desiredInsideThreat = threats.Any(threat =>
-                    threat != null && threat.Contains(desiredAimPoint));
             }
 
             if (KnownSamThreatGeometry.TryCreateAvoidanceAimPoint(
@@ -2596,7 +2612,7 @@ namespace Engine.Models
                     new[] { currentPosition, desiredAimPoint },
                     threats,
                     maneuverClearanceFeet,
-                    out _))
+                    out var blockingRouteSiteId))
                 return command;
 
             command.RequestsSurfaceThreatRecovery = true;
@@ -2605,7 +2621,10 @@ namespace Engine.Models
             command.RequestsAirToAirPassCancellation =
                 command.RequestsAirToAirPassCancellation || activePass != null;
             command.Reason =
-                "No flyable route around known SAM coverage could be found; recovering.";
+                "No flyable route around known SAM coverage could be found "
+                + $"from {FormatAirPosition(currentPosition)} to "
+                + $"{FormatAirPosition(desiredAimPoint)}; "
+                + $"blockingSite={ShortId(blockingRouteSiteId)}; recovering.";
             return command;
         }
 
@@ -3540,6 +3559,13 @@ namespace Engine.Models
             return id == Guid.Empty
                 ? "none"
                 : id.ToString("N").Substring(0, 8);
+        }
+
+        private static string FormatAirPosition(Vector3 positionFeet)
+        {
+            return $"({positionFeet.x / AirspaceGeometry.FeetPerKilometer:0.0}km,"
+                   + $"{positionFeet.z / AirspaceGeometry.FeetPerKilometer:0.0}km,"
+                   + $"{positionFeet.y:0}ft)";
         }
 
         private readonly struct PotentialAirThreatCapability

@@ -19,7 +19,7 @@ namespace Engine.Service
 
     public sealed class AirPackageBuilder
     {
-        private const float BarcapAndOcaAltitudeFeet = 40000f;
+        private const float OcaAltitudeFeet = 40000f;
         private const float AwacsAltitudeFeet = 35000f;
         private const float TankerAltitudeFeet = 25000f;
         private const float MaximumSupportStationHostileInterference = 0.10f;
@@ -29,6 +29,7 @@ namespace Engine.Service
         private const float DeadSelfDefenseCombatPowerCredit = 0.25f;
         private const float DeadAirActivityPowerScale = 2f;
         private const float DefaultFighterEscortScreenDistanceKm = 40f;
+        private const float DefaultSupportStationTrackHalfLengthTiles = 0.5f;
         private const float FuelPlanningMarginSeconds = 60f;
         private const float BarcapPreferredLaunchRangeFraction = 0.78f;
         private const int MaximumBarcapRouteChoices = 32;
@@ -236,17 +237,21 @@ namespace Engine.Service
             var planningStart = currentTime + AirPackage.PreparationDelay;
             DateTime effectStart;
             IReadOnlyList<Vector3Int> uncoveredBarrierTiles = null;
+            var isSpatialBarcapGap = false;
+            var barcapAircraftDeficit = 1;
             if (request.FulfillmentPattern == AirMissionRequestFulfillmentPattern.Sustained)
             {
                 var hasGap = request.RequestType
                              == AirMissionRequestType.BarrierCombatAirPatrol
                              && request.BarcapBarrier?.BarrierTileIds?.Count > 0
-                    ? projectedEffects.TryFindFirstBarcapCoverageGap(
+                    ? projectedEffects.TryFindFirstBarcapTaskingGap(
                         commander,
                         request,
                         planningStart,
                         out effectStart,
-                        out uncoveredBarrierTiles)
+                        out uncoveredBarrierTiles,
+                        out isSpatialBarcapGap,
+                        out barcapAircraftDeficit)
                     : projectedEffects.TryFindFirstCoverageGap(
                         commander,
                         request,
@@ -255,7 +260,11 @@ namespace Engine.Service
                         out _);
                 if (!hasGap)
                 {
-                    reason = "Desired combat coverage is already projected.";
+                    reason = request.RequestType
+                             == AirMissionRequestType.BarrierCombatAirPatrol
+                             && request.BarcapBarrier?.BarrierTileIds?.Count > 0
+                        ? "Desired BARCAP coverage and defensive capacity are already projected."
+                        : "Desired combat coverage is already projected.";
                     return AirPackageBuildOutcome.AlreadySatisfied;
                 }
                 if (request.RequestType == AirMissionRequestType.BarrierCombatAirPatrol
@@ -315,7 +324,8 @@ namespace Engine.Service
                     request,
                     gameManager.SimulationSettings.TileDistanceKM,
                     uncoveredBarrierTiles,
-                    squadronCandidates);
+                    squadronCandidates,
+                    commander.Doctrine);
                 if (choices.Count == 0)
                 {
                     reason = "No ready air-combat aircraft can cover the remaining barrier.";
@@ -325,12 +335,31 @@ namespace Engine.Service
                 var lastRouteFailure = string.Empty;
                 foreach (var choice in choices)
                 {
+                    var closesCurrentSpatialGap = isSpatialBarcapGap
+                                                  && uncoveredBarrierTiles.All(
+                                                      choice.Covered.Contains);
+                    var isLastSpatialGap = closesCurrentSpatialGap
+                                           && !projectedEffects
+                                               .HasOtherSpatialBarcapCoverageGap(
+                                                   commander,
+                                                   request.MissionRequestId,
+                                                   planningStart);
+                    var desiredStationAircraft = isLastSpatialGap
+                        ? Math.Max(
+                            1,
+                            commander.Doctrine.PreferredBarcapStationAircraft)
+                        : Math.Max(1, barcapAircraftDeficit);
+                    var selectedAircraftCount = Math.Min(
+                        desiredStationAircraft,
+                        choice.Candidate.AvailableAircraft.Count);
                     var selected = new List<SelectedCombatAircraft>
                     {
                         new SelectedCombatAircraft(
                             choice.Candidate.Squadron,
                             choice.Candidate.AircraftType,
-                            choice.Candidate.AvailableAircraft.Take(1).ToList(),
+                            choice.Candidate.AvailableAircraft
+                                .Take(selectedAircraftCount)
+                                .ToList(),
                             choice.Candidate.Loadout)
                     };
                     var candidatePackage = CreatePackage(request, currentTime);
@@ -341,11 +370,26 @@ namespace Engine.Service
                         CoveredBarrierTileIds = choice.Covered,
                         ThreatReferenceTileId =
                             request.BarcapBarrier.ThreatReferenceTileId,
+                        StationCenterFeet = choice.Racetrack.CenterFeet,
+                        StationHeadingDegrees = choice.Racetrack.HeadingDegrees,
+                        StationTrackHalfLengthKm = choice.TrackHalfLengthKm,
                         PlannedResponseRadiusKm = choice.RadiusKm,
+                        PlannedMinimumInterceptSlackKm =
+                            choice.MinimumInterceptSlackKm,
                         PlannedPreferredLaunchRangeKm =
                             choice.PreferredLaunchRangeKm,
                         RepresentativeThreatSpeedKnots =
                             request.BarcapBarrier.RepresentativeThreatSpeedKnots,
+                        PlannedAircraftCount = selectedAircraftCount,
+                        PreferredAircraftCount = Math.Max(
+                            1,
+                            commander.Doctrine.PreferredBarcapStationAircraft),
+                        PlannedKnownSamSiteIds = GetKnownSamThreats(request.Alliance)
+                            .Select(threat => threat.SiteId)
+                            .Where(id => id != Guid.Empty)
+                            .Distinct()
+                            .OrderBy(id => id)
+                            .ToList(),
                         WeaponReleaseStandoffKm =
                             BarcapBarrierPlan.ResolveWeaponReleaseStandoffKm(
                                 request.BarcapBarrier.WeaponReleaseStandoffKm)
@@ -357,7 +401,7 @@ namespace Engine.Service
                             planningStart,
                             effectStart,
                             request.EffectEnd,
-                            choice.Station,
+                            null,
                             coverage,
                             out lastRouteFailure))
                     {
@@ -365,7 +409,7 @@ namespace Engine.Service
                     }
 
                     package = candidatePackage;
-                    reason = $"Proposed one aircraft covering "
+                    reason = $"Proposed {selectedAircraftCount} aircraft covering "
                              + $"{coverage.CoveredBarrierTileIds.Count} barrier tiles"
                              + (package.SupportingFlightIds.Count > 0
                                  ? $" with {package.SupportingFlightIds.Count} tanker rotation(s)."
@@ -619,7 +663,8 @@ namespace Engine.Service
             AirMissionRequest request,
             float snapshotTileDistanceKm,
             IReadOnlyList<Vector3Int> uncoveredBarrierTiles,
-            IReadOnlyList<CombatSquadronCandidate> candidates)
+            IReadOnlyList<CombatSquadronCandidate> candidates,
+            AllianceAirDoctrine doctrine)
         {
             if (uncoveredBarrierTiles == null
                 || uncoveredBarrierTiles.Count == 0
@@ -631,13 +676,7 @@ namespace Engine.Service
             var gapCenterTile = SelectLargestBarrierGapCenter(
                 barrier,
                 uncoveredBarrierTiles);
-            var defensiveStationTiles = BarcapInterceptGeometry
-                .GetDefensiveStationTiles(
-                gameManager.tileSystem.LandTiles
-                    .Where(tile => tile.Controller == request.Alliance)
-                    .Select(tile => tile.TileId),
-                gapCenterTile,
-                request.BarcapBarrier.ThreatReferenceTileId);
+            var knownSamThreats = GetKnownSamThreats(request.Alliance);
             var releaseStandoffKm =
                 BarcapBarrierPlan.ResolveWeaponReleaseStandoffKm(
                     request.BarcapBarrier.WeaponReleaseStandoffKm);
@@ -649,6 +688,13 @@ namespace Engine.Service
                         candidate,
                         out var preferredLaunchRangeKm,
                         out var weaponPreparationSeconds);
+                    var trackHalfLengthKm = BarcapInterceptGeometry
+                        .CalculateStationTrackHalfLengthKm(
+                            candidate.AircraftType,
+                            doctrine.BarcapTrackLegMinutes);
+                    var stationAltitudeFeet = Math.Min(
+                        doctrine.BarcapStationAltitudeFeet,
+                        candidate.AircraftType.ServiceCeilingFeet);
                     var responseRadiusByTile = barrier
                         .Distinct()
                         .ToDictionary(
@@ -677,16 +723,48 @@ namespace Engine.Service
                                             snapshotTileDistanceKm,
                                             releaseStandoffKm,
                                             request.BarcapBarrier
-                                                .RepresentativeThreatSpeedKnots));
+                                                .RepresentativeThreatSpeedKnots,
+                                            stationAltitudeFeet),
+                                        doctrine.BarcapCommandDelaySeconds);
                             });
-                    return defensiveStationTiles
-                        .Select((candidateStation, depth) =>
+                    var maximumResponseRadiusKm = responseRadiusByTile
+                        .Values
+                        .DefaultIfEmpty(0f)
+                        .Max();
+                    var defensiveStationPositions = BarcapInterceptGeometry
+                        .GetDefensiveStationPositions(
+                            gapCenterTile,
+                            request.BarcapBarrier.ThreatReferenceTileId,
+                            snapshotTileDistanceKm,
+                            stationAltitudeFeet,
+                            maximumResponseRadiusKm);
+                    var maneuverClearanceFeet = AirspaceGeometry
+                        .ConservativeSamManeuverClearanceFeet(
+                            candidate.AircraftType);
+                    return defensiveStationPositions
+                        .Select(candidateStationCenter =>
                         {
+                            var stationHeading = BarcapInterceptGeometry
+                                .GetStationHeadingDegrees(
+                                    candidateStationCenter,
+                                    request.BarcapBarrier.ThreatReferenceTileId,
+                                    snapshotTileDistanceKm);
+                            var racetrack = BarcapInterceptGeometry.BuildRacetrack(
+                                candidateStationCenter,
+                                stationHeading,
+                                trackHalfLengthKm,
+                                candidate.AircraftType);
+                            if (!KnownSamThreatGeometry.IsPathSafe(
+                                    racetrack.GetClosedLoopPoints(),
+                                    knownSamThreats,
+                                    maneuverClearanceFeet,
+                                    out _))
+                                return null;
                             var coverable = responseRadiusByTile
                                 .Where(entry =>
                                     BarcapInterceptGeometry
                                         .CanReachOperationalBarrierFromStation(
-                                        candidateStation,
+                                        racetrack.LoopPointsFeet,
                                         entry.Key,
                                         request.BarcapBarrier
                                             .ThreatReferenceTileId,
@@ -699,23 +777,60 @@ namespace Engine.Service
                                 barrier,
                                 coverable,
                                 gapCenterTile);
+                            if (covered.Count == 0
+                                || racetrack.LoopPointsFeet.Any(point =>
+                                    !BarcapInterceptGeometry.IsOnDefendedSide(
+                                        point,
+                                        covered,
+                                        request.BarcapBarrier.ThreatReferenceTileId,
+                                        snapshotTileDistanceKm,
+                                        releaseStandoffKm)))
+                                return null;
                             var conservativeResponseRadiusKm = covered
                                 .Select(tile => responseRadiusByTile[tile])
                                 .DefaultIfEmpty(0f)
                                 .Min();
+                            var minimumInterceptSlackKm = covered
+                                .Select(tile => responseRadiusByTile[tile]
+                                                - BarcapInterceptGeometry
+                                                    .GetWorstStationDistanceToOperationalBarrierKm(
+                                                        racetrack.LoopPointsFeet,
+                                                        tile,
+                                                        request.BarcapBarrier
+                                                            .ThreatReferenceTileId,
+                                                        snapshotTileDistanceKm,
+                                                        releaseStandoffKm))
+                                .DefaultIfEmpty(float.NegativeInfinity)
+                                .Min();
+                            var desiredInterceptSlackKm = candidate.AircraftType
+                                .CombatSpeedKnots
+                                * 1.852f
+                                * doctrine.BarcapDesiredInterceptMarginMinutes
+                                / 60f;
                             return new BarcapSelectionChoice(
                                 candidate,
                                 conservativeResponseRadiusKm,
                                 preferredLaunchRangeKm,
-                                candidateStation,
-                                depth,
+                                racetrack,
+                                BarcapInterceptGeometry.GetDefensiveStationDepthKm(
+                                    candidateStationCenter,
+                                    gapCenterTile,
+                                    request.BarcapBarrier.ThreatReferenceTileId,
+                                    snapshotTileDistanceKm),
+                                trackHalfLengthKm,
+                                minimumInterceptSlackKm,
+                                desiredInterceptSlackKm,
                                 covered,
                                 covered.Count(uncoveredBarrierTiles.Contains));
                         });
                 })
+                .Where(candidate => candidate != null)
                 .Where(candidate => candidate.UncoveredCount > 0)
                 .OrderByDescending(candidate => candidate.UncoveredCount)
-                .ThenByDescending(candidate => candidate.StationDepth)
+                .ThenByDescending(candidate => Math.Min(
+                    candidate.MinimumInterceptSlackKm,
+                    candidate.DesiredInterceptSlackKm))
+                .ThenByDescending(candidate => candidate.StationDepthKm)
                 .ThenByDescending(candidate => candidate.RadiusKm)
                 .ThenBy(candidate => candidate.Candidate.DistanceTiles)
                 .ThenBy(candidate => candidate.Candidate.Squadron.SquadronId)
@@ -780,7 +895,8 @@ namespace Engine.Service
             Vector3Int threatTile,
             float tileDistanceKm,
             float weaponReleaseStandoffKm,
-            float threatSpeedKnots)
+            float threatSpeedKnots,
+            float stationAltitudeFeet)
         {
             var releasePoint = BarcapInterceptGeometry
                 .GetOperationalBarrierPointsFeet(
@@ -830,10 +946,10 @@ namespace Engine.Service
                         || !radarDefinitions.TryGetValue(
                             component.SamComponentDefinitionId,
                             out var definition)
-                        || definition.DetectionRangeKm <= 0f
-                        || definition.MaxAltitudeMeters
-                        * AirspaceGeometry.FeetPerKilometer / 1000f
-                        < BarcapAndOcaAltitudeFeet)
+                         || definition.DetectionRangeKm <= 0f
+                         || definition.MaxAltitudeMeters
+                         * AirspaceGeometry.FeetPerKilometer / 1000f
+                         < stationAltitudeFeet)
                     {
                         continue;
                     }
@@ -1437,13 +1553,20 @@ namespace Engine.Service
                         gameManager.SimulationSettings.TileDistanceKM)));
             }
 
-            var desiredMissionAltitude = GetMissionAltitudeFeet(request.RequestType);
+            var desiredMissionAltitude = GetMissionAltitudeFeet(
+                request.RequestType,
+                barcapCoverage);
             var missionAltitude = plans.Min(plan =>
                 Math.Min(desiredMissionAltitude, plan.AircraftType.ServiceCeilingFeet));
-            var missionCenter = AirspaceGeometry.TileCenterFeet(
-                missionCenterOverride ?? request.MissionArea.CenterTileId,
-                gameManager.SimulationSettings.TileDistanceKM,
-                missionAltitude);
+            var missionCenter = request.RequestType
+                                == AirMissionRequestType.BarrierCombatAirPatrol
+                                && barcapCoverage != null
+                ? barcapCoverage.StationCenterFeet
+                : AirspaceGeometry.TileCenterFeet(
+                    missionCenterOverride ?? request.MissionArea.CenterTileId,
+                    gameManager.SimulationSettings.TileDistanceKM,
+                    missionAltitude);
+            missionCenter.y = missionAltitude;
             var tileDistanceFeet = gameManager.SimulationSettings.TileDistanceKM
                                    * AirspaceGeometry.FeetPerKilometer;
             var allKnownSamThreats = GetKnownSamThreats(package.Alliance);
@@ -1696,12 +1819,16 @@ namespace Engine.Service
             {
                 var firstTrackEnd = plans.Max(plan =>
                     plannedEffectStart + TimeSpan.FromSeconds(
-                        AirspaceGeometry.TravelSeconds(
-                            plan.MissionEntryPosition,
-                            plan.MissionExitPosition,
-                            plan.AircraftType.CruiseSpeedKnots,
-                            plan.AircraftType.ClimbRateFeetPerMinute,
-                            plan.AircraftType.DescentRateFeetPerMinute)));
+                        plan.BarcapRacetrack == null
+                            ? AirspaceGeometry.TravelSeconds(
+                                plan.MissionEntryPosition,
+                                plan.MissionExitPosition,
+                                plan.AircraftType.CruiseSpeedKnots,
+                                plan.AircraftType.ClimbRateFeetPerMinute,
+                                plan.AircraftType.DescentRateFeetPerMinute)
+                            : AirspaceGeometry.HorizontalTravelSeconds(
+                                plan.BarcapRacetrack.CircuitLengthFeet,
+                                plan.AircraftType.CruiseSpeedKnots)));
                 if (firstTrackEnd > plannedEffectEnd)
                 {
                     reason = request.RequestType == AirMissionRequestType.BarrierCombatAirPatrol
@@ -1819,6 +1946,12 @@ namespace Engine.Service
                     plan.MissionExitPosition
                 };
             }
+            else if (request.RequestType
+                     == AirMissionRequestType.BarrierCombatAirPatrol
+                     && plan.BarcapRacetrack != null)
+            {
+                missionPath = plan.BarcapRacetrack.GetClosedLoopPoints();
+            }
             else
             {
                 missionPath = new[]
@@ -1925,25 +2058,19 @@ namespace Engine.Service
 
             if (request.RequestType == AirMissionRequestType.BarrierCombatAirPatrol)
             {
-                var tileDistanceKm = tileDistanceFeet / AirspaceGeometry.FeetPerKilometer;
                 var stationCenter = missionCenter;
-                var threatTileId = barcapCoverage?.ThreatReferenceTileId
-                                   ?? request.BarcapBarrier?.ThreatReferenceTileId
-                                   ?? SelectBarcapThreatTile(
-                                       commander,
-                                       request.MissionArea);
-                var stationTileId = AirspaceGeometry
-                    .TileCoordinateFromPositionFeet(
-                        stationCenter,
-                        tileDistanceKm);
-                var track = BarcapInterceptGeometry.GetStationTrackEndpoints(
-                    stationTileId,
-                    threatTileId,
-                    tileDistanceKm,
-                    missionCenter.y);
-                plan.MissionEntryPosition = track.Entry;
-                plan.MissionPushPosition = track.Endpoint;
-                plan.MissionExitPosition = track.Endpoint;
+                var heading = barcapCoverage?.StationHeadingDegrees ?? 0f;
+                plan.BarcapRacetrack = BarcapInterceptGeometry.BuildRacetrack(
+                    stationCenter,
+                    heading,
+                    Math.Max(
+                        0f,
+                        barcapCoverage?.StationTrackHalfLengthKm ?? 0f),
+                    plan.AircraftType);
+                var loop = plan.BarcapRacetrack.LoopPointsFeet;
+                plan.MissionEntryPosition = loop[0];
+                plan.MissionPushPosition = loop[Math.Min(1, loop.Count - 1)];
+                plan.MissionExitPosition = loop[loop.Count - 1];
                 return;
             }
 
@@ -1978,8 +2105,7 @@ namespace Engine.Service
 
             var trackOffset = Vector3.right
                               * tileDistanceFeet
-                              * BarcapInterceptGeometry
-                                  .DefaultStationTrackHalfLengthTiles;
+                              * DefaultSupportStationTrackHalfLengthTiles;
             plan.MissionEntryPosition = missionCenter - trackOffset;
             plan.MissionPushPosition = missionCenter + trackOffset;
             plan.MissionExitPosition = missionCenter + trackOffset;
@@ -2324,29 +2450,64 @@ namespace Engine.Service
                     request,
                     plan,
                     barcapCoverage);
+                var stationPoints = plan.BarcapRacetrack?.LoopPointsFeet;
+                var stationEntryPosition = stationPoints?.FirstOrDefault()
+                                           ?? plan.MissionEntryPosition;
                 var stationEntry = NewWaypoint(
-                    plan.MissionEntryPosition,
+                    stationEntryPosition,
                     AirWaypointAction.StationEntry,
                     effectStart,
                     effectArea,
                     barcapCoverage);
-                var stationEnd = NewWaypoint(
-                    plan.MissionExitPosition,
-                    AirWaypointAction.StationEndpoint,
-                    effectStart + TimeSpan.FromSeconds(
-                        AirspaceGeometry.TravelSeconds(
-                            plan.MissionEntryPosition,
-                            plan.MissionExitPosition,
-                            plan.AircraftType.CruiseSpeedKnots,
-                            plan.AircraftType.ClimbRateFeetPerMinute,
-                            plan.AircraftType.DescentRateFeetPerMinute)),
-                    hasRepeat: true,
-                    repeatFromWaypointId: stationEntry.WaypointId,
-                    repeatUntil: effectEnd);
                 route.Add(stationEntry);
-                route.Add(stationEnd);
+                var stationTime = effectStart;
+                var previousStationPoint = stationEntryPosition;
+                if (stationPoints != null && stationPoints.Count > 1)
+                {
+                    for (var index = 1; index < stationPoints.Count; index++)
+                    {
+                        var point = stationPoints[index];
+                        stationTime += TimeSpan.FromSeconds(
+                            AirspaceGeometry.TravelSeconds(
+                                previousStationPoint,
+                                point,
+                                plan.AircraftType.CruiseSpeedKnots,
+                                plan.AircraftType.ClimbRateFeetPerMinute,
+                                plan.AircraftType.DescentRateFeetPerMinute));
+                        var isEndpoint = index == stationPoints.Count - 1;
+                        route.Add(NewWaypoint(
+                            point,
+                            isEndpoint
+                                ? AirWaypointAction.StationEndpoint
+                                : AirWaypointAction.Transit,
+                            stationTime,
+                            hasRepeat: isEndpoint,
+                            repeatFromWaypointId: isEndpoint
+                                ? stationEntry.WaypointId
+                                : default,
+                            repeatUntil: isEndpoint ? effectEnd : default));
+                        previousStationPoint = point;
+                    }
+                }
+                else
+                {
+                    route.Add(NewWaypoint(
+                        plan.MissionExitPosition,
+                        AirWaypointAction.StationEndpoint,
+                        effectStart + TimeSpan.FromSeconds(
+                            AirspaceGeometry.TravelSeconds(
+                                plan.MissionEntryPosition,
+                                plan.MissionExitPosition,
+                                plan.AircraftType.CruiseSpeedKnots,
+                                plan.AircraftType.ClimbRateFeetPerMinute,
+                                plan.AircraftType.DescentRateFeetPerMinute)),
+                        hasRepeat: true,
+                        repeatFromWaypointId: stationEntry.WaypointId,
+                        repeatUntil: effectEnd));
+                }
                 returnTime = effectEnd;
-                returnPosition = plan.MissionExitPosition;
+                returnPosition = stationPoints?.LastOrDefault()
+                                 ?? plan.MissionExitPosition;
             }
             else
             {
@@ -2401,8 +2562,7 @@ namespace Engine.Service
 
             return new AirMissionArea(
                 AirspaceGeometry.TileCoordinateFromPositionFeet(
-                    plan.MissionEntryPosition
-                    + (plan.MissionExitPosition - plan.MissionEntryPosition) * 0.5f,
+                    barcapCoverage.StationCenterFeet,
                     gameManager.SimulationSettings.TileDistanceKM),
                 Math.Max(0f, barcapCoverage.PlannedResponseRadiusKm),
                 gameManager.SimulationSettings.TileDistanceKM);
@@ -2485,13 +2645,19 @@ namespace Engine.Service
                 descentRateFeetPerMinute);
         }
 
-        private static float GetMissionAltitudeFeet(AirMissionRequestType missionType)
+        private static float GetMissionAltitudeFeet(
+            AirMissionRequestType missionType,
+            BarcapStationCoverage barcapCoverage)
         {
             return missionType switch
             {
                 AirMissionRequestType.ProvideAirborneC2 => AwacsAltitudeFeet,
                 AirMissionRequestType.ProvideAerialRefueling => TankerAltitudeFeet,
-                _ => BarcapAndOcaAltitudeFeet
+                AirMissionRequestType.BarrierCombatAirPatrol => Math.Max(
+                    0f,
+                    barcapCoverage?.StationCenterFeet.y
+                    ?? AllianceAirDoctrine.DefaultBarcapStationAltitudeFeet),
+                _ => OcaAltitudeFeet
             };
         }
 
@@ -2567,8 +2733,11 @@ namespace Engine.Service
             public CombatSquadronCandidate Candidate { get; }
             public float RadiusKm { get; }
             public float PreferredLaunchRangeKm { get; }
-            public Vector3Int Station { get; }
-            public int StationDepth { get; }
+            public BarcapRacetrackGeometry Racetrack { get; }
+            public float StationDepthKm { get; }
+            public float TrackHalfLengthKm { get; }
+            public float MinimumInterceptSlackKm { get; }
+            public float DesiredInterceptSlackKm { get; }
             public List<Vector3Int> Covered { get; }
             public int UncoveredCount { get; }
 
@@ -2576,8 +2745,11 @@ namespace Engine.Service
                 CombatSquadronCandidate candidate,
                 float radiusKm,
                 float preferredLaunchRangeKm,
-                Vector3Int station,
-                int stationDepth,
+                BarcapRacetrackGeometry racetrack,
+                float stationDepthKm,
+                float trackHalfLengthKm,
+                float minimumInterceptSlackKm,
+                float desiredInterceptSlackKm,
                 List<Vector3Int> covered,
                 int uncoveredCount)
             {
@@ -2586,8 +2758,12 @@ namespace Engine.Service
                 PreferredLaunchRangeKm = Math.Max(
                     0f,
                     preferredLaunchRangeKm);
-                Station = station;
-                StationDepth = Math.Max(0, stationDepth);
+                Racetrack = racetrack
+                            ?? throw new ArgumentNullException(nameof(racetrack));
+                StationDepthKm = Math.Max(0f, stationDepthKm);
+                TrackHalfLengthKm = Math.Max(0f, trackHalfLengthKm);
+                MinimumInterceptSlackKm = minimumInterceptSlackKm;
+                DesiredInterceptSlackKm = Math.Max(0f, desiredInterceptSlackKm);
                 Covered = covered ?? new List<Vector3Int>();
                 UncoveredCount = Math.Max(0, uncoveredCount);
             }
@@ -2606,6 +2782,7 @@ namespace Engine.Service
             public Vector3 MissionEntryPosition;
             public Vector3 MissionPushPosition;
             public Vector3 MissionExitPosition;
+            public BarcapRacetrackGeometry BarcapRacetrack;
 
             public RoutePlan(
                 AirFlight flight,

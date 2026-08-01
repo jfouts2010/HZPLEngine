@@ -14,7 +14,6 @@ namespace Engine.Models
         private const double MaximumIntegrationStepSeconds = 1d;
         private const double TacticalDecisionStepSeconds = 5d;
         private const float WaypointCaptureFeet = 100f;
-        private const float MaximumDynamicWaypointCaptureFeet = 25000f;
 
         private readonly GameManager gameManager;
         private readonly AirTaskingSystem airTaskingSystem;
@@ -202,6 +201,7 @@ namespace Engine.Models
                                 view.Squadron,
                                 view.AircraftType,
                                 cursor,
+                                command.Reason,
                                 out var relocationReason))
                         {
                             ContinueRelocatedBarcapCommand(
@@ -217,7 +217,9 @@ namespace Engine.Models
                                 view.Squadron,
                                 view.AircraftType,
                                 cursor,
-                                command.Reason))
+                                string.IsNullOrWhiteSpace(relocationReason)
+                                    ? command.Reason
+                                    : relocationReason))
                         {
                             ContinueRecoveryCommand(
                                 command,
@@ -386,6 +388,12 @@ namespace Engine.Models
                                 "Launch airport runway system closed before takeoff.");
                             continue;
                         }
+                        if (TryCancelUnsafeBarcapBeforeTakeoff(
+                                package,
+                                flight,
+                                aircraftType,
+                                currentTime))
+                            continue;
                         if (!flight.TryTakeOff(flight.PlannedTakeoffTime))
                         {
                             throw new InvalidOperationException(
@@ -555,6 +563,243 @@ namespace Engine.Models
             return threats;
         }
 
+        private IReadOnlyList<KnownSamThreatEnvelope> RefreshKnownSamThreats(
+            Alliance alliance)
+        {
+            var threats = knownSamThreatAssessment.BuildKnownThreats(
+                gameManager.intelligenceSystem?.GetPicture(alliance),
+                gameManager.SimulationSettings.TileDistanceKM);
+            knownSamThreatCache[alliance] = threats;
+            return threats;
+        }
+
+        private bool TryCancelUnsafeBarcapBeforeTakeoff(
+            AirPackage package,
+            AirFlight flight,
+            AircraftTypeDefinition aircraftType,
+            DateTime currentTime)
+        {
+            if (package == null
+                || flight?.MissionType
+                != AirMissionRequestType.BarrierCombatAirPatrol
+                || flight.IsFighterEscort
+                || aircraftType == null
+                || package.Flights.Any(candidate => candidate.IsAirborne))
+                return false;
+
+            var threats = RefreshKnownSamThreats(package.Alliance);
+            var maneuverClearanceFeet = AirspaceGeometry
+                .ConservativeSamManeuverClearanceFeet(aircraftType);
+            var coverage = flight.PlannedBarcapCoverage;
+            var commander = airTaskingSystem.GetCommander(package.Alliance);
+            var planningAgeMinutes = Math.Max(
+                0d,
+                (currentTime - package.CreatedAt).TotalMinutes);
+            var plannedKnownSites = (coverage?.PlannedKnownSamSiteIds
+                                     ?? new List<Guid>())
+                .Where(id => id != Guid.Empty)
+                .ToHashSet();
+            var values = new Dictionary<string, float>
+            {
+                { "planningAgeMinutes", (float)planningAgeMinutes },
+                { "currentKnownSamSiteCount", threats.Select(threat => threat.SiteId).Distinct().Count() },
+                { "plannedKnownSamSiteCount", plannedKnownSites.Count },
+                { "routeWaypointCount", flight.Route.Count }
+            };
+            AddBarcapStationDiagnosticValues(values, coverage);
+
+            if (!TryFindFirstKnownSamRouteConflict(
+                    flight.Route,
+                    threats,
+                    maneuverClearanceFeet,
+                    out var blockingSiteId,
+                    out var fromIndex,
+                    out var toIndex))
+            {
+                commander?.AddDiagnostic(new AirTaskingDiagnostic
+                {
+                    RecordedAt = currentTime,
+                    MissionRequestId = package.MissionRequestId,
+                    PackageId = package.PackageId,
+                    Code = "barcap-preflight-sam-clear",
+                    Message = "Current-intelligence BARCAP route revalidation passed "
+                              + $"{planningAgeMinutes:0.0} minutes after commitment.",
+                    Values = values
+                });
+                return false;
+            }
+
+            var absentFromPlanningThreatSet =
+                !plannedKnownSites.Contains(blockingSiteId);
+            values["blockingSamAbsentFromPlanningThreatSet"] =
+                absentFromPlanningThreatSet ? 1f : 0f;
+            values["blockingRouteFromIndex"] = fromIndex;
+            values["blockingRouteToIndex"] = toIndex;
+            var conflict = DescribeSamRouteConflict(
+                flight.Route,
+                blockingSiteId,
+                fromIndex,
+                toIndex);
+            var reason = "BARCAP cancelled before takeoff because current SAM "
+                         + $"intelligence invalidated its committed route: {conflict}; "
+                         + $"station={FormatAirPosition(coverage?.StationCenterFeet ?? Vector3.zero)}; "
+                         + $"planningAge={planningAgeMinutes:0.0}min; "
+                         + "blockingSamWasInPlanningThreatSet="
+                         + $"{!absentFromPlanningThreatSet}. "
+                         + "The request remains actionable for rematerialization.";
+            commander?.AddDiagnostic(new AirTaskingDiagnostic
+            {
+                RecordedAt = currentTime,
+                MissionRequestId = package.MissionRequestId,
+                PackageId = package.PackageId,
+                Code = "barcap-preflight-sam-blocked",
+                Message = reason,
+                Values = values
+            });
+            if (!airTaskingSystem.CancelPackage(
+                    package.Alliance,
+                    package.PackageId,
+                    currentTime,
+                    reason))
+            {
+                throw new InvalidOperationException(
+                    $"Unsafe BARCAP package {package.PackageId} could not be "
+                    + "cancelled before takeoff.");
+            }
+
+            return true;
+        }
+
+        private static bool TryFindFirstKnownSamRouteConflict(
+            IReadOnlyList<AirWaypoint> route,
+            IReadOnlyList<KnownSamThreatEnvelope> threats,
+            float maneuverClearanceFeet,
+            out Guid blockingSiteId,
+            out int fromIndex,
+            out int toIndex)
+        {
+            blockingSiteId = Guid.Empty;
+            fromIndex = -1;
+            toIndex = -1;
+            if (route == null || route.Count == 0 || threats == null)
+                return false;
+
+            for (var index = 0; index < route.Count; index++)
+            {
+                var pointThreat = threats
+                    .Where(threat => threat != null
+                                     && threat.Contains(
+                                         route[index].PositionFeet,
+                                         maneuverClearanceFeet))
+                    .OrderBy(threat => threat.SiteId)
+                    .FirstOrDefault();
+                if (pointThreat != null)
+                {
+                    blockingSiteId = pointThreat.SiteId;
+                    fromIndex = index;
+                    toIndex = index;
+                    return true;
+                }
+
+                if (index + 1 >= route.Count)
+                    continue;
+                var segmentThreat = threats
+                    .Where(threat => threat != null
+                                     && threat.IntersectsSegment(
+                                         route[index].PositionFeet,
+                                         route[index + 1].PositionFeet,
+                                         maneuverClearanceFeet))
+                    .OrderBy(threat => threat.SiteId)
+                    .FirstOrDefault();
+                if (segmentThreat == null)
+                    continue;
+
+                blockingSiteId = segmentThreat.SiteId;
+                fromIndex = index;
+                toIndex = index + 1;
+                return true;
+            }
+
+            foreach (var endpoint in route
+                         .Select((waypoint, index) => new { Waypoint = waypoint, Index = index })
+                         .Where(item => item.Waypoint.HasRepeat))
+            {
+                var repeatIndex = route.ToList().FindIndex(candidate =>
+                    candidate.WaypointId == endpoint.Waypoint.RepeatFromWaypointId);
+                if (repeatIndex < 0)
+                    continue;
+                var repeatThreat = threats
+                    .Where(threat => threat != null
+                                     && threat.IntersectsSegment(
+                                         endpoint.Waypoint.PositionFeet,
+                                         route[repeatIndex].PositionFeet,
+                                         maneuverClearanceFeet))
+                    .OrderBy(threat => threat.SiteId)
+                    .FirstOrDefault();
+                if (repeatThreat == null)
+                    continue;
+                blockingSiteId = repeatThreat.SiteId;
+                fromIndex = endpoint.Index;
+                toIndex = repeatIndex;
+                return true;
+            }
+
+            return false;
+        }
+
+        private static string DescribeSamRouteConflict(
+            IReadOnlyList<AirWaypoint> route,
+            Guid siteId,
+            int fromIndex,
+            int toIndex)
+        {
+            if (route == null
+                || fromIndex < 0
+                || fromIndex >= route.Count
+                || toIndex < 0
+                || toIndex >= route.Count)
+                return $"site={SimLogNames.ShortId(siteId)} routeLeg=unknown";
+
+            var from = route[fromIndex];
+            if (fromIndex == toIndex)
+            {
+                return $"site={SimLogNames.ShortId(siteId)} waypoint={fromIndex}:"
+                       + $"{from.Action} position={FormatAirPosition(from.PositionFeet)}";
+            }
+
+            var to = route[toIndex];
+            return $"site={SimLogNames.ShortId(siteId)} leg={fromIndex}->{toIndex}:"
+                   + $"{from.Action}->{to.Action} "
+                   + $"from={FormatAirPosition(from.PositionFeet)} "
+                   + $"to={FormatAirPosition(to.PositionFeet)}";
+        }
+
+        private static void AddBarcapStationDiagnosticValues(
+            IDictionary<string, float> values,
+            BarcapStationCoverage coverage)
+        {
+            if (values == null || coverage == null)
+                return;
+            values["barcapStationXFeet"] = coverage.StationCenterFeet.x;
+            values["barcapStationAltitudeFeet"] = coverage.StationCenterFeet.y;
+            values["barcapStationZFeet"] = coverage.StationCenterFeet.z;
+            values["barcapStationHeadingDegrees"] =
+                coverage.StationHeadingDegrees;
+            values["barcapCoveredTileCount"] =
+                coverage.CoveredBarrierTileIds?.Count ?? 0;
+            values["barcapTrackHalfLengthKm"] =
+                coverage.StationTrackHalfLengthKm;
+            values["barcapInterceptSlackKm"] =
+                coverage.PlannedMinimumInterceptSlackKm;
+        }
+
+        private static string FormatAirPosition(Vector3 positionFeet)
+        {
+            return $"({positionFeet.x / AirspaceGeometry.FeetPerKilometer:0.0}km,"
+                   + $"{positionFeet.z / AirspaceGeometry.FeetPerKilometer:0.0}km,"
+                   + $"{positionFeet.y:0}ft)";
+        }
+
         private IReadOnlyDictionary<Guid, IADSTrack> GetCurrentTracks(Alliance alliance)
         {
             var iads = gameManager.GetAllianceIADS(alliance);
@@ -637,31 +882,68 @@ namespace Engine.Models
                         WvrEngagementSystem.DamagedAircraftSpeedMultiplier;
                 }
 
+                var routeSegmentStart = default(Vector3);
+                var hasRouteSegment = followingRoute
+                                      && TryGetCurrentRouteSegmentStart(
+                                          flight,
+                                          out routeSegmentStart);
                 if (followingRoute
-                    && HasReached(flight.PositionFeet, target, aircraftType, speedKnots))
+                    && HasReached(
+                        flight.PositionFeet,
+                        target,
+                        WaypointCaptureFeet))
                 {
-                    var waypoint = flight.CurrentWaypoint;
-                    if (waypoint != null
-                        && !(waypointsCrossedWithoutTime ??= new HashSet<Guid>())
-                            .Add(waypoint.WaypointId))
+                    var maximumReachSeconds = Math.Min(
+                        MaximumIntegrationStepSeconds,
+                        remaining);
+                    var reachSeconds = EstimateReachSeconds(
+                        flight,
+                        target,
+                        aircraftType,
+                        speedKnots,
+                        maximumReachSeconds);
+                    if (reachSeconds >= 0d)
                     {
-                        var progressSeconds = Math.Min(
-                            MaximumIntegrationStepSeconds,
-                            remaining);
-                        remaining -= progressSeconds;
-                        localTime = localTime.AddSeconds(progressSeconds);
-                        BurnFuel(
-                            flight,
-                            aircraftType,
-                            command.Intent,
-                            progressSeconds);
-                        waypointsCrossedWithoutTime.Clear();
+                        var waypoint = flight.CurrentWaypoint;
+                        if (waypoint != null
+                            && !(waypointsCrossedWithoutTime ??= new HashSet<Guid>())
+                                .Add(waypoint.WaypointId))
+                        {
+                            var progressSeconds = Math.Min(
+                                MaximumIntegrationStepSeconds,
+                                remaining);
+                            remaining -= progressSeconds;
+                            localTime = localTime.AddSeconds(progressSeconds);
+                            BurnFuel(
+                                flight,
+                                aircraftType,
+                                command.Intent,
+                                progressSeconds);
+                            waypointsCrossedWithoutTime.Clear();
+                            continue;
+                        }
+
+                        if (reachSeconds > 0.0001d)
+                        {
+                            IntegrateMotion(
+                                flight,
+                                target,
+                                aircraftType,
+                                command.Maneuver,
+                                speedKnots,
+                                reachSeconds);
+                            remaining -= reachSeconds;
+                            localTime = localTime.AddSeconds(reachSeconds);
+                            BurnFuel(
+                                flight,
+                                aircraftType,
+                                command.Intent,
+                                reachSeconds);
+                            waypointsCrossedWithoutTime?.Clear();
+                        }
+                        HandleWaypoint(package, flight, localTime);
                         continue;
                     }
-
-                    flight.UpdateKinematics(target, flight.HeadingDegrees, speedKnots);
-                    HandleWaypoint(package, flight, localTime);
-                    continue;
                 }
 
                 waypointsCrossedWithoutTime?.Clear();
@@ -679,15 +961,16 @@ namespace Engine.Models
                 BurnFuel(flight, aircraftType, command.Intent, step);
 
                 if (!followingRoute
-                    || !ShouldCaptureTarget(
+                    || !ShouldAdvanceRouteWaypoint(
+                        hasRouteSegment ? routeSegmentStart : previous,
                         previous,
                         flight.PositionFeet,
                         target,
-                        aircraftType,
-                        speedKnots))
+                        GetWaypointArrivalCorridorFeet(
+                            aircraftType,
+                            speedKnots)))
                     continue;
 
-                flight.UpdateKinematics(target, flight.HeadingDegrees, speedKnots);
                 HandleWaypoint(package, flight, localTime);
             }
         }
@@ -1676,6 +1959,7 @@ namespace Engine.Models
             Squadron squadron,
             AircraftTypeDefinition aircraftType,
             DateTime currentTime,
+            string triggerReason,
             out string reason)
         {
             reason = string.Empty;
@@ -1688,7 +1972,7 @@ namespace Engine.Models
                 || aircraftType == null
                 || !TryGetAssignedBarcapStation(
                     flight,
-                    out var assignedStationTileId))
+                    out var assignedStationCenterFeet))
                 return false;
 
             var commander = airTaskingSystem.GetCommander(package.Alliance);
@@ -1709,9 +1993,12 @@ namespace Engine.Models
             var coverageCenterTile = orderedCoveredTiles[
                 orderedCoveredTiles.Count / 2];
             var tileDistanceKm = gameManager.SimulationSettings.TileDistanceKM;
-            var currentThreatDistance = AirMissionArea.HexDistance(
-                assignedStationTileId,
-                barrier.ThreatReferenceTileId);
+            var currentStationDepthKm = BarcapInterceptGeometry
+                .GetDefensiveStationDepthKm(
+                    assignedStationCenterFeet,
+                    coverageCenterTile,
+                    barrier.ThreatReferenceTileId,
+                    tileDistanceKm);
             var threats = GetKnownSamThreats(package.Alliance);
             var maneuverClearanceFeet = AirspaceGeometry
                 .ConservativeSamManeuverClearanceFeet(aircraftType);
@@ -1719,60 +2006,99 @@ namespace Engine.Models
             if (effectEnd <= currentTime)
                 return false;
 
-            var friendlyTiles = gameManager.tileSystem.LandTiles
-                .Where(tile => tile.Controller == package.Alliance)
-                .Select(tile => tile.TileId)
-                .ToList();
             var candidates = BarcapInterceptGeometry
-                .GetDefensiveStationTiles(
-                    friendlyTiles,
+                .GetDefensiveStationPositions(
                     coverageCenterTile,
-                    barrier.ThreatReferenceTileId)
-                .Where(tile => AirMissionArea.HexDistance(
-                                   tile,
-                                   barrier.ThreatReferenceTileId)
-                               > currentThreatDistance)
-                .Select(tile => new
+                    barrier.ThreatReferenceTileId,
+                    tileDistanceKm,
+                    originalCoverage.StationCenterFeet.y,
+                    originalCoverage.PlannedResponseRadiusKm)
+                .Select(position =>
                 {
-                    Tile = tile,
-                    Covered = BarcapInterceptGeometry
+                    var heading = BarcapInterceptGeometry
+                        .GetStationHeadingDegrees(
+                            position,
+                            barrier.ThreatReferenceTileId,
+                            tileDistanceKm);
+                    var racetrack = BarcapInterceptGeometry.BuildRacetrack(
+                        position,
+                        heading,
+                        originalCoverage.StationTrackHalfLengthKm,
+                        aircraftType);
+                    return new
+                    {
+                        Position = position,
+                        Heading = heading,
+                        Racetrack = racetrack,
+                        DepthKm = BarcapInterceptGeometry
+                            .GetDefensiveStationDepthKm(
+                                position,
+                                coverageCenterTile,
+                                barrier.ThreatReferenceTileId,
+                                tileDistanceKm),
+                        Covered = BarcapInterceptGeometry
                         .GetContiguousCoveredBarrierRun(
                             barrier.BarrierTileIds,
                             coverageCenterTile,
-                            tile,
+                            racetrack.LoopPointsFeet,
                             originalCoverage,
                             tileDistanceKm)
+                    };
                 })
-                .Where(candidate => candidate.Covered.Count > 0)
+                .Where(candidate => candidate.DepthKm
+                                    > currentStationDepthKm + 0.001f
+                                    && candidate.Covered.Count > 0)
                 .OrderByDescending(candidate => candidate.Covered.Count)
-                .ThenBy(candidate => AirMissionArea.HexDistance(
-                    candidate.Tile,
-                    assignedStationTileId))
-                .ThenBy(candidate => candidate.Tile.x)
-                .ThenBy(candidate => candidate.Tile.y)
-                .ThenBy(candidate => candidate.Tile.z)
+                .ThenBy(candidate => Vector3.Distance(
+                    candidate.Position,
+                    assignedStationCenterFeet))
+                .ThenBy(candidate => candidate.Position.x)
+                .ThenBy(candidate => candidate.Position.z)
                 .ToList();
 
+            var trackThreatRejections = 0;
+            var defendedSideRejections = 0;
+            var transitRejections = 0;
+            var effectWindowRejections = 0;
+            var recoveryRejections = 0;
+            var fuelRejections = 0;
+            var amendmentRejections = 0;
+            var blockingTrackSites = new HashSet<Guid>();
             foreach (var candidate in candidates)
             {
-                var track = BarcapInterceptGeometry.GetStationTrackEndpoints(
-                    candidate.Tile,
-                    barrier.ThreatReferenceTileId,
-                    tileDistanceKm,
-                    flight.PositionFeet.y);
                 if (!KnownSamThreatGeometry.IsPathSafe(
-                        new[] { track.Entry, track.Endpoint },
+                        candidate.Racetrack.GetClosedLoopPoints(),
                         threats,
                         maneuverClearanceFeet,
-                        out _)
-                    || !TryBuildSafeTransitPoints(
+                        out var blockingTrackSiteId))
+                {
+                    trackThreatRejections++;
+                    if (blockingTrackSiteId != Guid.Empty)
+                        blockingTrackSites.Add(blockingTrackSiteId);
+                    continue;
+                }
+                if (candidate.Racetrack.LoopPointsFeet.Any(point =>
+                        !BarcapInterceptGeometry.IsOnDefendedSide(
+                            point,
+                            candidate.Covered,
+                            originalCoverage.ThreatReferenceTileId,
+                            tileDistanceKm,
+                            originalCoverage.WeaponReleaseStandoffKm)))
+                {
+                    defendedSideRejections++;
+                    continue;
+                }
+                if (!TryBuildSafeTransitPoints(
                         flight.PositionFeet,
-                        track.Entry,
+                        candidate.Racetrack.LoopPointsFeet[0],
                         threats,
                         flight.FlightId,
                         maneuverClearanceFeet,
                         out var transitPoints))
+                {
+                    transitRejections++;
                     continue;
+                }
 
                 var replacement = new List<AirWaypoint>();
                 var position = flight.PositionFeet;
@@ -1806,44 +2132,86 @@ namespace Engine.Models
                 time += TimeSpan.FromSeconds(
                     AirspaceGeometry.TravelSeconds(
                         position,
-                        track.Entry,
+                        candidate.Racetrack.LoopPointsFeet[0],
                         aircraftType.CruiseSpeedKnots,
                         aircraftType.ClimbRateFeetPerMinute,
                         aircraftType.DescentRateFeetPerMinute));
                 var stationEntryTime = time;
                 var firstCircuitEnd = stationEntryTime + TimeSpan.FromSeconds(
-                    AirspaceGeometry.TravelSeconds(
-                        track.Entry,
-                        track.Endpoint,
-                        aircraftType.CruiseSpeedKnots,
-                        aircraftType.ClimbRateFeetPerMinute,
-                        aircraftType.DescentRateFeetPerMinute));
+                    AirspaceGeometry.HorizontalTravelSeconds(
+                        candidate.Racetrack.CircuitLengthFeet,
+                        aircraftType.CruiseSpeedKnots));
                 if (firstCircuitEnd > effectEnd)
+                {
+                    effectWindowRejections++;
                     continue;
+                }
 
                 var relocatedCoverage = originalCoverage.Clone();
                 relocatedCoverage.CoveredBarrierTileIds =
                     candidate.Covered.ToList();
+                relocatedCoverage.StationCenterFeet = candidate.Position;
+                relocatedCoverage.StationHeadingDegrees = candidate.Heading;
+                relocatedCoverage.PlannedMinimumInterceptSlackKm =
+                    candidate.Covered
+                        .Select(tile => originalCoverage.PlannedResponseRadiusKm
+                                        - BarcapInterceptGeometry
+                                            .GetWorstStationDistanceToOperationalBarrierKm(
+                                                candidate.Racetrack.LoopPointsFeet,
+                                                tile,
+                                                originalCoverage
+                                                    .ThreatReferenceTileId,
+                                                tileDistanceKm,
+                                                originalCoverage
+                                                    .WeaponReleaseStandoffKm))
+                        .DefaultIfEmpty(float.NegativeInfinity)
+                        .Min();
                 var effectArea = new AirMissionArea(
-                    candidate.Tile,
+                    AirspaceGeometry.TileCoordinateFromPositionFeet(
+                        candidate.Position,
+                        tileDistanceKm),
                     relocatedCoverage.PlannedResponseRadiusKm,
                     tileDistanceKm);
                 var stationEntry = new AirWaypoint(
-                    track.Entry,
+                    candidate.Racetrack.LoopPointsFeet[0],
                     AirWaypointAction.StationEntry,
                     stationEntryTime,
                     effectArea,
                     barcapCoverage: relocatedCoverage);
                 replacement.Add(stationEntry);
+                var stationPointTime = stationEntryTime;
+                var previousStationPoint = candidate.Racetrack.LoopPointsFeet[0];
+                for (var index = 1;
+                     index < candidate.Racetrack.LoopPointsFeet.Count;
+                     index++)
+                {
+                    var stationPoint = candidate.Racetrack.LoopPointsFeet[index];
+                    stationPointTime += TimeSpan.FromSeconds(
+                        AirspaceGeometry.TravelSeconds(
+                            previousStationPoint,
+                            stationPoint,
+                            aircraftType.CruiseSpeedKnots,
+                            aircraftType.ClimbRateFeetPerMinute,
+                            aircraftType.DescentRateFeetPerMinute));
+                    var isEndpoint = index
+                                     == candidate.Racetrack.LoopPointsFeet.Count - 1;
+                    replacement.Add(new AirWaypoint(
+                        stationPoint,
+                        isEndpoint
+                            ? AirWaypointAction.StationEndpoint
+                            : AirWaypointAction.Transit,
+                        stationPointTime,
+                        hasRepeat: isEndpoint,
+                        repeatFromWaypointId: isEndpoint
+                            ? stationEntry.WaypointId
+                            : default,
+                        repeatUntil: isEndpoint ? effectEnd : default));
+                    previousStationPoint = stationPoint;
+                }
+                var stationExitPosition = candidate.Racetrack.LoopPointsFeet[
+                    candidate.Racetrack.LoopPointsFeet.Count - 1];
                 replacement.Add(new AirWaypoint(
-                    track.Endpoint,
-                    AirWaypointAction.StationEndpoint,
-                    firstCircuitEnd,
-                    hasRepeat: true,
-                    repeatFromWaypointId: stationEntry.WaypointId,
-                    repeatUntil: effectEnd));
-                replacement.Add(new AirWaypoint(
-                    track.Endpoint,
+                    stationExitPosition,
                     AirWaypointAction.ReturnToBase,
                     effectEnd));
 
@@ -1852,10 +2220,13 @@ namespace Engine.Models
                         flight,
                         squadron,
                         aircraftType,
-                        track.Endpoint,
+                        stationExitPosition,
                         effectEnd,
                         out var recoveryRoute))
+                {
+                    recoveryRejections++;
                     continue;
+                }
                 replacement.AddRange(recoveryRoute);
                 if (!HasFuelForBarcapReplacement(
                         flight,
@@ -1864,75 +2235,63 @@ namespace Engine.Models
                         effectEnd,
                         recoveryRoute[recoveryRoute.Count - 1]
                             .PlannedArrivalTime))
+                {
+                    fuelRejections++;
                     continue;
+                }
 
-                reason = $"BARCAP station displaced rearward to "
-                         + $"{candidate.Tile} because the assigned station "
-                         + "became unsafe under known SAM coverage.";
+                reason = $"BARCAP station displaced rearward from "
+                         + $"{FormatAirPosition(assignedStationCenterFeet)} to "
+                         + $"{FormatAirPosition(candidate.Position)}; "
+                         + $"depth={currentStationDepthKm:0.0}->{candidate.DepthKm:0.0}km; "
+                         + $"coveredTiles={candidate.Covered.Count}; "
+                         + $"knownSamSites={threats.Select(threat => threat.SiteId).Distinct().Count()}; "
+                         + $"trigger={triggerReason}";
                 if (!flight.TryReplaceUnflownBarcapStationRoute(
                         currentTime,
                         reason,
                         replacement))
+                {
+                    amendmentRejections++;
                     continue;
+                }
 
                 airTaskingSystem.RevalidateAirportOperations(currentTime);
                 return true;
             }
 
-            reason = string.Empty;
+            var blockingSites = blockingTrackSites.Count == 0
+                ? "none"
+                : string.Join(
+                    ",",
+                    blockingTrackSites.OrderBy(id => id)
+                        .Select(SimLogNames.ShortId));
+            reason = "BARCAP relocation failed; "
+                     + $"station={FormatAirPosition(assignedStationCenterFeet)}; "
+                     + $"stationDepthKm={currentStationDepthKm:0.0}; "
+                     + $"knownSamSites={threats.Select(threat => threat.SiteId).Distinct().Count()}; "
+                     + $"candidates={candidates.Count}; "
+                     + $"trackThreatRejected={trackThreatRejections}; "
+                     + $"trackBlockingSites={blockingSites}; "
+                     + $"defendedSideRejected={defendedSideRejections}; "
+                     + $"transitRejected={transitRejections}; "
+                     + $"effectWindowRejected={effectWindowRejections}; "
+                     + $"recoveryRejected={recoveryRejections}; "
+                     + $"fuelRejected={fuelRejections}; "
+                     + $"amendmentRejected={amendmentRejections}; "
+                     + $"trigger={triggerReason}";
             return false;
         }
 
         private static bool TryGetAssignedBarcapStation(
             AirFlight flight,
-            out Vector3Int stationTileId)
+            out Vector3 stationCenterFeet)
         {
-            stationTileId = default;
-            if (flight?.Route == null || flight.Route.Count == 0)
+            stationCenterFeet = default;
+            var coverage = flight?.PlannedBarcapCoverage;
+            if (coverage == null)
                 return false;
-
-            var route = flight.Route;
-            var currentIndex = Mathf.Clamp(
-                flight.CurrentWaypointIndex,
-                0,
-                route.Count - 1);
-            var pair = route
-                .Select((waypoint, index) => new { Waypoint = waypoint, Index = index })
-                .Where(entry => entry.Waypoint.Action
-                                == AirWaypointAction.StationEntry
-                                && entry.Waypoint.BarcapCoverage != null)
-                .Select(entry => new
-                {
-                    Entry = entry,
-                    Endpoint = route
-                        .Select((waypoint, index) => new
-                        {
-                            Waypoint = waypoint,
-                            Index = index
-                        })
-                        .FirstOrDefault(candidate =>
-                            candidate.Waypoint.Action
-                            == AirWaypointAction.StationEndpoint
-                            && candidate.Waypoint.RepeatFromWaypointId
-                            == entry.Waypoint.WaypointId)
-                })
-                .Where(candidate => candidate.Endpoint != null
-                                    && candidate.Endpoint.Index >= currentIndex)
-                .OrderBy(candidate => candidate.Endpoint.Index)
-                .FirstOrDefault();
-            if (pair == null)
-                return false;
-
-            var effectArea = pair.Entry.Waypoint.EffectArea;
-            if (effectArea == null || effectArea.TileDistanceKm <= 0f)
-                return false;
-
-            var stationCenter = pair.Entry.Waypoint.PositionFeet
-                                + (pair.Endpoint.Waypoint.PositionFeet
-                                   - pair.Entry.Waypoint.PositionFeet) * 0.5f;
-            stationTileId = AirspaceGeometry.TileCoordinateFromPositionFeet(
-                stationCenter,
-                effectArea.TileDistanceKm);
+            stationCenterFeet = coverage.StationCenterFeet;
             return true;
         }
 
@@ -2692,57 +3051,95 @@ namespace Engine.Models
                 : aircraftType.TurnRateDegreesPerSecond;
         }
 
-        private static bool HasReached(Vector3 current, Vector3 target)
-        {
-            return Vector3.Distance(current, target) <= WaypointCaptureFeet;
-        }
-
         private static bool HasReached(
             Vector3 current,
             Vector3 target,
-            AircraftTypeDefinition aircraftType,
-            float speedKnots)
+            float captureFeet)
         {
-            return Vector3.Distance(current, target)
-                   <= GetDynamicWaypointCaptureFeet(aircraftType, speedKnots);
+            return Vector3.Distance(current, target) <= captureFeet;
         }
 
-        private static bool ShouldCaptureTarget(
+        internal static bool ShouldAdvanceRouteWaypoint(
+            Vector3 routeSegmentStart,
             Vector3 previous,
             Vector3 current,
             Vector3 target,
-            AircraftTypeDefinition aircraftType,
-            float speedKnots)
+            float arrivalCorridorFeet)
         {
-            var captureFeet = GetDynamicWaypointCaptureFeet(aircraftType, speedKnots);
-            if (Vector3.Distance(current, target) <= captureFeet)
+            if (Vector3.Distance(current, target) <= WaypointCaptureFeet)
                 return true;
 
             var travel = current - previous;
             var travelMagnitudeSquared = travel.sqrMagnitude;
-            if (travelMagnitudeSquared <= 0.01f)
-                return false;
+            if (travelMagnitudeSquared > 0.01f)
+            {
+                var previousToTarget = target - previous;
+                var projection = Vector3.Dot(previousToTarget, travel)
+                                 / travelMagnitudeSquared;
+                if (projection >= 0f && projection <= 1f)
+                {
+                    var closest = previous + travel * projection;
+                    if (Vector3.Distance(closest, target)
+                        <= WaypointCaptureFeet)
+                        return true;
+                }
+            }
 
-            var previousToTarget = target - previous;
-            var projection = Vector3.Dot(previousToTarget, travel) / travelMagnitudeSquared;
-            if (projection < 0f || projection > 1f)
+            var routeLeg = target - routeSegmentStart;
+            var routeLegMagnitudeSquared = routeLeg.sqrMagnitude;
+            if (routeLegMagnitudeSquared <= 0.01f)
                 return false;
-
-            var closest = previous + travel * projection;
-            return Vector3.Distance(closest, target) <= captureFeet;
+            var progress = Vector3.Dot(
+                current - routeSegmentStart,
+                routeLeg) / routeLegMagnitudeSquared;
+            return progress >= 1f
+                   && Vector3.Distance(current, target)
+                   <= Math.Max(WaypointCaptureFeet, arrivalCorridorFeet);
         }
 
-        private static float GetDynamicWaypointCaptureFeet(
+        private static float GetWaypointArrivalCorridorFeet(
             AircraftTypeDefinition aircraftType,
             float speedKnots)
         {
             var turnRadiusFeet = AirspaceGeometry.TurnRadiusFeet(
                 speedKnots,
                 aircraftType.TurnRateDegreesPerSecond);
-            return Mathf.Clamp(
-                Math.Max(WaypointCaptureFeet, turnRadiusFeet),
+            var integrationStepFeet = speedKnots
+                                      * AirspaceGeometry.FeetPerNauticalMile
+                                      / 3600f
+                                      * (float)MaximumIntegrationStepSeconds;
+            return Math.Max(
                 WaypointCaptureFeet,
-                MaximumDynamicWaypointCaptureFeet);
+                turnRadiusFeet + integrationStepFeet);
+        }
+
+        private static bool TryGetCurrentRouteSegmentStart(
+            AirFlight flight,
+            out Vector3 segmentStart)
+        {
+            segmentStart = default;
+            if (flight?.CurrentWaypoint == null)
+                return false;
+
+            var waypointIndex = flight.CurrentWaypointIndex;
+            var route = flight.Route;
+            if (flight.CurrentWaypoint.Action == AirWaypointAction.StationEntry
+                && flight.ExecutionPhase == FlightExecutionPhase.Executing)
+            {
+                var repeatEndpoint = route.FirstOrDefault(waypoint =>
+                    waypoint.HasRepeat
+                    && waypoint.RepeatFromWaypointId
+                    == flight.CurrentWaypoint.WaypointId);
+                if (repeatEndpoint == null)
+                    return false;
+                segmentStart = repeatEndpoint.PositionFeet;
+                return true;
+            }
+            if (waypointIndex <= 0 || waypointIndex >= route.Count)
+                return false;
+
+            segmentStart = route[waypointIndex - 1].PositionFeet;
+            return true;
         }
 
         private static float HeadingTo(Vector3 from, Vector3 to)

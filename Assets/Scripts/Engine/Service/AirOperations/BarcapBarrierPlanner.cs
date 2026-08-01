@@ -38,7 +38,6 @@ namespace Engine.Service
         private const float ActiveAirportProtectionValue = 0.8f;
         private const float ReserveAirportProtectionValue = 0.35f;
         private const float UnknownThreatSpeedKnots = 600f;
-        private const float StationTrackHalfLengthTiles = 0.5f;
         private const float PreferredLaunchRangeFraction = 0.78f;
         private const int MaximumThreatDirectionsPerAsset = 3;
 
@@ -72,7 +71,10 @@ namespace Engine.Service
             }
 
             return barriers
-                .Select(candidate => FinalizeCandidate(candidate, snapshot))
+                .Select(candidate => FinalizeCandidate(
+                    candidate,
+                    snapshot,
+                    commander.Doctrine))
                 .OrderByDescending(candidate => candidate.ProtectionValue)
                 .ThenByDescending(candidate => candidate.HostilePressure)
                 .ThenBy(candidate => candidate.Plan.BarrierTileIds[0].x)
@@ -256,11 +258,13 @@ namespace Engine.Service
 
         private PlannedBarcapBarrier FinalizeCandidate(
             BarrierCandidate candidate,
-            AirPlanningSnapshot snapshot)
+            AirPlanningSnapshot snapshot,
+            AllianceAirDoctrine doctrine)
         {
             candidate.Plan.EstimatedAircraftDemand = EstimateAircraftDemand(
                 candidate.Plan,
-                snapshot);
+                snapshot,
+                doctrine);
             var fighterOrigins = snapshot.FriendlySquadrons
                 .Where(squadron => squadron.ReadyAircraftCount > 0
                                    && priorityService.CanPerformAirCombat(
@@ -283,40 +287,62 @@ namespace Engine.Service
 
         private int EstimateAircraftDemand(
             BarcapBarrierPlan plan,
-            AirPlanningSnapshot snapshot)
+            AirPlanningSnapshot snapshot,
+            AllianceAirDoctrine doctrine)
         {
             var midpoint = plan.BarrierTileIds[plan.BarrierTileIds.Count / 2];
             var threatDistanceKm = AirMissionArea.HexDistance(
                                        plan.ThreatReferenceTileId,
                                        midpoint)
                                    * snapshot.TileDistanceKm;
-            var availableRadii = snapshot.FriendlySquadrons
+            var availableAlongBarrierRadii = snapshot.FriendlySquadrons
                 .Where(squadron => squadron.ReadyAircraftCount > 0)
                 .Select(squadron => priorityService.GetAircraftType(
                     squadron.AircraftTypeDefinitionId))
                 .Where(priorityService.CanPerformAirCombat)
                 // Sizing assumes best-case warning; the package builder recomputes
                 // the radius from actual IADS coverage when it places a station.
-                .Select(type => BarcapInterceptGeometry.CalculateResponseRadiusKm(
-                    type,
-                    plan.RepresentativeThreatSpeedKnots,
-                    threatDistanceKm,
-                    plan.WeaponReleaseStandoffKm,
-                    priorityService.GetLongestAirToAirWeaponRangeKm(type)
-                    * PreferredLaunchRangeFraction,
-                    sensorWarningMinutes:
-                        BarcapInterceptGeometry.MaximumResponseMinutes))
+                .Select(type =>
+                {
+                    var responseRadius = BarcapInterceptGeometry.CalculateResponseRadiusKm(
+                        type,
+                        plan.RepresentativeThreatSpeedKnots,
+                        threatDistanceKm,
+                        plan.WeaponReleaseStandoffKm,
+                        priorityService.GetLongestAirToAirWeaponRangeKm(type)
+                        * PreferredLaunchRangeFraction,
+                        sensorWarningMinutes:
+                            BarcapInterceptGeometry.MaximumResponseMinutes,
+                        commandDelaySeconds: doctrine.BarcapCommandDelaySeconds);
+                    var trackHalfLengthKm = BarcapInterceptGeometry
+                        .CalculateStationTrackHalfLengthKm(
+                            type,
+                            doctrine.BarcapTrackLegMinutes);
+                    var turnRadiusKm = AirspaceGeometry.TurnRadiusFeet(
+                                           type.CruiseSpeedKnots,
+                                           type.TurnRateDegreesPerSecond)
+                                       / AirspaceGeometry.FeetPerKilometer;
+                    var worstAxialDistanceKm =
+                        BarcapBarrierPlan.ResolveWeaponReleaseStandoffKm(
+                            plan.WeaponReleaseStandoffKm)
+                        + trackHalfLengthKm
+                        + turnRadiusKm;
+                    var alongBarrierSquared = responseRadius * responseRadius
+                                              - worstAxialDistanceKm
+                                              * worstAxialDistanceKm;
+                    return Math.Max(
+                        0f,
+                        Mathf.Sqrt(Math.Max(0f, alongBarrierSquared))
+                        - turnRadiusKm);
+                })
                 .ToList();
-            var bestRadius = availableRadii.Count > 0
-                ? availableRadii.Max()
+            var bestAlongBarrierRadius = availableAlongBarrierRadii.Count > 0
+                ? availableAlongBarrierRadii.Max()
                 : 0f;
-            var effectiveAlongBarrierRadiusKm = bestRadius
-                                                - StationTrackHalfLengthTiles
-                                                * snapshot.TileDistanceKm;
-            var coveredTiles = effectiveAlongBarrierRadiusKm <= 0f
+            var coveredTiles = bestAlongBarrierRadius <= 0f
                 ? 1
                 : Mathf.FloorToInt(
-                      effectiveAlongBarrierRadiusKm / snapshot.TileDistanceKm)
+                      bestAlongBarrierRadius / snapshot.TileDistanceKm)
                   * 2 + 1;
             return Math.Max(
                 1,

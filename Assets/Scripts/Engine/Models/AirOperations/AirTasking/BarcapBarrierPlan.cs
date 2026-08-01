@@ -63,9 +63,16 @@ namespace Models.Gameplay.Campaign
         public Guid BarrierId;
         public List<Vector3Int> CoveredBarrierTileIds = new List<Vector3Int>();
         public Vector3Int ThreatReferenceTileId;
+        public Vector3 StationCenterFeet;
+        public float StationHeadingDegrees;
+        public float StationTrackHalfLengthKm;
         public float PlannedResponseRadiusKm;
+        public float PlannedMinimumInterceptSlackKm;
         public float PlannedPreferredLaunchRangeKm;
         public float RepresentativeThreatSpeedKnots;
+        public int PlannedAircraftCount = 1;
+        public int PreferredAircraftCount = 1;
+        public List<Guid> PlannedKnownSamSiteIds = new List<Guid>();
         public float WeaponReleaseStandoffKm =
             BarcapBarrierPlan.DefaultWeaponReleaseStandoffKm;
 
@@ -79,13 +86,27 @@ namespace Models.Gameplay.Campaign
                     .Distinct()
                     .ToList(),
                 ThreatReferenceTileId = ThreatReferenceTileId,
+                StationCenterFeet = StationCenterFeet,
+                StationHeadingDegrees = Mathf.Repeat(
+                    StationHeadingDegrees,
+                    360f),
+                StationTrackHalfLengthKm = Math.Max(0f, StationTrackHalfLengthKm),
                 PlannedResponseRadiusKm = Math.Max(0f, PlannedResponseRadiusKm),
+                PlannedMinimumInterceptSlackKm = PlannedMinimumInterceptSlackKm,
                 PlannedPreferredLaunchRangeKm = Math.Max(
                     0f,
                     PlannedPreferredLaunchRangeKm),
                 RepresentativeThreatSpeedKnots = Math.Max(
                     0f,
                     RepresentativeThreatSpeedKnots),
+                PlannedAircraftCount = Math.Max(1, PlannedAircraftCount),
+                PreferredAircraftCount = Math.Max(1, PreferredAircraftCount),
+                PlannedKnownSamSiteIds = (PlannedKnownSamSiteIds
+                                          ?? new List<Guid>())
+                    .Where(id => id != Guid.Empty)
+                    .Distinct()
+                    .OrderBy(id => id)
+                    .ToList(),
                 WeaponReleaseStandoffKm =
                     BarcapBarrierPlan.ResolveWeaponReleaseStandoffKm(
                         WeaponReleaseStandoffKm)

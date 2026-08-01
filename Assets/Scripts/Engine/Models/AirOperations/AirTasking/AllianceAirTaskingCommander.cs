@@ -252,18 +252,55 @@ namespace Models.Gameplay.Campaign
                     });
                 }
 
+                var diagnosticValues = new Dictionary<string, float>
+                {
+                    { "flightCount", package.Flights.Count },
+                    { "aircraftCount", package.Flights.Sum(flight => flight.AircraftIds.Count) },
+                    {
+                        "plannedTakeoffLeadMinutes",
+                        (float)Math.Max(
+                            0d,
+                            (package.EarliestTakeoffTime - currentTime).TotalMinutes)
+                    }
+                };
+                var barcapCoverage = package.Flights
+                    .Where(flight => !flight.IsFighterEscort)
+                    .Select(flight => flight.PlannedBarcapCoverage)
+                    .FirstOrDefault(coverage => coverage != null);
+                var diagnosticMessage = "Package committed.";
+                if (barcapCoverage != null)
+                {
+                    diagnosticValues["barcapStationXFeet"] =
+                        barcapCoverage.StationCenterFeet.x;
+                    diagnosticValues["barcapStationAltitudeFeet"] =
+                        barcapCoverage.StationCenterFeet.y;
+                    diagnosticValues["barcapStationZFeet"] =
+                        barcapCoverage.StationCenterFeet.z;
+                    diagnosticValues["barcapStationHeadingDegrees"] =
+                        barcapCoverage.StationHeadingDegrees;
+                    diagnosticValues["barcapCoveredTileCount"] =
+                        barcapCoverage.CoveredBarrierTileIds?.Count ?? 0;
+                    diagnosticValues["barcapTrackHalfLengthKm"] =
+                        barcapCoverage.StationTrackHalfLengthKm;
+                    diagnosticValues["barcapInterceptSlackKm"] =
+                        barcapCoverage.PlannedMinimumInterceptSlackKm;
+                    diagnosticValues["plannedKnownSamSiteCount"] =
+                        barcapCoverage.PlannedKnownSamSiteIds?.Count ?? 0;
+                    diagnosticMessage = "BARCAP package committed at station "
+                                        + $"({barcapCoverage.StationCenterFeet.x:0},"
+                                        + $"{barcapCoverage.StationCenterFeet.z:0})ft with "
+                                        + $"{barcapCoverage.CoveredBarrierTileIds?.Count ?? 0} "
+                                        + "covered barrier tile(s).";
+                }
+
                 AddDiagnostic(new AirTaskingDiagnostic
                 {
                     RecordedAt = currentTime,
                     MissionRequestId = request.MissionRequestId,
                     PackageId = package.PackageId,
                     Code = "package-committed",
-                    Message = "Package committed.",
-                    Values = new Dictionary<string, float>
-                    {
-                        { "flightCount", package.Flights.Count },
-                        { "aircraftCount", package.Flights.Sum(flight => flight.AircraftIds.Count) }
-                    }
+                    Message = diagnosticMessage,
+                    Values = diagnosticValues
                 });
                 reason = "Package committed.";
                 return true;

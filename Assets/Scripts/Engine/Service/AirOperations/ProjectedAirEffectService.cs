@@ -38,12 +38,14 @@ namespace Engine.Service
             if (request.RequestType == AirMissionRequestType.BarrierCombatAirPatrol
                 && request.BarcapBarrier?.BarrierTileIds?.Count > 0)
             {
-                if (!TryFindFirstBarcapCoverageGap(
+                if (!TryFindFirstBarcapTaskingGap(
                         commander,
                         request,
                         planningStart,
                         out gapStart,
-                        out var uncovered))
+                        out var uncovered,
+                        out _,
+                        out _))
                     return false;
 
                 projectedAmount = Math.Max(
@@ -152,6 +154,216 @@ namespace Engine.Service
             }
 
             return false;
+        }
+
+        public bool TryFindFirstBarcapTaskingGap(
+            AllianceAirTaskingCommander commander,
+            AirMissionRequest request,
+            DateTime planningStart,
+            out DateTime gapStart,
+            out IReadOnlyList<Vector3Int> gapBarrierTiles,
+            out bool isSpatialGap,
+            out int aircraftDeficit)
+        {
+            gapStart = planningStart;
+            gapBarrierTiles = Array.Empty<Vector3Int>();
+            isSpatialGap = false;
+            aircraftDeficit = 0;
+            var barrierTiles = request.BarcapBarrier?.BarrierTileIds?
+                .Distinct()
+                .ToList();
+            if (barrierTiles == null || barrierTiles.Count == 0)
+                return false;
+
+            var intervalStart = planningStart > request.EffectStart
+                ? planningStart
+                : request.EffectStart;
+            if (intervalStart >= request.EffectEnd)
+                return false;
+
+            var flights = GetProjectedFlights(commander, request)
+                .Where(flight => flight.EffectEnd > intervalStart
+                                 && flight.EffectStart < request.EffectEnd)
+                .ToList();
+            var eventTimes = new SortedSet<DateTime> { intervalStart };
+            foreach (var flight in flights)
+            {
+                if (flight.EffectStart > intervalStart
+                    && flight.EffectStart < request.EffectEnd)
+                    eventTimes.Add(flight.EffectStart);
+                if (flight.EffectEnd > intervalStart
+                    && flight.EffectEnd < request.EffectEnd)
+                    eventTimes.Add(flight.EffectEnd);
+            }
+
+            var preferredStrength = Math.Max(
+                1,
+                commander.Doctrine.PreferredBarcapStationAircraft);
+            foreach (var eventTime in eventTimes)
+            {
+                var activeFlights = flights
+                    .Where(flight => flight.EffectStart <= eventTime
+                                     && flight.EffectEnd > eventTime)
+                    .Select(flight => new
+                    {
+                        Flight = flight,
+                        Coverage = flight.PlannedBarcapCoverage
+                    })
+                    .Where(item => item.Coverage != null)
+                    .ToList();
+                var covered = activeFlights
+                    .SelectMany(item => item.Coverage.CoveredBarrierTileIds)
+                    .ToHashSet();
+                var uncovered = barrierTiles
+                    .Where(tile => !covered.Contains(tile))
+                    .ToList();
+                if (uncovered.Count > 0)
+                {
+                    var requiredByTile = uncovered.ToDictionary(
+                        tile => tile,
+                        _ => 1);
+                    if (PendingBarcapFlightsCloseGap(
+                            flights,
+                            eventTime,
+                            requiredByTile))
+                        continue;
+
+                    gapStart = eventTime;
+                    gapBarrierTiles = uncovered;
+                    isSpatialGap = true;
+                    aircraftDeficit = 1;
+                    return true;
+                }
+
+                var strengthByTile = barrierTiles.ToDictionary(tile => tile, _ => 0);
+                foreach (var item in activeFlights)
+                {
+                    var aircraftCount = GetProjectedAircraftCount(
+                        item.Flight,
+                        item.Coverage);
+                    if (aircraftCount <= 0)
+                        continue;
+                    foreach (var tile in item.Coverage.CoveredBarrierTileIds
+                                 .Where(strengthByTile.ContainsKey))
+                    {
+                        strengthByTile[tile] += aircraftCount;
+                    }
+                }
+
+                var understrength = barrierTiles
+                    .Where(tile => strengthByTile[tile] < preferredStrength)
+                    .ToList();
+                if (understrength.Count == 0)
+                    continue;
+
+                var deficitsByTile = understrength.ToDictionary(
+                    tile => tile,
+                    tile => preferredStrength - strengthByTile[tile]);
+                if (PendingBarcapFlightsCloseGap(
+                        flights,
+                        eventTime,
+                        deficitsByTile))
+                    continue;
+
+                gapStart = eventTime;
+                gapBarrierTiles = understrength;
+                aircraftDeficit = deficitsByTile.Values.Max();
+                return true;
+            }
+
+            return false;
+        }
+
+        private bool PendingBarcapFlightsCloseGap(
+            IReadOnlyList<AirFlight> projectedFlights,
+            DateTime gapStart,
+            IReadOnlyDictionary<Vector3Int, int> requiredAircraftByTile)
+        {
+            if (projectedFlights == null
+                || requiredAircraftByTile == null
+                || requiredAircraftByTile.Count == 0)
+                return false;
+
+            var pendingFlights = projectedFlights
+                .Where(flight => flight.EffectStart > gapStart
+                                 && flight.EffectEnd > flight.EffectStart)
+                .Select(flight => new
+                {
+                    Coverage = flight.PlannedBarcapCoverage,
+                    AircraftCount = GetProjectedAircraftCount(
+                        flight,
+                        flight.PlannedBarcapCoverage)
+                })
+                .Where(item => item.Coverage != null
+                               && item.AircraftCount > 0)
+                .ToList();
+            if (pendingFlights.Count == 0)
+                return false;
+
+            return requiredAircraftByTile.All(requirement =>
+                pendingFlights
+                    .Where(item => item.Coverage.CoveredBarrierTileIds
+                        .Contains(requirement.Key))
+                    .Sum(item => item.AircraftCount)
+                >= requirement.Value);
+        }
+
+        private int GetProjectedAircraftCount(
+            AirFlight flight,
+            BarcapStationCoverage coverage)
+        {
+            if (flight == null)
+                return 0;
+            if (gameManager == null
+                || !gameManager.squadronSystem.TryGetSquadron(
+                    flight.SquadronId,
+                    out var squadron))
+                return flight.AircraftIds.Count;
+
+            var assignedIds = flight.AircraftIds.ToHashSet();
+            var surviving = squadron.Aircraft
+                .Where(aircraft => assignedIds.Contains(aircraft.AircraftId)
+                                   && aircraft.Status
+                                   != CampaignAircraftStatus.Lost)
+                .ToList();
+            if (!flight.IsAirborne
+                || coverage == null
+                || coverage.PlannedPreferredLaunchRangeKm <= 0f)
+                return surviving.Count;
+
+            return surviving.Count(aircraft => aircraft.Loadout
+                .Where(item => item.Count > 0
+                               && ordnanceTypes.TryGetValue(
+                                   item.OrdnanceTypeDefinitionId,
+                                   out var ordnance)
+                               && AirLoadoutPlanner.IsAirToAir(ordnance))
+                .Select(item => ordnanceTypes[item.OrdnanceTypeDefinitionId]
+                                .MaximumRangeKm
+                                * BarcapPreferredLaunchRangeFraction)
+                .DefaultIfEmpty(0f)
+                .Max()
+                + 0.001f >= coverage.PlannedPreferredLaunchRangeKm);
+        }
+
+        public bool HasOtherSpatialBarcapCoverageGap(
+            AllianceAirTaskingCommander commander,
+            Guid excludedRequestId,
+            DateTime planningStart)
+        {
+            return commander.MissionRequests
+                .Where(request => request.MissionRequestId != excludedRequestId
+                                  && request.RequestType
+                                  == AirMissionRequestType.BarrierCombatAirPatrol
+                                  && request.BarcapBarrier?.BarrierTileIds?.Count > 0
+                                  && request.EffectEnd > planningStart)
+                .Any(request => TryFindFirstBarcapTaskingGap(
+                    commander,
+                    request,
+                    planningStart,
+                    out _,
+                    out _,
+                    out _,
+                    out _));
         }
 
         public float GetProjectedBarcapCoverageFraction(

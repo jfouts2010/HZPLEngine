@@ -7,129 +7,274 @@ using UnityEngine;
 
 namespace Engine.Service
 {
+    public sealed class BarcapRacetrackGeometry
+    {
+        public Vector3 CenterFeet { get; }
+        public float HeadingDegrees { get; }
+        public float TurnRadiusFeet { get; }
+        public float CircuitLengthFeet { get; }
+        public IReadOnlyList<Vector3> LoopPointsFeet { get; }
+
+        internal BarcapRacetrackGeometry(
+            Vector3 centerFeet,
+            float headingDegrees,
+            float turnRadiusFeet,
+            float circuitLengthFeet,
+            IReadOnlyList<Vector3> loopPointsFeet)
+        {
+            CenterFeet = centerFeet;
+            HeadingDegrees = Mathf.Repeat(headingDegrees, 360f);
+            TurnRadiusFeet = Math.Max(0f, turnRadiusFeet);
+            CircuitLengthFeet = Math.Max(0f, circuitLengthFeet);
+            LoopPointsFeet = loopPointsFeet ?? Array.Empty<Vector3>();
+        }
+
+        public IReadOnlyList<Vector3> GetClosedLoopPoints()
+        {
+            if (LoopPointsFeet.Count == 0)
+                return Array.Empty<Vector3>();
+            var result = LoopPointsFeet.ToList();
+            result.Add(LoopPointsFeet[0]);
+            return result;
+        }
+    }
+
     public static class BarcapInterceptGeometry
     {
-        public const float DefaultStationTrackHalfLengthTiles = 0.5f;
         private const float KilometersPerNauticalMile = 1.852f;
+        private const int HalfTurnSegmentCount = 12;
+        private static readonly float[] StationDepthFractions =
+        {
+            0.35f,
+            0.55f,
+            0.75f
+        };
+        private static readonly float[] StationLateralFractions =
+        {
+            0f,
+            -0.2f,
+            0.2f
+        };
         public const float MaximumResponseMinutes = 10f;
         private const float MinimumRepresentativeThreatSpeedKnots = 300f;
         private const float PlanningCommitMarginMinutes = 1.5f;
 
-        public static (Vector3 Entry, Vector3 Endpoint) GetStationTrackEndpoints(
-            Vector3Int stationTileId,
-            Vector3Int threatReferenceTileId,
-            float tileDistanceKm,
-            float altitudeFeet)
+        public static float CalculateStationTrackHalfLengthKm(
+            AircraftTypeDefinition aircraftType,
+            float trackLegMinutes)
         {
-            var stationCenter = AirspaceGeometry.TileCenterFeet(
-                stationTileId,
-                tileDistanceKm,
-                altitudeFeet);
+            if (aircraftType == null || aircraftType.CruiseSpeedKnots <= 0f)
+                return 0f;
+
+            var fullLegKm = aircraftType.CruiseSpeedKnots
+                            * KilometersPerNauticalMile
+                            * Math.Max(0f, trackLegMinutes)
+                            / 60f;
+            return fullLegKm * 0.5f;
+        }
+
+        public static float GetStationHeadingDegrees(
+            Vector3 stationCenterFeet,
+            Vector3Int threatReferenceTileId,
+            float tileDistanceKm)
+        {
             var threatCenter = AirspaceGeometry.TileCenterFeet(
                 threatReferenceTileId,
                 tileDistanceKm,
-                altitudeFeet);
-            var threatDirection = threatCenter - stationCenter;
+                stationCenterFeet.y);
+            var threatDirection = threatCenter - stationCenterFeet;
             threatDirection.y = 0f;
             if (threatDirection.sqrMagnitude < 1f)
                 threatDirection = Vector3.forward;
             threatDirection.Normalize();
-            var trackDirection = new Vector3(
-                -threatDirection.z,
-                0f,
-                threatDirection.x);
-            var offset = trackDirection
-                         * Math.Max(0f, tileDistanceKm)
-                         * AirspaceGeometry.FeetPerKilometer
-                         * DefaultStationTrackHalfLengthTiles;
-            return (stationCenter - offset, stationCenter + offset);
+            return Mathf.Repeat(
+                Mathf.Atan2(threatDirection.x, threatDirection.z)
+                * Mathf.Rad2Deg,
+                360f);
         }
 
-        public static IReadOnlyList<Vector3Int> GetDefensiveStationTiles(
-            IEnumerable<Vector3Int> friendlyTileIds,
-            Vector3Int barrierTileId,
-            Vector3Int threatReferenceTileId)
+        public static BarcapRacetrackGeometry BuildRacetrack(
+            Vector3 stationCenterFeet,
+            float headingDegrees,
+            float trackHalfLengthKm,
+            AircraftTypeDefinition aircraftType)
         {
-            var friendlyTiles = (friendlyTileIds ?? Enumerable.Empty<Vector3Int>())
-                .ToHashSet();
-            if (!friendlyTiles.Contains(barrierTileId))
-                return Array.Empty<Vector3Int>();
-
-            var stations = new List<Vector3Int> { barrierTileId };
-            var station = barrierTileId;
-            var threatCenter = AirspaceGeometry.TileCenterFeet(
-                threatReferenceTileId,
-                1f);
-            var barrierCenter = AirspaceGeometry.TileCenterFeet(
-                barrierTileId,
-                1f);
-            var rearward = barrierCenter - threatCenter;
-            rearward.y = 0f;
-            if (rearward.sqrMagnitude < 0.001f)
-                rearward = Vector3.forward;
-            rearward.Normalize();
-            while (true)
+            var radians = headingDegrees * Mathf.Deg2Rad;
+            var forward = new Vector3(
+                Mathf.Sin(radians),
+                0f,
+                Mathf.Cos(radians));
+            var right = new Vector3(forward.z, 0f, -forward.x);
+            var halfLengthFeet = Math.Max(0f, trackHalfLengthKm)
+                                 * AirspaceGeometry.FeetPerKilometer;
+            var turnRadiusFeet = aircraftType == null
+                ? 0f
+                : AirspaceGeometry.TurnRadiusFeet(
+                    aircraftType.CruiseSpeedKnots,
+                    aircraftType.TurnRateDegreesPerSecond);
+            var rearCenter = stationCenterFeet - forward * halfLengthFeet;
+            var frontCenter = stationCenterFeet + forward * halfLengthFeet;
+            var points = new List<Vector3>
             {
-                var currentThreatDistance = AirMissionArea.HexDistance(
-                    station,
-                    threatReferenceTileId);
-                var next = AirspaceGeometry.NeighborTiles(station)
-                    .Where(friendlyTiles.Contains)
-                    .Where(tile => AirMissionArea.HexDistance(
-                                       tile,
-                                       threatReferenceTileId)
-                                   > currentThreatDistance)
-                    .OrderByDescending(tile => Vector3.Dot(
-                        AirspaceGeometry.TileCenterFeet(tile, 1f)
-                        - barrierCenter,
-                        rearward))
-                    .ThenByDescending(tile => AirMissionArea.HexDistance(
-                        tile,
-                        threatReferenceTileId))
-                    .ThenBy(tile => tile.x)
-                    .ThenBy(tile => tile.y)
-                    .ThenBy(tile => tile.z)
-                    .Select(tile => (Vector3Int?)tile)
-                    .FirstOrDefault();
-                if (!next.HasValue || next.Value == station)
-                    break;
-                station = next.Value;
-                stations.Add(station);
+                rearCenter - right * turnRadiusFeet,
+                frontCenter - right * turnRadiusFeet
+            };
+            for (var segment = 1; segment <= HalfTurnSegmentCount; segment++)
+            {
+                var angle = Mathf.PI * segment / HalfTurnSegmentCount;
+                points.Add(frontCenter
+                           + (-right * Mathf.Cos(angle)
+                              + forward * Mathf.Sin(angle))
+                           * turnRadiusFeet);
+            }
+            points.Add(rearCenter + right * turnRadiusFeet);
+            for (var segment = 1; segment < HalfTurnSegmentCount; segment++)
+            {
+                var angle = Mathf.PI * segment / HalfTurnSegmentCount;
+                points.Add(rearCenter
+                           + (right * Mathf.Cos(angle)
+                              - forward * Mathf.Sin(angle))
+                           * turnRadiusFeet);
             }
 
-            return stations;
+            return new BarcapRacetrackGeometry(
+                stationCenterFeet,
+                headingDegrees,
+                turnRadiusFeet,
+                halfLengthFeet * 4f + 2f * Mathf.PI * turnRadiusFeet,
+                points.AsReadOnly());
+        }
+
+        public static IReadOnlyList<Vector3> GetDefensiveStationPositions(
+            Vector3Int barrierTileId,
+            Vector3Int threatReferenceTileId,
+            float tileDistanceKm,
+            float altitudeFeet,
+            float maximumStationDistanceKm)
+        {
+            if (tileDistanceKm <= 0f)
+                return Array.Empty<Vector3>();
+
+            var threatCenter = AirspaceGeometry.TileCenterFeet(
+                threatReferenceTileId,
+                tileDistanceKm,
+                altitudeFeet);
+            var barrierCenter = AirspaceGeometry.TileCenterFeet(
+                barrierTileId,
+                tileDistanceKm,
+                altitudeFeet);
+            var hostileToFriendly = barrierCenter - threatCenter;
+            hostileToFriendly.y = 0f;
+            if (hostileToFriendly.sqrMagnitude < 1f)
+                return new[] { barrierCenter };
+            hostileToFriendly.Normalize();
+            var tangent = new Vector3(
+                -hostileToFriendly.z,
+                0f,
+                hostileToFriendly.x);
+            var maximum = Math.Max(0f, maximumStationDistanceKm);
+            if (maximum <= 0.001f)
+                return new[] { barrierCenter };
+
+            var result = new List<Vector3>(
+                StationDepthFractions.Length * StationLateralFractions.Length
+                + 1);
+            foreach (var depthFraction in StationDepthFractions)
+            {
+                var rearwardFeet = hostileToFriendly
+                                   * maximum
+                                   * depthFraction
+                                   * AirspaceGeometry.FeetPerKilometer;
+                foreach (var lateralFraction in StationLateralFractions)
+                {
+                    var lateralFeet = tangent
+                                      * maximum
+                                      * lateralFraction
+                                      * AirspaceGeometry.FeetPerKilometer;
+                    result.Add(barrierCenter + rearwardFeet + lateralFeet);
+                }
+            }
+
+            // Retain one maximum-depth option for an aircraft that must move
+            // farther from a newly detected threat after reaching station.
+            result.Add(
+                barrierCenter
+                + hostileToFriendly
+                * maximum
+                * AirspaceGeometry.FeetPerKilometer);
+            return result;
+        }
+
+        public static float GetDefensiveStationDepthKm(
+            Vector3 stationCenterFeet,
+            Vector3Int barrierTileId,
+            Vector3Int threatReferenceTileId,
+            float tileDistanceKm)
+        {
+            if (tileDistanceKm <= 0f)
+                return 0f;
+            var threatCenter = AirspaceGeometry.TileCenterFeet(
+                threatReferenceTileId,
+                tileDistanceKm);
+            var barrierCenter = AirspaceGeometry.TileCenterFeet(
+                barrierTileId,
+                tileDistanceKm);
+            var hostileToFriendly = barrierCenter - threatCenter;
+            hostileToFriendly.y = 0f;
+            if (hostileToFriendly.sqrMagnitude < 1f)
+                return 0f;
+            hostileToFriendly.Normalize();
+            return Math.Max(
+                0f,
+                Vector3.Dot(stationCenterFeet - barrierCenter, hostileToFriendly)
+                / AirspaceGeometry.FeetPerKilometer);
         }
 
         public static bool CanReachOperationalBarrierFromStation(
-            Vector3Int stationTileId,
+            IReadOnlyList<Vector3> racetrackPointsFeet,
             Vector3Int barrierTileId,
             Vector3Int threatReferenceTileId,
             float tileDistanceKm,
             float weaponReleaseStandoffKm,
             float responseRadiusKm)
         {
-            var track = GetStationTrackEndpoints(
-                stationTileId,
+            var worstStationDistanceKm = GetWorstStationDistanceToOperationalBarrierKm(
+                racetrackPointsFeet,
+                barrierTileId,
                 threatReferenceTileId,
                 tileDistanceKm,
-                0f);
+                weaponReleaseStandoffKm);
+            return worstStationDistanceKm
+                   <= Math.Max(0f, responseRadiusKm) + 0.001f;
+        }
+
+        public static float GetWorstStationDistanceToOperationalBarrierKm(
+            IReadOnlyList<Vector3> racetrackPointsFeet,
+            Vector3Int barrierTileId,
+            Vector3Int threatReferenceTileId,
+            float tileDistanceKm,
+            float weaponReleaseStandoffKm)
+        {
             var releasePoint = GetOperationalBarrierPointsFeet(
                     new[] { barrierTileId },
                     threatReferenceTileId,
                     tileDistanceKm,
                     weaponReleaseStandoffKm)
                 .FirstOrDefault();
-            var worstStationDistanceKm = Math.Max(
-                Vector3.Distance(track.Entry, releasePoint),
-                Vector3.Distance(track.Endpoint, releasePoint))
-                / AirspaceGeometry.FeetPerKilometer;
-            return worstStationDistanceKm <= Math.Max(0f, responseRadiusKm) + 0.001f;
+            var releaseHorizontal = new Vector2(releasePoint.x, releasePoint.z);
+            return (racetrackPointsFeet ?? Array.Empty<Vector3>())
+                       .Select(point => Vector2.Distance(
+                           new Vector2(point.x, point.z),
+                           releaseHorizontal))
+                       .DefaultIfEmpty(float.MaxValue)
+                       .Max()
+                   / AirspaceGeometry.FeetPerKilometer;
         }
 
         public static IReadOnlyList<Vector3Int> GetContiguousCoveredBarrierRun(
             IReadOnlyList<Vector3Int> orderedBarrierTiles,
             Vector3Int centerTileId,
-            Vector3Int stationTileId,
+            IReadOnlyList<Vector3> racetrackPointsFeet,
             BarcapStationCoverage coverage,
             float tileDistanceKm)
         {
@@ -140,7 +285,7 @@ namespace Engine.Service
 
             var coverable = orderedBarrierTiles
                 .Where(tile => CanReachOperationalBarrierFromStation(
-                    stationTileId,
+                    racetrackPointsFeet,
                     tile,
                     coverage.ThreatReferenceTileId,
                     tileDistanceKm,
@@ -173,7 +318,8 @@ namespace Engine.Service
                 BarcapBarrierPlan.DefaultWeaponReleaseStandoffKm,
             float preferredLaunchRangeKm = 0f,
             float weaponPreparationSeconds = 0f,
-            float sensorWarningMinutes = 0f)
+            float sensorWarningMinutes = 0f,
+            float commandDelaySeconds = 0f)
         {
             if (aircraftType == null || aircraftType.CombatSpeedKnots <= 0f)
                 return 0f;
@@ -199,7 +345,8 @@ namespace Engine.Service
                 threatMinutesToRelease);
             var readinessMinutes = PlanningCommitMarginMinutes
                                    + Math.Max(0f, weaponPreparationSeconds)
-                                   / 60f;
+                                   / 60f
+                                   + Math.Max(0f, commandDelaySeconds) / 60f;
             if (availableMinutes < readinessMinutes)
                 return 0f;
 

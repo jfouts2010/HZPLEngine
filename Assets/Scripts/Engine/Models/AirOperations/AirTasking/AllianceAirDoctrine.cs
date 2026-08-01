@@ -10,6 +10,11 @@ namespace Models.Gameplay.Campaign
     {
         public const float DefaultRiskTolerance = 0.5f;
         public const float DefaultDesiredAirCombatAdvantage = 1.25f;
+        public const float DefaultBarcapTrackLegMinutes = 2f;
+        public const float DefaultBarcapDesiredInterceptMarginMinutes = 2f;
+        public const float DefaultBarcapCommandDelaySeconds = 30f;
+        public const float DefaultBarcapStationAltitudeFeet = 40000f;
+        public const int DefaultPreferredBarcapStationAircraft = 2;
 
         public float RiskTolerance = DefaultRiskTolerance;
         public float DesiredAirCombatAdvantage = DefaultDesiredAirCombatAdvantage;
@@ -21,6 +26,13 @@ namespace Models.Gameplay.Campaign
         public int MinimumAirToAirWeaponReserve = 1;
         public float MaximumPursuitMinutes = 12f;
         public int MaximumRecommits = 2;
+        public float BarcapTrackLegMinutes = DefaultBarcapTrackLegMinutes;
+        public float BarcapDesiredInterceptMarginMinutes =
+            DefaultBarcapDesiredInterceptMarginMinutes;
+        public float BarcapCommandDelaySeconds = DefaultBarcapCommandDelaySeconds;
+        public float BarcapStationAltitudeFeet = DefaultBarcapStationAltitudeFeet;
+        public int PreferredBarcapStationAircraft =
+            DefaultPreferredBarcapStationAircraft;
         public float JokerFuelFraction = 0.35f;
         public float BingoFuelFraction = 0.2f;
         public Dictionary<AirMissionRequestType, float> PriorityWeights =
@@ -55,6 +67,15 @@ namespace Models.Gameplay.Campaign
                 MinimumAirToAirWeaponReserve = Math.Max(0, MinimumAirToAirWeaponReserve),
                 MaximumPursuitMinutes = Mathf.Max(1f, MaximumPursuitMinutes),
                 MaximumRecommits = Math.Max(0, MaximumRecommits),
+                BarcapTrackLegMinutes = Mathf.Max(0.25f, BarcapTrackLegMinutes),
+                BarcapDesiredInterceptMarginMinutes = Mathf.Max(
+                    0f,
+                    BarcapDesiredInterceptMarginMinutes),
+                BarcapCommandDelaySeconds = Mathf.Max(0f, BarcapCommandDelaySeconds),
+                BarcapStationAltitudeFeet = Mathf.Max(0f, BarcapStationAltitudeFeet),
+                PreferredBarcapStationAircraft = Math.Max(
+                    1,
+                    PreferredBarcapStationAircraft),
                 JokerFuelFraction = Mathf.Clamp01(JokerFuelFraction),
                 BingoFuelFraction = Mathf.Clamp01(Mathf.Min(BingoFuelFraction, JokerFuelFraction)),
                 PriorityWeights = PriorityWeights.ToDictionary(

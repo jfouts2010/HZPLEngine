@@ -473,10 +473,12 @@ namespace Engine.Models
                     request.RequestType
                     == AirMissionRequestType.BarrierCombatAirPatrol
                     && request.BarcapBarrier?.BarrierTileIds?.Count > 0
-                        ? projectedEffects.TryFindFirstBarcapCoverageGap(
+                        ? projectedEffects.TryFindFirstBarcapTaskingGap(
                             commander,
                             request,
                             planningStart,
+                            out _,
+                            out _,
                             out _,
                             out _)
                         : projectedEffects.TryFindFirstCoverageGap(
@@ -491,7 +493,7 @@ namespace Engine.Models
                 commander.ReopenFulfilledRequest(
                     request.MissionRequestId,
                     gameManager.CurrentTime,
-                    "Projected sustained coverage developed a spatial or temporal gap.");
+                    "Projected sustained coverage developed a spatial, strength, or temporal gap.");
             }
         }
 

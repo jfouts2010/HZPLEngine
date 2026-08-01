@@ -5034,27 +5034,34 @@ namespace Engine.Monobehaviours.Managers
             Color color,
             string label)
         {
-            var pair = GetStationPairs(flight).FirstOrDefault();
+            var route = flight.Route.ToList();
+            var pair = GetStationPairs(flight)
+                .Select(candidate => new
+                {
+                    Pair = candidate,
+                    EndpointIndex = route.IndexOf(candidate.endpoint)
+                })
+                .Where(candidate => candidate.EndpointIndex
+                                    >= flight.CurrentWaypointIndex)
+                .OrderBy(candidate => candidate.EndpointIndex)
+                .Select(candidate => candidate.Pair)
+                .FirstOrDefault();
             if (pair.entry == null || pair.endpoint == null)
                 return false;
 
-            var start = AirPositionToMapPosition(pair.entry.PositionFeet);
-            var end = AirPositionToMapPosition(pair.endpoint.PositionFeet);
-            var delta = end - start;
-            if (delta.sqrMagnitude <= 0.0025f)
+            var entryIndex = route.IndexOf(pair.entry);
+            var endpointIndex = route.IndexOf(pair.endpoint);
+            if (entryIndex < 0 || endpointIndex <= entryIndex)
                 return false;
-
-            var direction = delta.normalized;
-            var normal = new Vector3(-direction.y, direction.x, 0f);
-            var width = Mathf.Clamp(delta.magnitude * 0.22f, 0.16f, 0.34f);
-            var points = new List<Vector3>
-            {
-                start + normal * width,
-                end + normal * width,
-                end - normal * width,
-                start - normal * width,
-                start + normal * width
-            };
+            var points = route
+                .Skip(entryIndex)
+                .Take(endpointIndex - entryIndex + 1)
+                .Select(waypoint => AirPositionToMapPosition(
+                    waypoint.PositionFeet))
+                .ToList();
+            points.Add(points[0]);
+            if (points.Count < 4)
+                return false;
             CreateAirIntentPolyline(
                 $"Air {label} Racetrack {ShortId(flight.FlightId)}",
                 airOverlayRoot,
@@ -5065,7 +5072,10 @@ namespace Engine.Monobehaviours.Managers
                 25);
             CreateAirIntentLabel(
                 airOverlayRoot,
-                Vector3.Lerp(start, end, 0.5f) + normal * (width + 0.06f),
+                points.Take(points.Count - 1).Aggregate(
+                    Vector3.zero,
+                    (sum, point) => sum + point) / (points.Count - 1)
+                + new Vector3(0.06f, 0.04f, 0f),
                 label,
                 WithAlpha(color, 0.95f),
                 26);
