@@ -1,13 +1,33 @@
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace Models.Gameplay.Campaign
 {
     [Serializable]
+    public struct IADSTrackMotionSample
+    {
+        public DateTime ObservedAt;
+        public Vector3 PositionFeet;
+        public float HeadingDegrees;
+
+        public IADSTrackMotionSample(
+            DateTime observedAt,
+            Vector3 positionFeet,
+            float headingDegrees)
+        {
+            ObservedAt = observedAt;
+            PositionFeet = positionFeet;
+            HeadingDegrees = headingDegrees;
+        }
+    }
+
+    [Serializable]
     public sealed class IADSTrack
     {
         public const float MinimumCreationQuality = 0.10f;
         public const float AircraftTypeIdentificationQualityThreshold = 0.5f;
+        private const double MotionHistoryMinutes = 10d;
 
         public Guid TrackId = Guid.NewGuid();
         public Guid FlightId;
@@ -22,6 +42,8 @@ namespace Models.Gameplay.Campaign
         public bool IsStale;
         public float StaleSeconds;
         public DateTime LastObservedAt;
+        public List<IADSTrackMotionSample> RecentMotion =
+            new List<IADSTrackMotionSample>();
 
         public bool HasIdentifiedAircraftType =>
             IdentifiedAircraftTypeDefinitionId != Guid.Empty;
@@ -51,6 +73,7 @@ namespace Models.Gameplay.Campaign
             IsStale = false;
             StaleSeconds = 0f;
             LastObservedAt = observedAt;
+            RecordMotion(observedAt, lastKnownPositionFeet, estimatedHeadingDegrees);
         }
 
         public void Refresh(
@@ -72,6 +95,7 @@ namespace Models.Gameplay.Campaign
             IsStale = false;
             StaleSeconds = 0f;
             LastObservedAt = observedAt;
+            RecordMotion(observedAt, lastKnownPositionFeet, estimatedHeadingDegrees);
         }
 
         public void MarkStale(float elapsedSeconds, float staleQualityDecayPerSecond)
@@ -91,6 +115,30 @@ namespace Models.Gameplay.Campaign
             {
                 IdentifiedAircraftTypeDefinitionId = aircraftTypeDefinitionId;
             }
+        }
+
+        private void RecordMotion(
+            DateTime observedAt,
+            Vector3 positionFeet,
+            float headingDegrees)
+        {
+            RecentMotion ??= new List<IADSTrackMotionSample>();
+            var sample = new IADSTrackMotionSample(
+                observedAt,
+                positionFeet,
+                headingDegrees);
+            if (RecentMotion.Count > 0
+                && RecentMotion[RecentMotion.Count - 1].ObservedAt == observedAt)
+            {
+                RecentMotion[RecentMotion.Count - 1] = sample;
+            }
+            else
+            {
+                RecentMotion.Add(sample);
+            }
+
+            var cutoff = observedAt.AddMinutes(-MotionHistoryMinutes);
+            RecentMotion.RemoveAll(item => item.ObservedAt < cutoff);
         }
     }
 }

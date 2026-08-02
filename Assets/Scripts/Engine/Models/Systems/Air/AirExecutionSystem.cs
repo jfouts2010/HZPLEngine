@@ -82,11 +82,11 @@ namespace Engine.Models
         {
             ordnanceEmploymentSystem = employmentSystem
                 ?? throw new ArgumentNullException(nameof(employmentSystem));
-            ordnanceEmploymentSystem.SetAirToAirSamEmploymentValidator(
-                IsAirToAirSamEmploymentAuthorized);
+            ordnanceEmploymentSystem.SetAirToAirEmploymentValidator(
+                IsAirToAirEmploymentAuthorized);
         }
 
-        private bool IsAirToAirSamEmploymentAuthorized(
+        private bool IsAirToAirEmploymentAuthorized(
             ActiveOrdnanceEmploymentPass pass,
             DateTime currentTime)
         {
@@ -102,12 +102,13 @@ namespace Engine.Models
                    && frame.Flights.TryGetValue(
                        pass.TargetFlightId,
                        out var target)
-                   && AirCombatRules.IsAirToAirEmploymentSamSafe(
+                   && AirCombatRules.IsAirToAirEmploymentAuthorized(
                        source,
                        target,
                        frame,
                        pass,
                        ordnanceTypes,
+                       GetDoctrine(source.Alliance),
                        out _);
         }
 

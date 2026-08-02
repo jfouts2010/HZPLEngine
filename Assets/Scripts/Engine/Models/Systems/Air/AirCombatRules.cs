@@ -104,6 +104,40 @@ namespace Engine.Models
         }
     }
 
+    internal enum BarcapThreatDisposition
+    {
+        None = 0,
+        Monitor = 1,
+        Commit = 2,
+        Engage = 3
+    }
+
+    internal readonly struct BarcapThreatAssessment
+    {
+        public BarcapThreatDisposition Disposition { get; }
+        public Vector3 CrossingPointFeet { get; }
+        public float MinutesToCrossing { get; }
+        public string Reason { get; }
+
+        public bool MayIntercept =>
+            Disposition == BarcapThreatDisposition.Commit
+            || Disposition == BarcapThreatDisposition.Engage;
+
+        public bool MayFire => Disposition == BarcapThreatDisposition.Engage;
+
+        public BarcapThreatAssessment(
+            BarcapThreatDisposition disposition,
+            Vector3 crossingPointFeet,
+            float minutesToCrossing,
+            string reason)
+        {
+            Disposition = disposition;
+            CrossingPointFeet = crossingPointFeet;
+            MinutesToCrossing = minutesToCrossing;
+            Reason = reason ?? string.Empty;
+        }
+    }
+
     internal static class AirCombatRules
     {
         private const float PreferredRangeFraction = 0.78f;
@@ -121,6 +155,11 @@ namespace Engine.Models
         private const float BarcapReleaseMarginMinutes = 5f;
         private const float BarcapBoundaryToleranceTiles = 0.1f;
         private const float BarcapDefensiveBufferTiles = 0.15f;
+        private const float BarcapPatrolMinimumObservedMinutes = 2f;
+        private const float BarcapPatrolMinimumPathKm = 10f;
+        private const float BarcapPatrolMaximumNetPathFraction = 0.35f;
+        private const float BarcapPatrolDirectionThresholdKm = 0.25f;
+        private const float BarcapPatrolBreakoutBufferKm = 3f;
         private const float EscortThreatLookaheadMinutes = 10f;
         private const float EscortCommitMarginMinutes = 1.5f;
         private const float ThreateningCoursePersistenceSeconds = 30f;
@@ -306,25 +345,61 @@ namespace Engine.Models
             }
             if (activePass != null
                 && flight.MissionType
-                == AirMissionRequestType.BarrierCombatAirPatrol
-                && (!frame.Flights.TryGetValue(
-                        activePass.TargetFlightId,
-                        out var authorizedBarcapPassTarget)
+                == AirMissionRequestType.BarrierCombatAirPatrol)
+            {
+                var hasTarget = frame.Flights.TryGetValue(
+                    activePass.TargetFlightId,
+                    out var authorizedBarcapPassTarget);
+                IADSTrack authorizedBarcapTrack = null;
+                var hasTrack = hasTarget && frame.TryGetCurrentTrack(
+                    source.Alliance,
+                    activePass.TargetFlightId,
+                    out authorizedBarcapTrack);
+                var assessment = hasTrack
+                    ? AssessBarcapThreat(
+                        source,
+                        authorizedBarcapTrack,
+                        frame,
+                        ordnanceTypes,
+                        doctrine)
+                    : new BarcapThreatAssessment(
+                        BarcapThreatDisposition.None,
+                        default,
+                        float.MaxValue,
+                        "The contact was lost from the shared air picture.");
+                if (!assessment.MayIntercept
                     || !IsEligibleTarget(
                         source,
                         authorizedBarcapPassTarget,
                         frame,
                         ordnanceTypes,
-                        doctrine)))
-            {
-                var route = RouteCommand(
-                    source,
-                    frame.Time,
-                    AirCombatIntent.FollowMission,
-                    "The contact no longer threatens the assigned barrier; "
-                    + "resuming the BARCAP station route.");
-                route.RequestsAirToAirPassCancellation = true;
-                return route;
+                        doctrine))
+                {
+                    var route = RouteCommand(
+                        source,
+                        frame.Time,
+                        AirCombatIntent.FollowMission,
+                        "The contact no longer threatens the assigned barrier; "
+                        + "resuming the BARCAP station route.");
+                    route.RequestsAirToAirPassCancellation = true;
+                    return route;
+                }
+
+                if (!assessment.MayFire)
+                {
+                    var commit = AimAtTargetCommand(
+                        source,
+                        authorizedBarcapPassTarget,
+                        AirCombatIntent.EngageTarget,
+                        AirCombatManeuver.Intercept,
+                        frame.Time,
+                        frame.Time.AddSeconds(15),
+                        authorizedBarcapPassTarget.Flight.FlightId,
+                        Guid.Empty,
+                        assessment.Reason);
+                    commit.RequestsAirToAirPassCancellation = true;
+                    return commit;
+                }
             }
             if (activePass != null
                 && frame.Flights.TryGetValue(activePass.TargetFlightId, out var passTarget))
@@ -564,6 +639,45 @@ namespace Engine.Models
                     awayFromTarget: true);
             }
             var weapon = shot.Weapon;
+
+            if (flight.MissionType
+                    == AirMissionRequestType.BarrierCombatAirPatrol
+                && frame.TryGetCurrentTrack(
+                    source.Alliance,
+                    target.Flight.FlightId,
+                    out var barcapTrack))
+            {
+                var assessment = AssessBarcapThreat(
+                    source,
+                    barcapTrack,
+                    frame,
+                    ordnanceTypes,
+                    doctrine);
+                if (!assessment.MayIntercept)
+                {
+                    var route = RouteCommand(
+                        source,
+                        frame.Time,
+                        AirCombatIntent.FollowMission,
+                        assessment.Reason);
+                    route.RequestsAirToAirPassCancellation = true;
+                    return route;
+                }
+
+                if (!assessment.MayFire)
+                {
+                    return AimAtTargetCommand(
+                        source,
+                        target,
+                        AirCombatIntent.EngageTarget,
+                        AirCombatManeuver.Intercept,
+                        frame.Time,
+                        frame.Time.AddSeconds(15),
+                        target.Flight.FlightId,
+                        Guid.Empty,
+                        assessment.Reason);
+                }
+            }
 
             if (shot.Status == AirToAirShotStatus.Ready)
             {
@@ -1378,7 +1492,19 @@ namespace Engine.Models
                     out _))
                 return false;
 
-            if (IsCommittedAgainstFlights(
+            var isSpatialBarcap = source.Flight.MissionType
+                                  == AirMissionRequestType.BarrierCombatAirPatrol
+                                  && source.Flight.ActiveBarcapCoverage
+                                  is BarcapStationCoverage;
+            if (isSpatialBarcap
+                && HasIncomingAirWeaponAgainstFlights(
+                    target.Flight.FlightId,
+                    new[] { source.Flight.FlightId },
+                    frame))
+                return true;
+
+            if (!isSpatialBarcap
+                && IsCommittedAgainstFlights(
                     target,
                     new[] { source.Flight.FlightId },
                     frame))
@@ -1923,25 +2049,46 @@ namespace Engine.Models
                         source.Alliance,
                         target.Flight.FlightId,
                         out var track);
-                    var minutes = float.MaxValue;
-                    var isThreat = TryResolvePotentialAirThreatCapability(
-                                       track,
-                                       frame,
-                                       ordnanceTypes,
-                                       AirThreatAssessmentPurpose.BarrierAssets,
-                                       out _)
-                                   && TryGetBarcapThreatGeometry(
-                                       source,
-                                       track,
-                                       frame,
-                                       ordnanceTypes,
-                                       doctrine,
-                                       out _,
-                                       out minutes);
+                    if (source.Flight.ActiveBarcapCoverage
+                        is not BarcapStationCoverage)
+                    {
+                        var legacyMinutes = float.MaxValue;
+                        var isLegacyThreat =
+                            TryResolvePotentialAirThreatCapability(
+                                track,
+                                frame,
+                                ordnanceTypes,
+                                AirThreatAssessmentPurpose.BarrierAssets,
+                                out _)
+                            && TryGetBarcapThreatGeometry(
+                                source,
+                                track,
+                                frame,
+                                ordnanceTypes,
+                                doctrine,
+                                out _,
+                                out legacyMinutes);
+                        return new
+                        {
+                            target.Flight.FlightId,
+                            Minutes = isLegacyThreat
+                                ? legacyMinutes
+                                : float.MaxValue
+                        };
+                    }
+
+                    var assessment = AssessBarcapThreat(
+                        source,
+                        track,
+                        frame,
+                        ordnanceTypes,
+                        doctrine);
                     return new
                     {
                         target.Flight.FlightId,
-                        Minutes = isThreat ? minutes : float.MaxValue
+                        Minutes = assessment.MayIntercept
+                            ? assessment.MinutesToCrossing
+                            : float.MaxValue
                     };
                 })
                 .Where(candidate => candidate.Minutes < float.MaxValue)
@@ -1975,6 +2122,23 @@ namespace Engine.Models
                        == AirCombatIntent.EngageTarget
                        && defendedFlightIds.Contains(
                            attacker.Flight.TacticalState.TargetFlightId));
+        }
+
+        private static bool HasIncomingAirWeaponAgainstFlights(
+            Guid attackerFlightId,
+            IReadOnlyCollection<Guid> defendedFlightIds,
+            AirCombatFrame frame)
+        {
+            return attackerFlightId != Guid.Empty
+                   && defendedFlightIds != null
+                   && defendedFlightIds.Count > 0
+                   && frame?.PendingEffects != null
+                   && frame.PendingEffects.Any(effect =>
+                       effect.SourceKind
+                       == OrdnanceEmploymentSourceKind.AircraftFlight
+                       && effect.SourceFlightId == attackerFlightId
+                       && defendedFlightIds.Contains(effect.TargetFlightId)
+                       && effect.ResolveAt > frame.Time);
         }
 
         private static AirCombatCommand ContinueAssignedMission(
@@ -2084,15 +2248,26 @@ namespace Engine.Models
                 .ToList();
         }
 
-        private static bool TryGetBarcapThreatMinutes(
+        internal static BarcapThreatAssessment AssessBarcapThreat(
             AirCombatFlightView source,
             IADSTrack track,
             AirCombatFrame frame,
             IReadOnlyDictionary<Guid, OrdnanceTypeDefinition> ordnanceTypes,
-            AllianceAirDoctrine doctrine,
-            out float minutesToEntry)
+            AllianceAirDoctrine doctrine)
         {
-            minutesToEntry = float.MaxValue;
+            if (track != null
+                && HasIncomingAirWeaponAgainstFlights(
+                    track.FlightId,
+                    new[] { source.Flight.FlightId },
+                    frame))
+            {
+                return new BarcapThreatAssessment(
+                    BarcapThreatDisposition.Engage,
+                    track.LastKnownPositionFeet,
+                    0f,
+                    "An air weapon is inbound against the patrol.");
+            }
+
             if (!TryResolvePotentialAirThreatCapability(
                     track,
                     frame,
@@ -2106,19 +2281,53 @@ namespace Engine.Models
                     ordnanceTypes,
                     doctrine,
                     out var crossingFeet,
-                    out minutesToEntry))
-                return false;
+                    out var minutesToEntry))
+            {
+                return new BarcapThreatAssessment(
+                    BarcapThreatDisposition.None,
+                    default,
+                    float.MaxValue,
+                    "The contact has no credible course into the assigned barrier.");
+            }
 
-            if (!IsThreatCoursePersistentOrUrgent(
-                    source.Flight,
-                    track.FlightId,
-                    frame.Time,
-                    minutesToEntry))
-                return false;
+            if (minutesToEntry <= 0.001f)
+            {
+                return new BarcapThreatAssessment(
+                    BarcapThreatDisposition.Engage,
+                    crossingFeet,
+                    Math.Max(0f, minutesToEntry),
+                    "The contact has penetrated the defended release line.");
+            }
 
             if (source.Flight.ActiveBarcapCoverage
                 is not BarcapStationCoverage)
-                return true;
+            {
+                return IsThreatCoursePersistentOrUrgent(
+                    source.Flight,
+                    track.FlightId,
+                    frame.Time,
+                    minutesToEntry)
+                    ? new BarcapThreatAssessment(
+                        BarcapThreatDisposition.Engage,
+                        crossingFeet,
+                        minutesToEntry,
+                        "The contact threatens the legacy BARCAP mission area.")
+                    : new BarcapThreatAssessment(
+                        BarcapThreatDisposition.Monitor,
+                        crossingFeet,
+                        minutesToEntry,
+                        "Monitoring a possible approach to the legacy BARCAP mission area.");
+            }
+
+            var coverage = source.Flight.ActiveBarcapCoverage;
+            if (LooksLikeBoundedBarcapPatrol(track, coverage))
+            {
+                return new BarcapThreatAssessment(
+                    BarcapThreatDisposition.Monitor,
+                    crossingFeet,
+                    minutesToEntry,
+                    "The contact remains inside an observed bounded reciprocal patrol.");
+            }
 
             var interceptMinutes = CalculateBarcapInterceptMinutes(
                 source,
@@ -2137,7 +2346,134 @@ namespace Engine.Models
             var marginMinutes = isCommittedToTrack
                 ? BarcapReleaseMarginMinutes
                 : BarcapCommitMarginMinutes;
-            return minutesToEntry <= interceptMinutes + marginMinutes;
+            if (minutesToEntry > interceptMinutes + marginMinutes)
+            {
+                return new BarcapThreatAssessment(
+                    BarcapThreatDisposition.Monitor,
+                    crossingFeet,
+                    minutesToEntry,
+                    "Monitoring the contact until the latest-safe defensive commit window.");
+            }
+
+            var persistent = source.Flight.TacticalState
+                .HasPersistentThreatObservation(
+                    track.FlightId,
+                    frame.Time,
+                    TimeSpan.FromSeconds(
+                        ThreateningCoursePersistenceSeconds),
+                    TimeSpan.FromSeconds(
+                        ThreateningCourseMaximumGapSeconds));
+            return persistent
+                ? new BarcapThreatAssessment(
+                    BarcapThreatDisposition.Engage,
+                    crossingFeet,
+                    minutesToEntry,
+                    "The contact has sustained an inbound course inside the defensive commit window.")
+                : new BarcapThreatAssessment(
+                    BarcapThreatDisposition.Commit,
+                    crossingFeet,
+                    minutesToEntry,
+                    "Committing defensively while the inbound course is confirmed; weapons held.");
+        }
+
+        private static bool LooksLikeBoundedBarcapPatrol(
+            IADSTrack track,
+            BarcapStationCoverage coverage)
+        {
+            if (track?.RecentMotion == null
+                || track.RecentMotion.Count < 4
+                || coverage?.CoveredBarrierTileIds == null
+                || coverage.CoveredBarrierTileIds.Count == 0)
+                return false;
+
+            var samples = track.RecentMotion
+                .OrderBy(sample => sample.ObservedAt)
+                .ToList();
+            var observedMinutes = (samples[samples.Count - 1].ObservedAt
+                                   - samples[0].ObservedAt).TotalMinutes;
+            if (observedMinutes < BarcapPatrolMinimumObservedMinutes)
+                return false;
+
+            var protectedMidpoint = coverage.CoveredBarrierTileIds
+                .Select(tile => AirspaceGeometry.TileCenterFeet(tile))
+                .Aggregate(Vector3.zero, (sum, point) => sum + point)
+                / coverage.CoveredBarrierTileIds.Count;
+            var threatCenter = AirspaceGeometry.TileCenterFeet(
+                coverage.ThreatReferenceTileId);
+            var threatToFriendly = protectedMidpoint - threatCenter;
+            threatToFriendly.y = 0f;
+            if (threatToFriendly.sqrMagnitude < 1f)
+                return false;
+            var threatAxis = threatToFriendly.normalized;
+
+            var pathKm = 0f;
+            var reversals = 0;
+            var priorDirection = 0;
+            var priorPosition = samples[0].PositionFeet;
+            for (var index = 1; index < samples.Count; index++)
+            {
+                var position = samples[index].PositionFeet;
+                var displacement = position - priorPosition;
+                displacement.y = 0f;
+                pathKm += displacement.magnitude
+                          / AirspaceGeometry.FeetPerKilometer;
+                var progressKm = Vector3.Dot(displacement, threatAxis)
+                                 / AirspaceGeometry.FeetPerKilometer;
+                if (Math.Abs(progressKm) >= BarcapPatrolDirectionThresholdKm)
+                {
+                    var direction = progressKm > 0f ? 1 : -1;
+                    if (priorDirection != 0 && direction != priorDirection)
+                        reversals++;
+                    priorDirection = direction;
+                }
+
+                priorPosition = position;
+            }
+
+            if (reversals < 2 || pathKm < BarcapPatrolMinimumPathKm)
+                return false;
+
+            var netDisplacement = samples[samples.Count - 1].PositionFeet
+                                  - samples[0].PositionFeet;
+            netDisplacement.y = 0f;
+            var netKm = netDisplacement.magnitude
+                        / AirspaceGeometry.FeetPerKilometer;
+            if (netKm > pathKm * BarcapPatrolMaximumNetPathFraction)
+                return false;
+
+            var currentProgressKm = Vector3.Dot(
+                                        samples[samples.Count - 1].PositionFeet
+                                        - threatCenter,
+                                        threatAxis)
+                                    / AirspaceGeometry.FeetPerKilometer;
+            var previousForwardLimitKm = samples
+                .Take(samples.Count - 1)
+                .Select(sample => Vector3.Dot(
+                                      sample.PositionFeet - threatCenter,
+                                      threatAxis)
+                                  / AirspaceGeometry.FeetPerKilometer)
+                .DefaultIfEmpty(currentProgressKm)
+                .Max();
+            return currentProgressKm
+                   <= previousForwardLimitKm + BarcapPatrolBreakoutBufferKm;
+        }
+
+        private static bool TryGetBarcapThreatMinutes(
+            AirCombatFlightView source,
+            IADSTrack track,
+            AirCombatFrame frame,
+            IReadOnlyDictionary<Guid, OrdnanceTypeDefinition> ordnanceTypes,
+            AllianceAirDoctrine doctrine,
+            out float minutesToEntry)
+        {
+            var assessment = AssessBarcapThreat(
+                source,
+                track,
+                frame,
+                ordnanceTypes,
+                doctrine);
+            minutesToEntry = assessment.MinutesToCrossing;
+            return assessment.MayIntercept;
         }
 
         private static bool TryGetBarcapThreatGeometry(
@@ -2281,11 +2617,10 @@ namespace Engine.Models
             IReadOnlyDictionary<Guid, OrdnanceTypeDefinition> ordnanceTypes,
             AllianceAirDoctrine doctrine)
         {
-            return frame.PendingEffects.Any(effect =>
-                       effect.SourceKind == OrdnanceEmploymentSourceKind.AircraftFlight
-                       && effect.SourceFlightId == target.Flight.FlightId
-                       && effect.TargetFlightId == source.Flight.FlightId
-                       && effect.ResolveAt > frame.Time)
+            return HasIncomingAirWeaponAgainstFlights(
+                       target.Flight.FlightId,
+                       new[] { source.Flight.FlightId },
+                       frame)
                    || IsHotThreatWithinSelfDefenseEnvelope(
                        source,
                        target,
@@ -2519,13 +2854,12 @@ namespace Engine.Models
             IReadOnlyDictionary<Guid, OrdnanceTypeDefinition> ordnanceTypes,
             AllianceAirDoctrine doctrine)
         {
-            return TryGetBarcapThreatMinutes(
+            return AssessBarcapThreat(
                 source,
                 track,
                 frame,
                 ordnanceTypes,
-                doctrine,
-                out _);
+                doctrine).MayFire;
         }
 
         private static AirCombatCommand EnforceBarcapDefensiveBoundary(
@@ -3005,6 +3339,71 @@ namespace Engine.Models
             }
 
             return true;
+        }
+
+        internal static bool IsAirToAirEmploymentAuthorized(
+            AirCombatFlightView source,
+            AirCombatFlightView target,
+            AirCombatFrame frame,
+            ActiveOrdnanceEmploymentPass activePass,
+            IReadOnlyDictionary<Guid, OrdnanceTypeDefinition> ordnanceTypes,
+            AllianceAirDoctrine doctrine,
+            out Guid blockingSiteId)
+        {
+            if (!IsAirToAirEmploymentSamSafe(
+                    source,
+                    target,
+                    frame,
+                    activePass,
+                    ordnanceTypes,
+                    out blockingSiteId))
+                return false;
+
+            if (source.Flight.MissionType
+                != AirMissionRequestType.BarrierCombatAirPatrol)
+            {
+                return IsEligibleTarget(
+                    source,
+                    target,
+                    frame,
+                    ordnanceTypes,
+                    doctrine);
+            }
+
+            var isSpatialBarcap = source.Flight.MissionType
+                                  == AirMissionRequestType.BarrierCombatAirPatrol
+                                  && source.Flight.ActiveBarcapCoverage
+                                  is BarcapStationCoverage;
+            if (!isSpatialBarcap
+                && IsCommittedAgainstFlights(
+                    target,
+                    new[] { source.Flight.FlightId },
+                    frame))
+                return true;
+
+            if (IsSelfDefenseTarget(
+                    source,
+                    target,
+                    frame,
+                    ordnanceTypes,
+                    doctrine))
+                return true;
+
+            return frame.TryGetCurrentTrack(
+                       source.Alliance,
+                       target.Flight.FlightId,
+                       out var track)
+                   && frame.BarcapTargetByFlightId != null
+                   && frame.BarcapTargetByFlightId.TryGetValue(
+                       source.Flight.FlightId,
+                       out var assignedTargetId)
+                   && assignedTargetId == target.Flight.FlightId
+                   && AssessBarcapThreat(
+                       source,
+                       track,
+                       frame,
+                       ordnanceTypes,
+                       doctrine).MayFire;
         }
 
         internal static bool IsAirToAirEmploymentSamSafe(

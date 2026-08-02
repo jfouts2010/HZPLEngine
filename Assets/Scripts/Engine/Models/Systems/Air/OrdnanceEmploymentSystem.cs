@@ -28,7 +28,7 @@ namespace Engine.Models
         private readonly IReadOnlyDictionary<Guid, AirDefenseComponentDefinition>
             airDefenseComponentDefinitions;
         private Func<ActiveOrdnanceEmploymentPass, DateTime, bool>
-            airToAirSamEmploymentValidator;
+            airToAirEmploymentValidator;
 
         public OrdnanceEmploymentSystem(
             GameManager gameManager,
@@ -52,10 +52,10 @@ namespace Engine.Models
             ProcessDueEvents(currentTime);
         }
 
-        internal void SetAirToAirSamEmploymentValidator(
+        internal void SetAirToAirEmploymentValidator(
             Func<ActiveOrdnanceEmploymentPass, DateTime, bool> validator)
         {
-            airToAirSamEmploymentValidator = validator;
+            airToAirEmploymentValidator = validator;
         }
 
         public DateTime? GetNextScheduledEvent(DateTime after, DateTime noLaterThan)
@@ -139,8 +139,8 @@ namespace Engine.Models
                 ReleaseAt = currentTime.AddSeconds(preparationSeconds),
                 LaunchQuality = Mathf.Min(launchQuality, proposal.LaunchQuality)
             };
-            if (airToAirSamEmploymentValidator != null
-                && !airToAirSamEmploymentValidator(pass, currentTime))
+            if (airToAirEmploymentValidator != null
+                && !airToAirEmploymentValidator(pass, currentTime))
             {
                 AddRecord(
                     pass,
@@ -148,7 +148,7 @@ namespace Engine.Models
                     currentTime,
                     0,
                     "Employment preparation was not started because current "
-                    + "SAM-safety authorization does not permit the engagement.");
+                    + "tactical authorization does not permit the engagement.");
                 return false;
             }
             ActivePasses.Add(pass);
@@ -931,15 +931,15 @@ namespace Engine.Models
                 return;
             }
 
-            if (airToAirSamEmploymentValidator != null
-                && !airToAirSamEmploymentValidator(pass, releaseAt))
+            if (airToAirEmploymentValidator != null
+                && !airToAirEmploymentValidator(pass, releaseAt))
             {
                 AddRecord(
                     pass,
                     OrdnanceEmploymentRecordStage.PreparationAborted,
                     releaseAt,
                     0,
-                    "Employment preparation aborted because current SAM-safety "
+                    "Employment preparation aborted because current tactical "
                     + "authorization no longer permits the engagement.");
                 return;
             }
