@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Engine.Models;
 using UnityEngine;
 
 namespace Models.Gameplay.Campaign
@@ -14,16 +15,16 @@ namespace Models.Gameplay.Campaign
         private Dictionary<Guid, List<SamSite>> sitesByHostId;
         private BuildingSystem buildingSystem;
         private DivisionSystem divisionSystem;
-        private Func<Guid, Alliance> getCountryAlliance;
+        private TileSystem tileSystem;
 
         public void Configure(
             BuildingSystem buildings,
             DivisionSystem divisions,
-            Func<Guid, Alliance> countryAllianceResolver)
+            TileSystem tiles)
         {
-            buildingSystem = buildings;
-            divisionSystem = divisions;
-            getCountryAlliance = countryAllianceResolver;
+            buildingSystem = buildings ?? throw new ArgumentNullException(nameof(buildings));
+            divisionSystem = divisions ?? throw new ArgumentNullException(nameof(divisions));
+            tileSystem = tiles ?? throw new ArgumentNullException(nameof(tiles));
         }
 
         public Alliance GetEffectiveAlliance(SamSite site)
@@ -35,10 +36,12 @@ namespace Models.Gameplay.Campaign
                 return site.Alliance;
 
             if (buildingSystem != null
+                && tileSystem != null
                 && buildingSystem.TryGetBuilding(site.HostId, out var building)
-                && building is AirDefenseBuilding airDefenseBuilding)
+                && building is AirDefenseBuilding
+                && tileSystem.TryGetLand(building.TileId, out var landTile))
             {
-                return getCountryAlliance.Invoke(airDefenseBuilding.CountryId);
+                return landTile.Controller;
             }
 
             return Alliance.Neutral;
@@ -66,6 +69,32 @@ namespace Models.Gameplay.Campaign
             }
 
             tileId = default;
+            return false;
+        }
+
+        public bool TryGetPositionFeet(SamSite site, out Vector3 positionFeet)
+        {
+            if (site != null)
+            {
+                if (site.HostType == SamSiteHostType.StaticBuilding
+                    && buildingSystem != null
+                    && buildingSystem.TryGetBuilding(site.HostId, out var building))
+                {
+                    positionFeet = building.PositionFeet;
+                    return true;
+                }
+
+                if (site.HostType == SamSiteHostType.MobileDivision
+                    && divisionSystem != null
+                    && divisionSystem.TryGetDivision(site.HostId, out var division))
+                {
+                    positionFeet = CampaignMapCoordinates.TileCenterFeet(
+                        division.TileId);
+                    return true;
+                }
+            }
+
+            positionFeet = default;
             return false;
         }
 

@@ -48,7 +48,6 @@ namespace Engine.Models
                 .OfType<RadarAirDefenseComponentDefinition>()
                 .ToDictionary(definition => definition.SamComponentDefinitionId);
             var airDefenseSites = gameManager.airDefenseSiteSystem.Sites.ToList();
-            var tileDistanceKm = gameManager.SimulationSettings.TileDistanceKM;
             var activeFlights = gameManager.GetAirborneFlights().ToList();
             var flightContexts = BuildFlightContexts(activeFlights);
             blueforIads.RefreshTracks(
@@ -60,7 +59,6 @@ namespace Engine.Models
                 gameManager.airDefenseSiteSystem,
                 radarDefinitionLookup,
                 aircraftTypeDefinitions,
-                tileDistanceKm,
                 elapsedSeconds,
                 observedAt);
             redforIads.RefreshTracks(
@@ -72,7 +70,6 @@ namespace Engine.Models
                 gameManager.airDefenseSiteSystem,
                 radarDefinitionLookup,
                 aircraftTypeDefinitions,
-                tileDistanceKm,
                 elapsedSeconds,
                 observedAt);
         }

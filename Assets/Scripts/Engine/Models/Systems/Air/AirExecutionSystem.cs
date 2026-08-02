@@ -82,6 +82,33 @@ namespace Engine.Models
         {
             ordnanceEmploymentSystem = employmentSystem
                 ?? throw new ArgumentNullException(nameof(employmentSystem));
+            ordnanceEmploymentSystem.SetAirToAirSamEmploymentValidator(
+                IsAirToAirSamEmploymentAuthorized);
+        }
+
+        private bool IsAirToAirSamEmploymentAuthorized(
+            ActiveOrdnanceEmploymentPass pass,
+            DateTime currentTime)
+        {
+            if (pass == null
+                || pass.SourceFlightId == Guid.Empty
+                || pass.TargetFlightId == Guid.Empty)
+                return false;
+
+            var frame = BuildAirCombatFrame(currentTime);
+            return frame.Flights.TryGetValue(
+                       pass.SourceFlightId,
+                       out var source)
+                   && frame.Flights.TryGetValue(
+                       pass.TargetFlightId,
+                       out var target)
+                   && AirCombatRules.IsAirToAirEmploymentSamSafe(
+                       source,
+                       target,
+                       frame,
+                       pass,
+                       ordnanceTypes,
+                       out _);
         }
 
         public bool IsFlightInWvrEngagement(Guid flightId)
@@ -195,14 +222,16 @@ namespace Engine.Models
                         continue;
                     if (command.RequestsSurfaceThreatRecovery)
                     {
-                        if (TryRelocateBarcapStation(
+                        var relocationReason = string.Empty;
+                        if (command.RequestsBarcapStationRelocation
+                            && TryRelocateBarcapStation(
                                 view.Package,
                                 view.Flight,
                                 view.Squadron,
                                 view.AircraftType,
                                 cursor,
                                 command.Reason,
-                                out var relocationReason))
+                                out relocationReason))
                         {
                             ContinueRelocatedBarcapCommand(
                                 command,
@@ -518,7 +547,6 @@ namespace Engine.Models
             var frame = new AirCombatFrame
             {
                 Time = currentTime,
-                TileDistanceKm = gameManager.SimulationSettings.TileDistanceKM,
                 Flights = flights,
                 AircraftTypes = aircraftTypes,
                 AirCommanders = new Dictionary<Alliance, AllianceAirTaskingCommander>
@@ -543,11 +571,76 @@ namespace Engine.Models
                         { Alliance.Redfor, GetKnownSamThreats(Alliance.Redfor) }
                     }
             };
+            ApplyKnownSamEngagementOverrides(frame);
             frame.BarcapTargetByFlightId = AirCombatRules.BuildBarcapAssignments(
                 frame,
                 ordnanceTypes,
                 GetDoctrine);
             return frame;
+        }
+
+        internal static void ApplyKnownSamEngagementOverrides(
+            AirCombatFrame frame)
+        {
+            if (frame?.Flights == null)
+                return;
+
+            foreach (var source in frame.Flights.Values)
+            {
+                // Engagement permission belongs to the current tactical
+                // situation, not the consumer's mission type. A coordinated
+                // companion covers only its specifically authorized site and
+                // only while its penetration/suppression protection is active.
+                var coveredSiteIds = frame.Flights.Values
+                    .Where(provider => provider != null
+                                       && provider.Flight != null
+                                       && provider.Flight.FlightId
+                                       != source.Flight.FlightId
+                                       && provider.Alliance == source.Alliance
+                                       && provider.Package?.PackageId
+                                       == source.Package?.PackageId
+                                       && provider.Flight.LifecycleState
+                                       == AirTaskingLifecycleState.Active
+                                       && provider.Flight.IsAirborne
+                                       && provider.Flight.ExecutionPhase
+                                       != FlightExecutionPhase.Returning
+                                       && provider.Flight.ExecutionPhase
+                                       != FlightExecutionPhase.Landing
+                                       && provider.LiveAircraft.Count > 0
+                                       && provider.Flight
+                                           .AuthorizedSurfaceThreatSiteId
+                                       != Guid.Empty)
+                    .Where(provider => provider.Flight
+                                           .AuthorizedSurfaceThreatPenetrationGranted
+                                       || frame.ActivePasses.Any(pass =>
+                                           pass.SourceFlightId
+                                           == provider.Flight.FlightId
+                                           && pass.TargetKind
+                                           == OrdnanceEmploymentTargetKind
+                                               .AirDefenseComponent
+                                           && pass.TargetSiteId
+                                           == provider.Flight
+                                               .AuthorizedSurfaceThreatSiteId)
+                                       || frame.PendingEffects.Any(effect =>
+                                           effect.SourceFlightId
+                                           == provider.Flight.FlightId
+                                           && effect.TargetKind
+                                           == OrdnanceEmploymentTargetKind
+                                               .AirDefenseComponent
+                                           && effect.TargetSiteId
+                                           == provider.Flight
+                                               .AuthorizedSurfaceThreatSiteId
+                                           && effect.ResolveAt > frame.Time))
+                    .Select(provider => provider.Flight
+                        .AuthorizedSurfaceThreatSiteId)
+                    .Distinct()
+                    .OrderBy(siteId => siteId)
+                    .ToList();
+
+                source.AllowKnownSamEngagementOverride =
+                    coveredSiteIds.Count > 0;
+                source.KnownSamEngagementOverrideSiteIds = coveredSiteIds;
+            }
         }
 
         private IReadOnlyList<KnownSamThreatEnvelope> GetKnownSamThreats(
@@ -557,8 +650,7 @@ namespace Engine.Models
                 return cached;
 
             var threats = knownSamThreatAssessment.BuildKnownThreats(
-                gameManager.intelligenceSystem?.GetPicture(alliance),
-                gameManager.SimulationSettings.TileDistanceKM);
+                gameManager.intelligenceSystem?.GetPicture(alliance));
             knownSamThreatCache[alliance] = threats;
             return threats;
         }
@@ -567,8 +659,7 @@ namespace Engine.Models
             Alliance alliance)
         {
             var threats = knownSamThreatAssessment.BuildKnownThreats(
-                gameManager.intelligenceSystem?.GetPicture(alliance),
-                gameManager.SimulationSettings.TileDistanceKM);
+                gameManager.intelligenceSystem?.GetPicture(alliance));
             knownSamThreatCache[alliance] = threats;
             return threats;
         }
@@ -1456,9 +1547,7 @@ namespace Engine.Models
                 || plan.TargetSiteId == Guid.Empty)
                 return false;
             var picture = gameManager.intelligenceSystem?.GetPicture(alliance);
-            var threats = knownSamThreatAssessment.BuildKnownThreats(
-                picture,
-                gameManager.SimulationSettings.TileDistanceKM);
+            var threats = knownSamThreatAssessment.BuildKnownThreats(picture);
             var targetThreats = threats
                 .Where(threat => threat.SiteId == plan.TargetSiteId)
                 .ToList();
@@ -1488,8 +1577,7 @@ namespace Engine.Models
                     plan.SupportedCorridor.DestinationPositionFeet,
                     plan.SupportedCorridor.DestinationPositionFeet,
                     plan.SupportedCorridor.RecoveryPositionFeet,
-                    gameManager.SimulationSettings.TileDistanceKM
-                    * AirspaceGeometry.FeetPerKilometer,
+                    CampaignMapCoordinates.TileCenterSpacingFeet,
                     plan.SupportedCorridor
                         .RepresentativeAircraftTypeDefinitionId,
                     threats,
@@ -1517,6 +1605,11 @@ namespace Engine.Models
                     effect.SourceFlightId == flight.FlightId
                     && effect.TargetKind
                     != OrdnanceEmploymentTargetKind.AirFlight))
+                return;
+
+            if (!gameManager.airDefenseSiteSystem.TryGetPositionFeet(
+                    site,
+                    out var sitePositionFeet))
                 return;
 
             var sequence = flight.ConsumeGroundAttackOpportunity(
@@ -1552,7 +1645,7 @@ namespace Engine.Models
                             ordnance)
                         && IsWithinGroundReleaseRange(
                             flight,
-                            siteTileId,
+                            sitePositionFeet,
                             ordnance),
                     out var plan))
                 return;
@@ -1599,18 +1692,15 @@ namespace Engine.Models
 
         private bool IsWithinGroundReleaseRange(
             AirFlight flight,
-            Vector3Int targetTileId,
+            Vector3 targetPositionFeet,
             OrdnanceTypeDefinition ordnance)
         {
             if (flight == null || ordnance == null)
                 return false;
 
-            var targetPosition = AirspaceGeometry.TileCenterFeet(
-                targetTileId,
-                gameManager.SimulationSettings.TileDistanceKM);
             var distanceKm = HorizontalDistanceKm(
                 flight.PositionFeet,
-                targetPosition);
+                targetPositionFeet);
             return distanceKm >= ordnance.MinimumRangeKm
                    && distanceKm <= ordnance.MaximumRangeKm;
         }
@@ -1992,7 +2082,8 @@ namespace Engine.Models
                 return false;
             var coverageCenterTile = orderedCoveredTiles[
                 orderedCoveredTiles.Count / 2];
-            var tileDistanceKm = gameManager.SimulationSettings.TileDistanceKM;
+            var tileDistanceKm = CampaignMapCoordinates
+                .TileCenterSpacingKilometers;
             var currentStationDepthKm = BarcapInterceptGeometry
                 .GetDefensiveStationDepthKm(
                     assignedStationCenterFeet,
@@ -2168,10 +2259,8 @@ namespace Engine.Models
                         .Min();
                 var effectArea = new AirMissionArea(
                     AirspaceGeometry.TileCoordinateFromPositionFeet(
-                        candidate.Position,
-                        tileDistanceKm),
-                    relocatedCoverage.PlannedResponseRadiusKm,
-                    tileDistanceKm);
+                        candidate.Position),
+                    relocatedCoverage.PlannedResponseRadiusKm);
                 var stationEntry = new AirWaypoint(
                     candidate.Racetrack.LoopPointsFeet[0],
                     AirWaypointAction.StationEntry,
@@ -2369,6 +2458,7 @@ namespace Engine.Models
             string reason)
         {
             command.RequestsSurfaceThreatRecovery = false;
+            command.RequestsBarcapStationRelocation = false;
             command.Intent = AirCombatIntent.FollowMission;
             command.Maneuver = AirCombatManeuver.FollowRoute;
             command.TargetFlightId = Guid.Empty;
@@ -2488,6 +2578,7 @@ namespace Engine.Models
             DateTime currentTime)
         {
             command.RequestsSurfaceThreatRecovery = false;
+            command.RequestsBarcapStationRelocation = false;
             command.Intent = AirCombatIntent.Recover;
             command.Maneuver = AirCombatManeuver.FollowRoute;
             command.TargetFlightId = Guid.Empty;
@@ -2522,6 +2613,7 @@ namespace Engine.Models
             escapeAimPoint.y = flight.PositionFeet.y;
 
             command.RequestsSurfaceThreatRecovery = false;
+            command.RequestsBarcapStationRelocation = false;
             command.Intent = AirCombatIntent.Disengage;
             command.Maneuver = AirCombatManeuver.AvoidSurfaceThreat;
             command.TargetFlightId = Guid.Empty;
@@ -2773,9 +2865,7 @@ namespace Engine.Models
                 .Select(airport => new
                 {
                     Airport = airport,
-                    Position = AirspaceGeometry.TileCenterFeet(
-                        airport.TileId,
-                        gameManager.SimulationSettings.TileDistanceKM)
+                    Position = airport.PositionFeet
                 })
                 .OrderBy(candidate => Vector2.Distance(
                     new Vector2(referencePosition.x, referencePosition.z),
@@ -2795,9 +2885,7 @@ namespace Engine.Models
             if (gameManager.buildingSystem.TryGetBuilding(airportId, out var building)
                 && building is Airport)
             {
-                position = AirspaceGeometry.TileCenterFeet(
-                    building.TileId,
-                    gameManager.SimulationSettings.TileDistanceKM);
+                position = building.PositionFeet;
                 return true;
             }
 

@@ -44,7 +44,6 @@ namespace Engine.Models
             priorityService = new AirMissionPriorityService(module);
             airControlAssessmentService = new AirControlAssessmentService(
                 gameManager.tileSystem,
-                gameManager.SimulationSettings.TileDistanceKM,
                 gameManager.tileSystem.LandTiles
                     .Where(tile => tile.Controller == Alliance.Neutral)
                     .Select(tile => tile.TileId)
@@ -301,8 +300,7 @@ namespace Engine.Models
                         }
 
                         var tileId = AirspaceGeometry.TileCoordinateFromPositionFeet(
-                            observedPosition,
-                            gameManager.SimulationSettings.TileDistanceKM);
+                            observedPosition);
                         if (!airControlAssessmentService.ContainsTile(tileId))
                             continue;
 

@@ -65,8 +65,8 @@ namespace Engine.Service
                     effectEnd,
                     desiredAircraftStrength: barrier.EstimatedAircraftDemand,
                     rationale: BuildBarcapRationale(barrier),
-                    radiusKm: (boundingRadius + 1) * snapshot.TileDistanceKm,
-                    tileDistanceKm: snapshot.TileDistanceKm);
+                    radiusKm: (boundingRadius + 1)
+                              * CampaignMapCoordinates.TileCenterSpacingKilometers);
                 barcapRequest.BarcapBarrier = barrier.Clone();
                 barcapRequest.PriorityComponents["desiredAircraftStrength"] =
                     barrier.EstimatedAircraftDemand;
@@ -102,8 +102,7 @@ namespace Engine.Service
                         effectEnd,
                         desiredSupportSlots: commander.Doctrine.BaselineAirborneC2Slots,
                         rationale: "Provide baseline airborne C2 coverage",
-                        radiusKm: DefaultMissionRadiusKm,
-                        tileDistanceKm: snapshot.TileDistanceKm));
+                        radiusKm: DefaultMissionRadiusKm));
                 }
             }
 
@@ -145,8 +144,7 @@ namespace Engine.Service
                     effectEnd,
                     desiredAircraftStrength: selectedOcaCandidate.DesiredAircraftStrength,
                     rationale: "Contest the nearest active hostile air-interference frontier",
-                    radiusKm: DefaultMissionRadiusKm,
-                    tileDistanceKm: snapshot.TileDistanceKm);
+                    radiusKm: DefaultMissionRadiusKm);
                 ocaRequest.PriorityComponents["desiredAircraftStrength"] =
                     selectedOcaCandidate.DesiredAircraftStrength;
                 ocaRequest.PriorityComponents["ocaPenetrationDepthTiles"] =
@@ -180,8 +178,7 @@ namespace Engine.Service
                     effectEnd,
                     desiredAircraftStrength: 1,
                     rationale: deadCandidate.Rationale,
-                    radiusKm: DeadCorridorPlanner.MissionRadiusKm,
-                    tileDistanceKm: snapshot.TileDistanceKm);
+                    radiusKm: DeadCorridorPlanner.MissionRadiusKm);
                 deadRequest.DeadPlan = deadCandidate.Plan.Clone();
                 deadRequest.PriorityComponents["deadAirportFunctionalLevel"] =
                     deadCandidate.Urgency;
@@ -200,14 +197,12 @@ namespace Engine.Service
                 var observed = CalculateObservedTankerDemand(
                     commander,
                     airportTile,
-                    snapshot.CurrentTime,
-                    snapshot.TileDistanceKm);
+                    snapshot.CurrentTime);
                 var forecast = combatRequests
                     .Where(request => request.MissionArea.Contains(airportTile)
                                       || new AirMissionArea(
                                               airportTile,
-                                              DefaultMissionRadiusKm,
-                                              snapshot.TileDistanceKm)
+                                              DefaultMissionRadiusKm)
                                           .Contains(request.MissionArea.CenterTileId))
                     .Sum(request => request.DesiredAircraftStrength);
                 var desiredSlots = Math.Max(0, baseline + observed + forecast);
@@ -223,8 +218,7 @@ namespace Engine.Service
                     effectEnd,
                     desiredSupportSlots: desiredSlots,
                     rationale: "Provide blended baseline, observed, and forecast aerial-refueling capacity",
-                    radiusKm: DefaultMissionRadiusKm,
-                    tileDistanceKm: snapshot.TileDistanceKm);
+                    radiusKm: DefaultMissionRadiusKm);
                 tankerRequest.PriorityComponents["baselineDemand"] = baseline;
                 tankerRequest.PriorityComponents["observedDemand"] = observed;
                 tankerRequest.PriorityComponents["forecastDemand"] = forecast;
@@ -265,18 +259,14 @@ namespace Engine.Service
             int desiredAircraftStrength = 0,
             int desiredSupportSlots = 0,
             string rationale = "",
-            float radiusKm = DefaultMissionRadiusKm,
-            float tileDistanceKm = 20f)
+            float radiusKm = DefaultMissionRadiusKm)
         {
             return new AirMissionRequest
             {
                 Alliance = commander.Alliance,
                 RequestType = requestType,
                 FulfillmentPattern = fulfillmentPattern,
-                MissionArea = new AirMissionArea(
-                    centerTile,
-                    radiusKm,
-                    tileDistanceKm),
+                MissionArea = new AirMissionArea(centerTile, radiusKm),
                 CreatedAt = effectStart - AirPackage.PreparationDelay,
                 EffectStart = effectStart,
                 EffectEnd = effectEnd,
@@ -354,8 +344,7 @@ namespace Engine.Service
                         commander,
                         new AirMissionArea(
                             assessment.TileId,
-                            DefaultMissionRadiusKm,
-                            snapshot.TileDistanceKm));
+                            DefaultMissionRadiusKm));
                     return new OcaTargetCandidate(
                         assessment.TileId,
                         CalculateOcaDesiredStrength(
@@ -470,14 +459,12 @@ namespace Engine.Service
         private static int CalculateObservedTankerDemand(
             AllianceAirTaskingCommander commander,
             Vector3Int centerTile,
-            DateTime currentTime,
-            float tileDistanceKm)
+            DateTime currentTime)
         {
             var recentThreshold = currentTime - TimeSpan.FromHours(24);
             var demandArea = new AirMissionArea(
                 centerTile,
-                DefaultMissionRadiusKm,
-                tileDistanceKm);
+                DefaultMissionRadiusKm);
             return commander.SupportDemandHistory
                 .Where(sample =>
                     sample.SupportType == AirMissionRequestType.ProvideAerialRefueling

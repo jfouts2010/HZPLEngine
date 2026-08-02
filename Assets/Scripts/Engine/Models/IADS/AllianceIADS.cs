@@ -69,7 +69,6 @@ namespace Models.Gameplay.Campaign
             AirDefenseSiteSystem siteQuery,
             IReadOnlyDictionary<Guid, RadarAirDefenseComponentDefinition> radarDefinitionLookup,
             IReadOnlyDictionary<Guid, AircraftTypeDefinition> aircraftTypeDefinitions,
-            float tileDistanceKm,
             float elapsedSeconds,
             DateTime observedAt)
         {
@@ -111,7 +110,6 @@ namespace Models.Gameplay.Campaign
                         availableSites,
                         siteQuery,
                         radarDefinitionLookup,
-                        tileDistanceKm,
                         elapsedSeconds)
                     .OrderByDescending(contribution => contribution.QualityIncrease)
                     .ToList();
@@ -228,7 +226,6 @@ namespace Models.Gameplay.Campaign
             IEnumerable<SamSite> airDefenseSites,
             AirDefenseSiteSystem siteQuery,
             IReadOnlyDictionary<Guid, RadarAirDefenseComponentDefinition> radarDefinitionLookup,
-            float tileDistanceKm,
             float elapsedSeconds)
         {
             if (siteQuery == null)
@@ -236,7 +233,9 @@ namespace Models.Gameplay.Campaign
 
             foreach (var site in airDefenseSites)
             {
-                if (!siteQuery.TryGetTileId(site, out var siteTileId))
+                if (!siteQuery.TryGetPositionFeet(
+                        site,
+                        out var sitePositionFeet))
                     continue;
 
                 foreach (var radarComponent in siteQuery.GetAvailableComponents(site)
@@ -252,7 +251,6 @@ namespace Models.Gameplay.Campaign
                         || definition.DetectionRangeKm <= 0f)
                         continue;
 
-                    var sitePositionFeet = AirspaceGeometry.TileCenterFeet(siteTileId, tileDistanceKm);
                     var distanceKm = Vector3.Distance(
                                          sitePositionFeet,
                                          flight.PositionFeet)

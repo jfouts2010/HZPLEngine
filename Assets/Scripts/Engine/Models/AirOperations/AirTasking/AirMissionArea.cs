@@ -8,7 +8,6 @@ namespace Models.Gameplay.Campaign
     {
         public Vector3Int CenterTileId;
         public float RadiusKm = 20f;
-        public float TileDistanceKm = 20f;
 
         public AirMissionArea()
         {
@@ -16,27 +15,23 @@ namespace Models.Gameplay.Campaign
 
         public AirMissionArea(
             Vector3Int centerTileId,
-            float radiusKm,
-            float tileDistanceKm = 20f)
+            float radiusKm)
         {
             CenterTileId = centerTileId;
             RadiusKm = Math.Max(0f, radiusKm);
-            TileDistanceKm = Math.Max(0.001f, tileDistanceKm);
         }
 
         public bool Contains(Vector3Int tileId)
         {
             return ContainsPosition(
                 Engine.Service.AirspaceGeometry.TileCenterFeet(
-                    tileId,
-                    TileDistanceKm));
+                    tileId));
         }
 
         public bool ContainsPosition(Vector3 positionFeet)
         {
             var centerFeet = Engine.Service.AirspaceGeometry.TileCenterFeet(
-                CenterTileId,
-                TileDistanceKm);
+                CenterTileId);
             var distanceFeet = Vector2.Distance(
                 new Vector2(centerFeet.x, centerFeet.z),
                 new Vector2(positionFeet.x, positionFeet.z));
@@ -51,11 +46,9 @@ namespace Models.Gameplay.Campaign
                 return false;
 
             var centerFeet = Engine.Service.AirspaceGeometry.TileCenterFeet(
-                CenterTileId,
-                TileDistanceKm);
+                CenterTileId);
             var otherCenterFeet = Engine.Service.AirspaceGeometry.TileCenterFeet(
-                other.CenterTileId,
-                other.TileDistanceKm);
+                other.CenterTileId);
             var distanceFeet = Vector2.Distance(
                 new Vector2(centerFeet.x, centerFeet.z),
                 new Vector2(otherCenterFeet.x, otherCenterFeet.z));

@@ -322,7 +322,6 @@ namespace Engine.Service
             {
                 var choices = GetBarcapAircraftAndCoverageChoices(
                     request,
-                    gameManager.SimulationSettings.TileDistanceKM,
                     uncoveredBarrierTiles,
                     squadronCandidates,
                     commander.Doctrine);
@@ -661,11 +660,12 @@ namespace Engine.Service
         private IReadOnlyList<BarcapSelectionChoice>
             GetBarcapAircraftAndCoverageChoices(
             AirMissionRequest request,
-            float snapshotTileDistanceKm,
             IReadOnlyList<Vector3Int> uncoveredBarrierTiles,
             IReadOnlyList<CombatSquadronCandidate> candidates,
             AllianceAirDoctrine doctrine)
         {
+            var tileDistanceKm = CampaignMapCoordinates
+                .TileCenterSpacingKilometers;
             if (uncoveredBarrierTiles == null
                 || uncoveredBarrierTiles.Count == 0
                 || request.BarcapBarrier?.BarrierTileIds == null
@@ -705,7 +705,7 @@ namespace Engine.Service
                                     AirMissionArea.HexDistance(
                                         request.BarcapBarrier
                                             .ThreatReferenceTileId,
-                                        tile) * snapshotTileDistanceKm;
+                                        tile) * tileDistanceKm;
                                 return BarcapInterceptGeometry
                                     .CalculateResponseRadiusKm(
                                         candidate.AircraftType,
@@ -720,7 +720,7 @@ namespace Engine.Service
                                             tile,
                                             request.BarcapBarrier
                                                 .ThreatReferenceTileId,
-                                            snapshotTileDistanceKm,
+                                            tileDistanceKm,
                                             releaseStandoffKm,
                                             request.BarcapBarrier
                                                 .RepresentativeThreatSpeedKnots,
@@ -735,7 +735,7 @@ namespace Engine.Service
                         .GetDefensiveStationPositions(
                             gapCenterTile,
                             request.BarcapBarrier.ThreatReferenceTileId,
-                            snapshotTileDistanceKm,
+                            tileDistanceKm,
                             stationAltitudeFeet,
                             maximumResponseRadiusKm);
                     var maneuverClearanceFeet = AirspaceGeometry
@@ -748,7 +748,7 @@ namespace Engine.Service
                                 .GetStationHeadingDegrees(
                                     candidateStationCenter,
                                     request.BarcapBarrier.ThreatReferenceTileId,
-                                    snapshotTileDistanceKm);
+                                    tileDistanceKm);
                             var racetrack = BarcapInterceptGeometry.BuildRacetrack(
                                 candidateStationCenter,
                                 stationHeading,
@@ -768,7 +768,7 @@ namespace Engine.Service
                                         entry.Key,
                                         request.BarcapBarrier
                                             .ThreatReferenceTileId,
-                                        snapshotTileDistanceKm,
+                                        tileDistanceKm,
                                         releaseStandoffKm,
                                         entry.Value))
                                 .Select(entry => entry.Key)
@@ -783,7 +783,7 @@ namespace Engine.Service
                                         point,
                                         covered,
                                         request.BarcapBarrier.ThreatReferenceTileId,
-                                        snapshotTileDistanceKm,
+                                        tileDistanceKm,
                                         releaseStandoffKm)))
                                 return null;
                             var conservativeResponseRadiusKm = covered
@@ -798,7 +798,7 @@ namespace Engine.Service
                                                         tile,
                                                         request.BarcapBarrier
                                                             .ThreatReferenceTileId,
-                                                        snapshotTileDistanceKm,
+                                                        tileDistanceKm,
                                                         releaseStandoffKm))
                                 .DefaultIfEmpty(float.NegativeInfinity)
                                 .Min();
@@ -816,7 +816,7 @@ namespace Engine.Service
                                     candidateStationCenter,
                                     gapCenterTile,
                                     request.BarcapBarrier.ThreatReferenceTileId,
-                                    snapshotTileDistanceKm),
+                                    tileDistanceKm),
                                 trackHalfLengthKm,
                                 minimumInterceptSlackKm,
                                 desiredInterceptSlackKm,
@@ -906,11 +906,9 @@ namespace Engine.Service
                     weaponReleaseStandoffKm)
                 .FirstOrDefault();
             var threatCenter = AirspaceGeometry.TileCenterFeet(
-                threatTile,
-                tileDistanceKm);
+                threatTile);
             var protectedCenter = AirspaceGeometry.TileCenterFeet(
-                protectedTile,
-                tileDistanceKm);
+                protectedTile);
             var inbound = protectedCenter - threatCenter;
             inbound.y = 0f;
             if (inbound.sqrMagnitude < 1f)
@@ -931,13 +929,10 @@ namespace Engine.Service
                                             .GetEffectiveAlliance(site)
                                         == alliance))
             {
-                if (!gameManager.airDefenseSiteSystem.TryGetTileId(
+                if (!gameManager.airDefenseSiteSystem.TryGetPositionFeet(
                         site,
-                        out var siteTile))
+                        out var sitePosition))
                     continue;
-                var sitePosition = AirspaceGeometry.TileCenterFeet(
-                    siteTile,
-                    tileDistanceKm);
                 foreach (var component in gameManager.airDefenseSiteSystem
                              .GetAvailableComponents(site)
                              .OfType<RadarAirDefenseComponent>())
@@ -1377,18 +1372,15 @@ namespace Engine.Service
             AirMissionRequest request,
             Vector3Int targetTileId)
         {
-            var tileDistanceKm = gameManager.SimulationSettings.TileDistanceKM;
             var corridor = request.DeadPlan?.SupportedCorridor;
             var originTileId = corridor == null
                 ? targetTileId
                 : AirspaceGeometry.TileCoordinateFromPositionFeet(
-                    corridor.OriginPositionFeet,
-                    tileDistanceKm);
+                    corridor.OriginPositionFeet);
             var recoveryTileId = corridor == null
                 ? originTileId
                 : AirspaceGeometry.TileCoordinateFromPositionFeet(
-                    corridor.RecoveryPositionFeet,
-                    tileDistanceKm);
+                    corridor.RecoveryPositionFeet);
             var routeTiles = AirspaceGeometry.TilesAlongLine(
                     originTileId,
                     targetTileId)
@@ -1460,12 +1452,9 @@ namespace Engine.Service
                     out var building))
                 return float.PositiveInfinity;
 
-            var origin = AirspaceGeometry.TileCenterFeet(
-                building.TileId,
-                gameManager.SimulationSettings.TileDistanceKM);
+            var origin = building.PositionFeet;
             var destination = AirspaceGeometry.TileCenterFeet(
-                targetTile,
-                gameManager.SimulationSettings.TileDistanceKM);
+                targetTile);
             return Vector2.Distance(
                        new Vector2(origin.x, origin.z),
                        new Vector2(destination.x, destination.z))
@@ -1479,8 +1468,7 @@ namespace Engine.Service
                 return cached;
 
             var threats = knownSamThreatAssessment.BuildKnownThreats(
-                gameManager.intelligenceSystem?.GetPicture(alliance),
-                gameManager.SimulationSettings.TileDistanceKM);
+                gameManager.intelligenceSystem?.GetPicture(alliance));
             knownSamThreatCache[alliance] = threats;
             return threats;
         }
@@ -1548,9 +1536,7 @@ namespace Engine.Service
                     flight,
                     squadron,
                     aircraftType,
-                    AirspaceGeometry.TileCenterFeet(
-                        airport.TileId,
-                        gameManager.SimulationSettings.TileDistanceKM)));
+                    airport.PositionFeet));
             }
 
             var desiredMissionAltitude = GetMissionAltitudeFeet(
@@ -1564,11 +1550,9 @@ namespace Engine.Service
                 ? barcapCoverage.StationCenterFeet
                 : AirspaceGeometry.TileCenterFeet(
                     missionCenterOverride ?? request.MissionArea.CenterTileId,
-                    gameManager.SimulationSettings.TileDistanceKM,
                     missionAltitude);
             missionCenter.y = missionAltitude;
-            var tileDistanceFeet = gameManager.SimulationSettings.TileDistanceKM
-                                   * AirspaceGeometry.FeetPerKilometer;
+            var tileDistanceFeet = CampaignMapCoordinates.TileCenterSpacingFeet;
             var allKnownSamThreats = GetKnownSamThreats(package.Alliance);
             IReadOnlyCollection<KnownSamThreatEnvelope> targetSamThreats =
                 request.DeadPlan == null
@@ -2031,10 +2015,8 @@ namespace Engine.Service
 
             if (request.RequestType == AirMissionRequestType.OffensiveCounterAirSweep)
             {
-                var tileDistanceKm = tileDistanceFeet / AirspaceGeometry.FeetPerKilometer;
                 var originTileId = AirspaceGeometry.TileCoordinateFromPositionFeet(
-                    missionOrigin,
-                    tileDistanceKm);
+                    missionOrigin);
                 var centerTileId = request.MissionArea.CenterTileId;
                 var entryTileId = SelectOcaEntryTile(
                     commander,
@@ -2046,11 +2028,9 @@ namespace Engine.Service
                     centerTileId);
                 plan.MissionEntryPosition = AirspaceGeometry.TileCenterFeet(
                     entryTileId,
-                    tileDistanceKm,
                     missionCenter.y);
                 plan.MissionPushPosition = AirspaceGeometry.TileCenterFeet(
                     pushTileId,
-                    tileDistanceKm,
                     missionCenter.y);
                 plan.MissionExitPosition = plan.MissionEntryPosition;
                 return;
@@ -2300,10 +2280,8 @@ namespace Engine.Service
                     AirspaceGeometry.TileCoordinateFromPositionFeet(
                         plan.MissionEntryPosition
                         + (plan.MissionExitPosition
-                           - plan.MissionEntryPosition) * 0.5f,
-                        gameManager.SimulationSettings.TileDistanceKM),
-                    request.MissionArea.RadiusKm,
-                    request.MissionArea.TileDistanceKm);
+                           - plan.MissionEntryPosition) * 0.5f),
+                    request.MissionArea.RadiusKm);
                 var stationEntry = NewWaypoint(
                     plan.MissionEntryPosition,
                     AirWaypointAction.StationEntry,
@@ -2334,8 +2312,8 @@ namespace Engine.Service
                 friendlyDirection.Normalize();
                 var intendedReleasePosition = plan.MissionExitPosition
                                               + friendlyDirection
-                                              * gameManager.SimulationSettings.TileDistanceKM
-                                              * AirspaceGeometry.FeetPerKilometer;
+                                              * CampaignMapCoordinates
+                                                  .TileCenterSpacingFeet;
                 var releaseTravelSeconds = AirspaceGeometry.TravelSeconds(
                     plan.MissionExitPosition,
                     intendedReleasePosition,
@@ -2367,8 +2345,7 @@ namespace Engine.Service
             {
                 var effectArea = new AirMissionArea(
                     request.MissionArea.CenterTileId,
-                    request.MissionArea.RadiusKm,
-                    request.MissionArea.TileDistanceKm);
+                    request.MissionArea.RadiusKm);
                 var stationEntry = NewWaypoint(
                     plan.MissionEntryPosition,
                     AirWaypointAction.StationEntry,
@@ -2407,8 +2384,7 @@ namespace Engine.Service
             {
                 var effectArea = new AirMissionArea(
                     request.MissionArea.CenterTileId,
-                    request.MissionArea.RadiusKm,
-                    request.MissionArea.TileDistanceKm);
+                    request.MissionArea.RadiusKm);
                 route.Add(NewWaypoint(
                     plan.MissionEntryPosition,
                     AirWaypointAction.MissionAction,
@@ -2517,8 +2493,7 @@ namespace Engine.Service
                     effectStart,
                     new AirMissionArea(
                         request.MissionArea.CenterTileId,
-                        request.MissionArea.RadiusKm,
-                        request.MissionArea.TileDistanceKm)));
+                        request.MissionArea.RadiusKm)));
                 returnTime = effectStart;
                 returnPosition = plan.MissionExitPosition;
             }
@@ -2556,16 +2531,13 @@ namespace Engine.Service
             {
                 return new AirMissionArea(
                     request.MissionArea.CenterTileId,
-                    request.MissionArea.RadiusKm,
-                    request.MissionArea.TileDistanceKm);
+                    request.MissionArea.RadiusKm);
             }
 
             return new AirMissionArea(
                 AirspaceGeometry.TileCoordinateFromPositionFeet(
-                    barcapCoverage.StationCenterFeet,
-                    gameManager.SimulationSettings.TileDistanceKM),
-                Math.Max(0f, barcapCoverage.PlannedResponseRadiusKm),
-                gameManager.SimulationSettings.TileDistanceKM);
+                    barcapCoverage.StationCenterFeet),
+                Math.Max(0f, barcapCoverage.PlannedResponseRadiusKm));
         }
 
         private static AirWaypoint NewWaypoint(

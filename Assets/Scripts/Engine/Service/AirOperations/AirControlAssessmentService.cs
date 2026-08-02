@@ -18,7 +18,6 @@ namespace Engine.Service
         private const float MinimumRememberedCombatPower = 0.05f;
 
         private readonly HashSet<Vector3Int> tileIds;
-        private readonly float tileDistanceKm;
         private readonly IReadOnlyDictionary<Vector3Int, IReadOnlyList<Vector3Int>>
             neighborTileIdsByTileId;
         private readonly Dictionary<Alliance, Dictionary<Vector3Int, IntervalObservation>>
@@ -34,7 +33,6 @@ namespace Engine.Service
 
         public AirControlAssessmentService(
             TileSystem tileSystem,
-            float tileDistanceKm,
             IReadOnlyCollection<Vector3Int> neutralTerritoryTileIds)
         {
             if (tileSystem == null)
@@ -44,7 +42,6 @@ namespace Engine.Service
             var neutralTerritory = neutralTerritoryTileIds == null
                 ? new HashSet<Vector3Int>()
                 : new HashSet<Vector3Int>(neutralTerritoryTileIds);
-            this.tileDistanceKm = Mathf.Max(0.001f, tileDistanceKm);
             tileIds = new HashSet<Vector3Int>(tiles
                 .Where(tile => !neutralTerritory.Contains(tile.TileId))
                 .Select(tile => tile.TileId));
@@ -226,7 +223,9 @@ namespace Engine.Service
 
             var maximumRangeKm = projections.Max(
                 projection => projection.MaximumInterceptRangeKm);
-            var maximumRing = Mathf.CeilToInt(maximumRangeKm / tileDistanceKm);
+            var maximumRing = Mathf.CeilToInt(
+                maximumRangeKm
+                / CampaignMapCoordinates.TileCenterSpacingKilometers);
             var visited = new HashSet<Vector3Int> { sourceTileId };
             var frontier = new Queue<(Vector3Int TileId, int Ring)>();
             frontier.Enqueue((sourceTileId, 0));
@@ -234,7 +233,9 @@ namespace Engine.Service
             while (frontier.Count > 0)
             {
                 var current = frontier.Dequeue();
-                var distanceKm = current.Ring * tileDistanceKm;
+                var distanceKm = current.Ring
+                                 * CampaignMapCoordinates
+                                     .TileCenterSpacingKilometers;
                 var influence = projections.Sum(
                     projection => projection.CalculateInfluence(distanceKm));
                 influence *= observationQuality;

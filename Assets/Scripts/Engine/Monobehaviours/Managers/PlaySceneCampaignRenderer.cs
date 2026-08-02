@@ -1385,6 +1385,7 @@ namespace Engine.Monobehaviours.Managers
                     {
                         $"Building ID  {current.BuildingId:N}",
                         $"Tile  {FormatTile(current.TileId)}",
+                        $"Position  X {current.PositionFeet.x:0} / Z {current.PositionFeet.z:0} ft",
                         $"Type  {current.Type}",
                         $"Build level  {current.Level.BuildLevel}",
                         $"Damage  {current.Level.Damage}",
@@ -1734,9 +1735,8 @@ namespace Engine.Monobehaviours.Managers
             };
             if (division.CurrentOrder is MoveGroundOrder move)
             {
-                var tileDistance = Mathf.Max(
-                    SimulationSettings.MinTileDistanceKM,
-                    gameManager.SimulationSettings.TileDistanceKM);
+                var tileDistance =
+                    CampaignMapCoordinates.TileCenterSpacingKilometers;
                 var hours = division.Speed <= 0f
                     ? float.PositiveInfinity
                     : Mathf.Max(0f, 1f - move.MovementProgress) * tileDistance / division.Speed;
@@ -3951,9 +3951,10 @@ namespace Engine.Monobehaviours.Managers
 
             if (record.SourceKind == OrdnanceEmploymentSourceKind.SamLauncher
                 && gameManager.airDefenseSiteSystem.TryGetSite(record.SourceSiteId, out var site)
-                && gameManager.airDefenseSiteSystem.TryGetTileId(site, out var tileId)
-                && hexCentersByCell.TryGetValue(GetCell(tileId), out var siteCenter))
-                return siteCenter;
+                && gameManager.airDefenseSiteSystem.TryGetPositionFeet(
+                    site,
+                    out var sitePositionFeet))
+                return AirPositionToMapPosition(sitePositionFeet);
 
             return AirPositionToMapPosition(record.SourcePositionFeet);
         }
@@ -4760,7 +4761,8 @@ namespace Engine.Monobehaviours.Managers
             BarcapBarrierPlan barrier,
             IReadOnlyList<BarcapStationCoverage> coverages)
         {
-            var tileDistanceKm = gameManager.SimulationSettings.TileDistanceKM;
+            var tileDistanceKm =
+                CampaignMapCoordinates.TileCenterSpacingKilometers;
             var points = BarcapInterceptGeometry
                 .GetOperationalBarrierPointsFeet(
                     barrier.BarrierTileIds,
@@ -5265,15 +5267,13 @@ namespace Engine.Monobehaviours.Managers
                 return center;
 
             return AirPositionToMapPosition(AirspaceGeometry.TileCenterFeet(
-                area.CenterTileId,
-                gameManager.SimulationSettings.TileDistanceKM));
+                area.CenterTileId));
         }
 
         private float GetMissionAreaMapRadius(AirMissionArea area)
         {
-            var tileDistanceKm = Math.Max(
-                0.001f,
-                gameManager.SimulationSettings.TileDistanceKM);
+            var tileDistanceKm =
+                CampaignMapCoordinates.TileCenterSpacingKilometers;
             return Mathf.Max(
                 0.34f,
                 (area.RadiusKm / tileDistanceKm + 0.62f) * HexHeight);
@@ -5465,9 +5465,11 @@ namespace Engine.Monobehaviours.Managers
                          .Where(site => site != null)
                          .OrderBy(site => site.SiteId))
             {
-                if (!gameManager.airDefenseSiteSystem.TryGetTileId(site, out var tileId)
-                    || !hexCentersByCell.TryGetValue(GetCell(tileId), out var center))
+                if (!gameManager.airDefenseSiteSystem.TryGetPositionFeet(
+                        site,
+                        out var positionFeet))
                     continue;
+                var center = AirPositionToMapPosition(positionFeet);
 
                 var alliance = gameManager.airDefenseSiteSystem.GetEffectiveAlliance(site);
                 var color = GetAirAllianceColor(alliance);
@@ -5556,9 +5558,8 @@ namespace Engine.Monobehaviours.Managers
 
         private float SamRangeKmToMapRadius(float rangeKm)
         {
-            var tileDistanceKm = Mathf.Max(
-                SimulationSettings.MinTileDistanceKM,
-                gameManager.SimulationSettings.TileDistanceKM);
+            var tileDistanceKm =
+                CampaignMapCoordinates.TileCenterSpacingKilometers;
             return Mathf.Max(0.05f, rangeKm / tileDistanceKm * HexHeight);
         }
 
@@ -6681,10 +6682,7 @@ namespace Engine.Monobehaviours.Managers
 
         private Vector3 AirPositionToMapPosition(Vector3 positionFeet)
         {
-            var spacingFeet = Math.Max(
-                0.001f,
-                gameManager.SimulationSettings.TileDistanceKM
-                * AirspaceGeometry.FeetPerKilometer);
+            var spacingFeet = CampaignMapCoordinates.TileCenterSpacingFeet;
             return new Vector3(
                 positionFeet.x / spacingFeet * (HexHorizontalSpacing / 0.8660254f),
                 positionFeet.z / spacingFeet * HexHeight,

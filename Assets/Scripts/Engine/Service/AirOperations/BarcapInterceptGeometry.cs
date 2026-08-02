@@ -80,7 +80,6 @@ namespace Engine.Service
         {
             var threatCenter = AirspaceGeometry.TileCenterFeet(
                 threatReferenceTileId,
-                tileDistanceKm,
                 stationCenterFeet.y);
             var threatDirection = threatCenter - stationCenterFeet;
             threatDirection.y = 0f;
@@ -157,11 +156,9 @@ namespace Engine.Service
 
             var threatCenter = AirspaceGeometry.TileCenterFeet(
                 threatReferenceTileId,
-                tileDistanceKm,
                 altitudeFeet);
             var barrierCenter = AirspaceGeometry.TileCenterFeet(
                 barrierTileId,
-                tileDistanceKm,
                 altitudeFeet);
             var hostileToFriendly = barrierCenter - threatCenter;
             hostileToFriendly.y = 0f;
@@ -214,11 +211,9 @@ namespace Engine.Service
             if (tileDistanceKm <= 0f)
                 return 0f;
             var threatCenter = AirspaceGeometry.TileCenterFeet(
-                threatReferenceTileId,
-                tileDistanceKm);
+                threatReferenceTileId);
             var barrierCenter = AirspaceGeometry.TileCenterFeet(
-                barrierTileId,
-                tileDistanceKm);
+                barrierTileId);
             var hostileToFriendly = barrierCenter - threatCenter;
             hostileToFriendly.y = 0f;
             if (hostileToFriendly.sqrMagnitude < 1f)
@@ -370,8 +365,7 @@ namespace Engine.Service
                 return Array.Empty<Vector3>();
 
             var threatCenter = AirspaceGeometry.TileCenterFeet(
-                threatReferenceTileId,
-                tileDistanceKm);
+                threatReferenceTileId);
             var offsetFeet =
                 BarcapBarrierPlan.ResolveWeaponReleaseStandoffKm(
                     weaponReleaseStandoffKm)
@@ -380,8 +374,7 @@ namespace Engine.Service
                 .Select(tile =>
                 {
                     var protectedCenter = AirspaceGeometry.TileCenterFeet(
-                        tile,
-                        tileDistanceKm);
+                        tile);
                     var towardThreat = threatCenter - protectedCenter;
                     towardThreat.y = 0f;
                     if (towardThreat.sqrMagnitude < 1f)
@@ -453,16 +446,13 @@ namespace Engine.Service
                 return false;
 
             var commonCenter = AirspaceGeometry.TileCenterFeet(
-                commonTile.Value,
-                1f);
+                commonTile.Value);
             var plannedApproach = commonCenter
                                   - AirspaceGeometry.TileCenterFeet(
-                                      barrier.ThreatReferenceTileId,
-                                      1f);
+                                      barrier.ThreatReferenceTileId);
             var assignedApproach = commonCenter
                                    - AirspaceGeometry.TileCenterFeet(
-                                       coverage.ThreatReferenceTileId,
-                                       1f);
+                                       coverage.ThreatReferenceTileId);
             if (plannedApproach.sqrMagnitude < 0.001f
                 || assignedApproach.sqrMagnitude < 0.001f)
                 return false;
@@ -502,12 +492,10 @@ namespace Engine.Service
 
             var position = new Vector2(trackPositionFeet.x, trackPositionFeet.z);
             var threatCenter3 = AirspaceGeometry.TileCenterFeet(
-                threatReferenceTileId,
-                tileDistanceKm);
+                threatReferenceTileId);
             var protectedCenters = coveredBarrierTiles
                 .Select(tile => AirspaceGeometry.TileCenterFeet(
-                    tile,
-                    tileDistanceKm))
+                    tile))
                 .ToList();
             var protectedMidpoint = protectedCenters.Aggregate(
                 Vector3.zero,
@@ -579,12 +567,10 @@ namespace Engine.Service
                 return barrierCenters;
 
             var threatCenter = AirspaceGeometry.TileCenterFeet(
-                threatReferenceTileId,
-                tileDistanceKm);
+                threatReferenceTileId);
             var protectedMidpoint = coveredBarrierTiles
                 .Select(tile => AirspaceGeometry.TileCenterFeet(
-                    tile,
-                    tileDistanceKm))
+                    tile))
                 .Aggregate(
                     Vector3.zero,
                     (sum, point) => sum + point) / coveredBarrierTiles.Count;
@@ -709,8 +695,7 @@ namespace Engine.Service
                 return false;
 
             var threatCenter3 = AirspaceGeometry.TileCenterFeet(
-                threatReferenceTileId,
-                tileDistanceKm);
+                threatReferenceTileId);
             var threatCenter = new Vector2(threatCenter3.x, threatCenter3.z);
             var position = new Vector2(positionFeet.x, positionFeet.z);
             var operationalCenters = GetOperationalBarrierPointsFeet(
@@ -725,8 +710,7 @@ namespace Engine.Service
                         operationalCenters[index].x,
                         operationalCenters[index].z),
                     Protected = AirspaceGeometry.TileCenterFeet(
-                        tile,
-                        tileDistanceKm)
+                        tile)
                 })
                 .OrderBy(candidate =>
                     (candidate.Operational - position).sqrMagnitude)

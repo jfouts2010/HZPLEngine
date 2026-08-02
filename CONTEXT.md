@@ -499,23 +499,23 @@ _Avoid_: treating tile infrastructure as a synonym for **building** or as a catc
 
 ### Building
 
-A discrete, placed asset on a tile with its own type and identity. V1 building types are airport, factory, supply hub, fort, port, railroad, refinery, and power plant.
+A discrete, placed asset at a ground-level campaign position with its own type and identity. Its containing operational-map tile is derived from that position. V1 building types are airport, factory, supply hub, fort, port, railroad, refinery, power plant, and air defense.
 
 Railroad is represented as a building in v1. Future supply and pathfinding work may introduce rail connectivity as tile edge properties or a transport network when rules need connected rail lines rather than tile-local rail presence.
 
-Buildings are authored on the campaign template (which building types exist on which tiles). Runtime state tracks each building instance separately so one asset on a tile can be damaged while another on the same tile is untouched.
+Buildings are authored on the campaign template with campaign-local X/Z positions measured in feet. Runtime state tracks each building instance separately so one asset in a tile can be damaged while another in the same tile is untouched.
 
 Buildings may only be placed on land tiles. Ports cannot be placed on ocean tiles. Specific coastal placement validation for ports is not enforced in v1.
 
-**Building ID** — a stable GUID-based identifier for a building instance. A building also records its `Vector3Int` `TileId` placement and building type. Systems may index buildings by tile for efficient lookup, but building identity belongs to the building instance rather than to tile data.
+**Building ID** — a stable GUID-based identifier for a building instance. A building also records its ground-level `PositionFeet` and building type. `TileId` is derived by projecting that position onto the campaign hex grid; it is not a second persisted placement. Systems may index buildings by the derived tile for efficient lookup, but building identity and placement belong to the building instance rather than to tile data.
 
-Multiple building instances may exist on the same tile, including multiple buildings of the same type. Rules that need buildings on a tile query by `TileId` and then filter by building type or capabilities.
+Multiple building instances may exist in the same tile, including multiple buildings of the same type or at the same ground position. Tile-domain rules query the building system's derived tile index and then filter by building type or capabilities. Physical-distance rules use the building position rather than the tile center.
 
-Buildings inherit control from their tile. In v1, buildings do not carry separate owner or controller state; a building's usable faction is determined by the current tile controller and the building's functional level. When tile control changes, building control changes immediately with no separate capture delay or automatic damage.
+Buildings inherit control from the tile containing their position. In v1, buildings do not carry separate owner, controller, or country state; a building's usable faction is determined by the current derived tile controller and the building's functional level. When tile control changes, every building position inside that tile changes control immediately with no separate capture delay or automatic damage. A captured static air-defense building changes control with the tile, but its hosted SAM site is disabled rather than transferred operationally into the captor's IADS.
 
 Building categories and their runtime classes belong to the core engine. Runtime buildings share an abstract building concept for common identity, placement, build level, damage, and functional level. Specific building categories may have their own runtime classes when their behavior or state differs meaningfully. Airports are expected to be specialized and relatively complex; forts may remain simple specialized buildings.
 
-Buildings are owned by a building collection or building system rather than stored inside tile data. Tile data may reference or query buildings by coordinate `TileId`, but tiles are not the aggregate root for building state.
+Buildings are owned by a building collection or building system rather than stored inside tile data. The building system derives and indexes tile membership from position; tiles are not the aggregate root for building state.
 
 Each building is tracked with two persisted integers:
 
@@ -585,7 +585,7 @@ An **airspace position** is a campaign-local position measured uniformly in feet
 
 _Avoid_: using tile cube coordinates or Unity scene-transform coordinates as an aircraft's authoritative position.
 
-The center of cube tile `(0,0,0)` is the airspace origin. Tile centers use the operational map's existing flat-top hex orientation and `TileDistanceKM` center spacing converted to feet, with map east mapped to positive X and map north to positive Z; airports use their tile center at zero feet MSL until terrain elevation exists.
+The center of cube tile `(0,0,0)` is the airspace origin. Tile centers use the operational map's existing flat-top hex orientation and a fixed 20 km center spacing converted to feet, with map east mapped to positive X and map north mapped to positive Z. This scale is an engine invariant, not campaign-template content. Ground assets use their authored campaign positions at zero feet MSL until terrain elevation exists; tile-centered assets use the corresponding tile center.
 
 Physical air interactions, including sensor detection, weapon reach, and future aircraft encounters, use airspace positions and three-dimensional slant distance. Projection onto an operational-map tile is reserved for area membership, ownership, planning, and other tile-domain questions.
 
@@ -1219,7 +1219,7 @@ Radars are the exception when they need to exist outside a SAM site. A standalon
 
 Standalone radar buildings are not SAM sites when they cannot launch missiles. They may still reuse radar definitions, SAM component definitions where appropriate, target profiles, damage state, suppression concepts, and IADS network contribution rules.
 
-In the first model, hostile tile capture disables a static SAM site's SAM behavior or a standalone radar building's radar behavior rather than transferring it into the captor's IADS. The placed asset may remain, but its components do not become operational for the new controller automatically.
+In the first model, hostile tile capture disables a static SAM site's SAM behavior or a standalone radar building's radar behavior rather than transferring it into the captor's IADS. The placed asset may remain, but its components do not become operational for the new controller automatically. Recapturing the tile does not reactivate the site; reactivation requires a future explicit mechanic.
 
 ### Mobile SAM site
 
@@ -1240,7 +1240,7 @@ An alliance IADS is the persistent integrated air-defense actor for one combatan
 
 An alliance IADS owns that alliance's shared air picture; air-defense sites contribute observations to it, and v1 assumes friendly sites can use the shared air picture automatically.
 
-Air-defense sites contribute to the alliance IADS for their effective site alliance. Mobile SAM sites use their assigned alliance; static air-defense sites derive their effective alliance from their campaign country assignment and stop contributing when disabled by hostile tile capture.
+Air-defense sites contribute to the alliance IADS for their effective site alliance. Mobile SAM sites use their assigned alliance; static air-defense sites derive their effective alliance from the controller of the tile containing their host building and stop contributing when disabled by hostile tile capture.
 
 In v1, the alliance IADS owns current tracks and engagement assignments. IADS commander refresh names the decision pass that updates those assignments, even if a future IADS commander becomes a separate durable entity.
 

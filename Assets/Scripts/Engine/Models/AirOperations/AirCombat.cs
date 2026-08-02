@@ -204,6 +204,7 @@ namespace Models.Gameplay.Campaign
         public bool ExhaustProactiveEngagement;
         public bool RequestsWvrEngagement;
         public bool RequestsSurfaceThreatRecovery;
+        public bool RequestsBarcapStationRelocation;
         public bool RequestsAirToAirPassCancellation;
         public Guid ObservedThreatCandidateFlightId;
         public AirCombatEmploymentProposal Employment;

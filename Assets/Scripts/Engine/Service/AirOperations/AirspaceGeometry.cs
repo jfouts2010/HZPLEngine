@@ -10,9 +10,8 @@ namespace Engine.Service
 {
     public static class AirspaceGeometry
     {
-        public const float FeetPerKilometer = 3280.8399f;
+        public const float FeetPerKilometer = CampaignMapCoordinates.FeetPerKilometer;
         public const float FeetPerNauticalMile = 6076.1155f;
-        private const float SqrtThreeOverTwo = 0.8660254f;
         private static readonly Vector3Int[] NeighborDirections =
         {
             new Vector3Int(1, -1, 0),
@@ -53,28 +52,17 @@ namespace Engine.Service
 
         public static Vector3 TileCenterFeet(
             Vector3Int cubeCoordinate,
-            float tileDistanceKm,
             float altitudeFeet = 0f)
         {
-            var spacingFeet = Math.Max(0f, tileDistanceKm) * FeetPerKilometer;
-            return new Vector3(
-                cubeCoordinate.x * SqrtThreeOverTwo * spacingFeet,
-                altitudeFeet,
-                (cubeCoordinate.z + cubeCoordinate.x * 0.5f) * spacingFeet);
+            return CampaignMapCoordinates.TileCenterFeet(
+                cubeCoordinate,
+                altitudeFeet);
         }
 
-        public static Vector3Int TileCoordinateFromPositionFeet(
-            Vector3 positionFeet,
-            float tileDistanceKm)
+        public static Vector3Int TileCoordinateFromPositionFeet(Vector3 positionFeet)
         {
-            var spacingFeet = Math.Max(0f, tileDistanceKm) * FeetPerKilometer;
-            if (spacingFeet <= 0f)
-                return Vector3Int.zero;
-
-            var x = positionFeet.x / (SqrtThreeOverTwo * spacingFeet);
-            var z = positionFeet.z / spacingFeet - x * 0.5f;
-            var y = -x - z;
-            return CubeRound(x, y, z);
+            return CampaignMapCoordinates.TileCoordinateFromPositionFeet(
+                positionFeet);
         }
 
         private static Vector3Int CubeRound(float x, float y, float z)
@@ -353,8 +341,7 @@ namespace Engine.Service
         }
 
         public IReadOnlyList<KnownSamThreatEnvelope> BuildKnownThreats(
-            AllianceIntelligencePicture picture,
-            float tileDistanceKm)
+            AllianceIntelligencePicture picture)
         {
             if (picture?.HostileAirDefenseSites == null)
                 return Array.Empty<KnownSamThreatEnvelope>();
@@ -389,9 +376,7 @@ namespace Engine.Service
                 if (radars.Count == 0)
                     continue;
 
-                var center = AirspaceGeometry.TileCenterFeet(
-                    report.TileId,
-                    tileDistanceKm);
+                var center = report.PositionFeet;
 
                 foreach (var launcherGroup in components
                              .Where(component => component != null

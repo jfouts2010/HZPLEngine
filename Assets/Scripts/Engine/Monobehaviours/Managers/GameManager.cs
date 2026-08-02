@@ -125,6 +125,7 @@ namespace Engine.Monobehaviours.Managers
             {
                 Buildings = CreateRuntimeBuildings(template.BuildingStartingConditions, activeModule)
             };
+            buildingSystem.Configure(tileSystem);
             buildingSystem.RebuildIndex();
             divisionSystem = new DivisionSystem
             {
@@ -143,7 +144,7 @@ namespace Engine.Monobehaviours.Managers
                     template.MobileSamSiteStartingConditions,
                     activeModule)
             };
-            airDefenseSiteSystem.Configure(buildingSystem, divisionSystem, GetCountryAlliance);
+            airDefenseSiteSystem.Configure(buildingSystem, divisionSystem, tileSystem);
             airDefenseSiteSystem.RebuildIndex();
             intelligenceSystem = new AllianceIntelligenceSystem();
             intelligenceSystem.RefreshMaximumInformation(
@@ -293,6 +294,15 @@ namespace Engine.Monobehaviours.Managers
             return false;
         }
 
+        public void ChangeTileControl(Vector3Int tileId, Alliance controller)
+        {
+            var landTile = tileSystem.GetLand(tileId);
+            if (landTile.Controller == controller)
+                return;
+
+            tileSystem.ChangeControl(tileId, controller);
+            airDefenseSiteSystem?.DisableSitesOnTileCapture(tileId);
+        }
 
         public void PauseCampaign()
         {
@@ -594,7 +604,7 @@ namespace Engine.Monobehaviours.Managers
                     || previous.FunctionalLevel != building.FunctionalLevel)
                     AddTurnChange(
                         "Infrastructure",
-                        $"{building.Type} {ShortId(building.BuildingId)} at {FormatTile(building.TileId)}: damage {previous.Damage} → {building.Level.Damage}, functional level {previous.FunctionalLevel} → {building.FunctionalLevel}.",
+                        $"{building.Type} {ShortId(building.BuildingId)} at {FormatTile(building.TileId)} ({building.PositionFeet.x:0},{building.PositionFeet.z:0} ft): damage {previous.Damage} → {building.Level.Damage}, functional level {previous.FunctionalLevel} → {building.FunctionalLevel}.",
                         building.BuildingId);
             }
 
@@ -942,8 +952,7 @@ namespace Engine.Monobehaviours.Managers
             var copy = new SimulationSettings
             {
                 SimulationTickMinutes = settings.SimulationTickMinutes,
-                OperationalCadenceHours = settings.OperationalCadenceHours,
-                TileDistanceKM = settings.TileDistanceKM
+                OperationalCadenceHours = settings.OperationalCadenceHours
             };
 
             copy.Normalize();

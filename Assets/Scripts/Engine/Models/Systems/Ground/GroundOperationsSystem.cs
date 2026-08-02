@@ -51,9 +51,8 @@ namespace Engine.Models.Ground
                         .IsNeighbor(moveOrder.CurrentDestinationTileId))
                     continue;
 
-                var tileDistanceKm = Mathf.Max(
-                    SimulationSettings.MinTileDistanceKM,
-                    gameManager.SimulationSettings.TileDistanceKM);
+                var tileDistanceKm =
+                    CampaignMapCoordinates.TileCenterSpacingKilometers;
                 var progressPerHour = Mathf.Max(0f, division.Speed) / tileDistanceKm;
                 if (!moveOrder.IsRetreat && gameManager.IsDivisionAttackingInGroundCombat(division.DivisionId))
                     continue;
@@ -189,10 +188,14 @@ namespace Engine.Models.Ground
                                   && !GroundSystemUtility.IsRetreating(candidate)
                                   && GroundSystemUtility.TryGetDivisionAlliance(gameManager, candidate, out var alliance)
                                   && GroundSystemUtility.AreHostile(divisionAlliance, alliance));
-            if (!hasHostileNonRetreatingDivision)
-                gameManager.tileSystem.ChangeControl(tileId, divisionAlliance);
+            if (!hasHostileNonRetreatingDivision
+                && landTileData.Controller != divisionAlliance)
+            {
+                gameManager.ChangeTileControl(tileId, divisionAlliance);
+            }
         }
-         public bool TryAssignRetreat(Division division, Vector3Int fromTileId, string rationale)
+
+        public bool TryAssignRetreat(Division division, Vector3Int fromTileId, string rationale)
         {
             if (division == null)
                 return false;

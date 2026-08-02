@@ -134,7 +134,7 @@ namespace Models.Gameplay.Campaign
                     SimulationTickMinutes = 5,
                     OperationalCadenceHours = 6
                 },
-                ContentHash = "advanced-mechanics-test-campaign-v13",
+                ContentHash = "advanced-mechanics-test-campaign-v15",
                 CountryAllianceAssignments = CreateCountryAllianceAssignments(),
                 OrdnanceAllowances = CreateOrdnanceAllowances(),
                 SamSiteTemplateAllowances = CreateSamSiteTemplateAllowances(),
@@ -339,15 +339,14 @@ namespace Models.Gameplay.Campaign
                 CreateBuilding("1be9955d-4d8b-4b7c-8f03-29b8f6d9aabd", BlueFrontTileIds[2], BuildingType.Railroad, 3),
                 CreateBuilding("f4d2c7b5-1a6e-4f4a-d923-5b0ec407f63b", NeutralHubTileId, BuildingType.SupplyHub, 5),
                 CreateBuilding("a5e3d8c6-2b7f-405b-e034-6c1fd518074c", BlueFrontTileIds[1], BuildingType.Fort, 3),
-                CreateStaticSamBuilding("921dda97-8caf-4e7a-9803-af07ef13d2d8", BlueDefensiveAirbaseTileId, BlueCountryId),
-                CreateStaticSamBuilding("c9c22074-fea8-497c-9691-c0a23ed1f5db", BlueCapitalTileId, BlueCountryId),
-                CreateStaticSamBuilding("d352b464-f4b1-4ece-866f-eac4d2c31f88", BlueVulnerableAirbaseTileId, BlueCountryId),
-                CreateStaticSamBuilding("4ce0420b-3559-41a2-96ee-933220a83a81", new Vector3Int(-1, 2, -1), BlueCountryId),
-                CreateStaticSamBuilding("4f146295-ea92-4de1-90cd-0da593c14fa7", new Vector3Int(-1, 5, -4), BlueCountryId),
+                CreateStaticSamBuilding("921dda97-8caf-4e7a-9803-af07ef13d2d8", BlueDefensiveAirbaseTileId),
+                CreateStaticSamBuilding("c9c22074-fea8-497c-9691-c0a23ed1f5db", BlueCapitalTileId),
+                CreateStaticSamBuilding("d352b464-f4b1-4ece-866f-eac4d2c31f88", BlueVulnerableAirbaseTileId),
+                CreateStaticSamBuilding("4ce0420b-3559-41a2-96ee-933220a83a81", new Vector3Int(-1, 2, -1)),
+                CreateStaticSamBuilding("4f146295-ea92-4de1-90cd-0da593c14fa7", new Vector3Int(-1, 5, -4)),
                 CreateOmniscientTestRadarBuilding(
                     "cc043c90-f4c1-4d2d-a4f9-1cc41462a760",
-                    BlueCapitalTileId,
-                    BlueCountryId),
+                    BlueCapitalTileId),
                 CreateBuilding("b6f4e9d7-3c8a-416c-f145-7d2ae629185d", RedCapitalTileId, BuildingType.PowerPlant, 4),
                 CreateBuilding(RedCapitalAirportBuildingId.ToString(), RedCapitalTileId, BuildingType.Airport, 5),
                 CreateBuilding(RedDefensiveAirportBuildingId.ToString(), RedDefensiveAirbaseTileId, BuildingType.Airport, 7),
@@ -361,20 +360,18 @@ namespace Models.Gameplay.Campaign
                 CreateBuilding("d8b6a1f9-5e0c-438e-1367-9f4c084b3a7f", RedFrontTileIds[1], BuildingType.Railroad, 4),
                 CreateBuilding("b8056bb0-5fb5-4d09-b9d4-a4585c43f0f7", RedFrontTileIds[1], BuildingType.SupplyHub, 4),
                 CreateBuilding("2f40d216-7eb7-4362-8f31-d519a6a2d585", RedFrontTileIds[2], BuildingType.Railroad, 3),
-                CreateStaticSamBuilding("e765cf9b-4220-49d6-a4ce-001ac06f0fae", RedDefensiveAirbaseTileId, RedCountryId),
+                CreateStaticSamBuilding("e765cf9b-4220-49d6-a4ce-001ac06f0fae", RedDefensiveAirbaseTileId),
                 // This isolated battery blocks Blue's first airport-strike corridor.
                 // Nearby Red SAMs intentionally remain outside its 40 km DEAD area
                 // so the assigned package can enter this site's envelope without
                 // being rejected by an overlapping, non-target threat.
                 CreateStaticSamBuilding(
                     "4e854b37-5479-4473-9daf-338cc7b01b69",
-                    RedDeadCorridorSamTileId,
-                    RedCountryId),
-                CreateStaticSamBuilding("7c526362-4d00-466d-aa43-63535843ae99", new Vector3Int(2, 4, -6), RedCountryId),
+                    RedDeadCorridorSamTileId),
+                CreateStaticSamBuilding("7c526362-4d00-466d-aa43-63535843ae99", new Vector3Int(2, 4, -6)),
                 CreateOmniscientTestRadarBuilding(
                     "7603f203-51ce-4ceb-ab40-83fc9d2975a9",
-                    RedCapitalTileId,
-                    RedCountryId)
+                    RedCapitalTileId)
             };
         }
 
@@ -692,7 +689,7 @@ namespace Models.Gameplay.Campaign
             return new BuildingStartingCondition
             {
                 BuildingId = Guid.Parse(buildingId),
-                TileId = tileId,
+                PositionFeet = CampaignMapCoordinates.TileCenterFeet(tileId),
                 Type = type,
                 Level = new BuildingLevel(level, damage),
             };
@@ -700,32 +697,28 @@ namespace Models.Gameplay.Campaign
 
         private static BuildingStartingCondition CreateStaticSamBuilding(
             string buildingId,
-            Vector3Int tileId,
-            Guid countryId)
+            Vector3Int tileId)
         {
             return new BuildingStartingCondition
             {
                 BuildingId = Guid.Parse(buildingId),
-                TileId = tileId,
+                PositionFeet = CampaignMapCoordinates.TileCenterFeet(tileId),
                 Type = BuildingType.AirDefense,
                 Level = new BuildingLevel(1),
-                CountryId = countryId,
                 SamSiteTemplateId = TestModule.Sa2SiteTemplateId
             };
         }
 
         private static BuildingStartingCondition CreateOmniscientTestRadarBuilding(
             string buildingId,
-            Vector3Int tileId,
-            Guid countryId)
+            Vector3Int tileId)
         {
             return new BuildingStartingCondition
             {
                 BuildingId = Guid.Parse(buildingId),
-                TileId = tileId,
+                PositionFeet = CampaignMapCoordinates.TileCenterFeet(tileId),
                 Type = BuildingType.AirDefense,
                 Level = new BuildingLevel(1),
-                CountryId = countryId,
                 SamSiteTemplateId = TestModule.OmniscientTestRadarSiteTemplateId
             };
         }

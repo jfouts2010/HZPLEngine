@@ -49,8 +49,7 @@ namespace Models.Gameplay.Campaign
             ? null
             : new AirMissionArea(
                 effectArea.CenterTileId,
-                effectArea.RadiusKm,
-                effectArea.TileDistanceKm);
+                effectArea.RadiusKm);
         public BarcapStationCoverage BarcapCoverage => barcapCoverage?.Clone();
         public bool HasRepeat => hasRepeat;
         public Guid RepeatFromWaypointId => repeatFromWaypointId;
@@ -79,8 +78,7 @@ namespace Models.Gameplay.Campaign
                 ? null
                 : new AirMissionArea(
                     effectArea.CenterTileId,
-                    effectArea.RadiusKm,
-                    effectArea.TileDistanceKm);
+                    effectArea.RadiusKm);
             this.barcapCoverage = barcapCoverage?.Clone();
             this.hasRepeat = hasRepeat;
             this.repeatFromWaypointId = repeatFromWaypointId;

@@ -7,11 +7,18 @@ namespace Models.Gameplay.Campaign
     public abstract class Building
     {
         public Guid BuildingId;
-        public Vector3Int TileId;
+        [SerializeField]
+        private Vector3 positionFeet;
         public BuildingLevel Level = new BuildingLevel();
         public int TargetToughness = 1;
 
+        [NonSerialized]
+        private Vector3Int tileId;
+
         public abstract BuildingType Type { get; }
+
+        public Vector3 PositionFeet => positionFeet;
+        public Vector3Int TileId => tileId;
 
         public int FunctionalLevel
         {
@@ -25,10 +32,15 @@ namespace Models.Gameplay.Campaign
         protected Building(BuildingStartingCondition startingCondition)
         {
             BuildingId = startingCondition.BuildingId;
-            TileId = startingCondition.TileId;
+            positionFeet = startingCondition.PositionFeet;
             Level = startingCondition.Level == null
                 ? new BuildingLevel()
                 : new BuildingLevel(startingCondition.Level.BuildLevel, startingCondition.Level.Damage);
+        }
+
+        internal void SetDerivedTileId(Vector3Int value)
+        {
+            tileId = value;
         }
     }
 }

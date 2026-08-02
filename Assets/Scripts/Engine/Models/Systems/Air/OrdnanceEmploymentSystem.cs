@@ -27,6 +27,8 @@ namespace Engine.Models
         private readonly IReadOnlyDictionary<Guid, OrdnanceTypeDefinition> ordnanceTypes;
         private readonly IReadOnlyDictionary<Guid, AirDefenseComponentDefinition>
             airDefenseComponentDefinitions;
+        private Func<ActiveOrdnanceEmploymentPass, DateTime, bool>
+            airToAirSamEmploymentValidator;
 
         public OrdnanceEmploymentSystem(
             GameManager gameManager,
@@ -48,6 +50,12 @@ namespace Engine.Models
         public void AdvanceScheduledEvents(DateTime currentTime)
         {
             ProcessDueEvents(currentTime);
+        }
+
+        internal void SetAirToAirSamEmploymentValidator(
+            Func<ActiveOrdnanceEmploymentPass, DateTime, bool> validator)
+        {
+            airToAirSamEmploymentValidator = validator;
         }
 
         public DateTime? GetNextScheduledEvent(DateTime after, DateTime noLaterThan)
@@ -131,6 +139,18 @@ namespace Engine.Models
                 ReleaseAt = currentTime.AddSeconds(preparationSeconds),
                 LaunchQuality = Mathf.Min(launchQuality, proposal.LaunchQuality)
             };
+            if (airToAirSamEmploymentValidator != null
+                && !airToAirSamEmploymentValidator(pass, currentTime))
+            {
+                AddRecord(
+                    pass,
+                    OrdnanceEmploymentRecordStage.PreparationAborted,
+                    currentTime,
+                    0,
+                    "Employment preparation was not started because current "
+                    + "SAM-safety authorization does not permit the engagement.");
+                return false;
+            }
             ActivePasses.Add(pass);
             AddRecord(
                 pass,
@@ -168,7 +188,6 @@ namespace Engine.Models
                     || targetAlliance == source.Alliance)
                 || site.IsDisabled
                 || site.IsDestroyed
-                || !gameManager.airDefenseSiteSystem.TryGetTileId(site, out var siteTileId)
                 || !ordnanceTypes.TryGetValue(
                     ordnanceTypeDefinitionId,
                     out var ordnance)
@@ -192,9 +211,8 @@ namespace Engine.Models
                     || !radar.IsEmitting))
                 return false;
 
-            var targetPosition = AirspaceGeometry.TileCenterFeet(
-                siteTileId,
-                gameManager.SimulationSettings.TileDistanceKM);
+            if (!TryGetSamSitePosition(site, out var targetPosition))
+                return false;
             var distanceKm = HorizontalDistanceKm(
                 source.Flight.PositionFeet,
                 targetPosition);
@@ -278,22 +296,16 @@ namespace Engine.Models
                         target.TargetToughness)
                     || IsAntiRadiation(ordnance)
                     && (resolved.Component is not RadarAirDefenseComponent radar
-                        || !radar.IsEmitting))
+                        || !radar.IsEmitting)
+                    || !IsGroundTargetInRange(
+                        source.Flight.PositionFeet,
+                        resolved.PositionFeet,
+                        ordnance))
                     continue;
 
                 validTargets.Add(target.Clone());
             }
             if (validTargets.Count == 0)
-                return false;
-
-            var targetPosition = AirspaceGeometry.TileCenterFeet(
-                plan.TargetTileId,
-                gameManager.SimulationSettings.TileDistanceKM);
-            var distanceKm = HorizontalDistanceKm(
-                source.Flight.PositionFeet,
-                targetPosition);
-            if (distanceKm < ordnance.MinimumRangeKm
-                || distanceKm > ordnance.MaximumRangeKm)
                 return false;
 
             var operationalAircraft = source.LiveAircraft
@@ -919,6 +931,19 @@ namespace Engine.Models
                 return;
             }
 
+            if (airToAirSamEmploymentValidator != null
+                && !airToAirSamEmploymentValidator(pass, releaseAt))
+            {
+                AddRecord(
+                    pass,
+                    OrdnanceEmploymentRecordStage.PreparationAborted,
+                    releaseAt,
+                    0,
+                    "Employment preparation aborted because current SAM-safety "
+                    + "authorization no longer permits the engagement.");
+                return;
+            }
+
             if (!AirCombatRules.EvaluateLaunch(
                     source.Flight,
                     source.AircraftType,
@@ -1014,7 +1039,6 @@ namespace Engine.Models
                     || targetAlliance == source.Alliance)
                 || site.IsDisabled
                 || site.IsDestroyed
-                || !gameManager.airDefenseSiteSystem.TryGetTileId(site, out var siteTileId)
                 || !ordnanceTypes.TryGetValue(
                     pass.OrdnanceTypeDefinitionId,
                     out var ordnance))
@@ -1061,9 +1085,16 @@ namespace Engine.Models
                 return;
             }
 
-            var targetPosition = AirspaceGeometry.TileCenterFeet(
-                siteTileId,
-                gameManager.SimulationSettings.TileDistanceKM);
+            if (!TryGetSamSitePosition(site, out var targetPosition))
+            {
+                AddRecord(
+                    pass,
+                    OrdnanceEmploymentRecordStage.PreparationAborted,
+                    releaseAt,
+                    0,
+                    "Ground-attack preparation aborted because the selected site position was unavailable.");
+                return;
+            }
             var distanceKm = HorizontalDistanceKm(
                 source.Flight.PositionFeet,
                 targetPosition);
@@ -1167,7 +1198,10 @@ namespace Engine.Models
                 return;
             }
 
-            var validTargets = new List<GroundAttackOpportunityTarget>();
+            var validTargets = new List<(
+                GroundAttackOpportunityTarget Target,
+                Vector3 PositionFeet)>();
+            var hadOtherwiseValidOutOfRangeTarget = false;
             foreach (var target in pass.GroundPrimaryTargets
                          .Where(item => item != null))
             {
@@ -1184,7 +1218,16 @@ namespace Engine.Models
                         || !radar.IsEmitting))
                     continue;
 
-                validTargets.Add(target);
+                if (!IsGroundTargetInRange(
+                        source.Flight.PositionFeet,
+                        resolved.PositionFeet,
+                        ordnance))
+                {
+                    hadOtherwiseValidOutOfRangeTarget = true;
+                    continue;
+                }
+
+                validTargets.Add((target, resolved.PositionFeet));
             }
             if (validTargets.Count == 0)
             {
@@ -1193,33 +1236,20 @@ namespace Engine.Models
                     OrdnanceEmploymentRecordStage.PreparationAborted,
                     releaseAt,
                     0,
-                    "Ground-attack preparation aborted because no selected target remained valid.");
+                    hadOtherwiseValidOutOfRangeTarget
+                        ? "Ground-attack preparation aborted because release range was no longer valid."
+                        : "Ground-attack preparation aborted because no selected target remained valid.");
                 return;
             }
 
-            var targetPosition = AirspaceGeometry.TileCenterFeet(
-                pass.GroundTargetTileId,
-                gameManager.SimulationSettings.TileDistanceKM);
-            var distanceKm = HorizontalDistanceKm(
-                source.Flight.PositionFeet,
-                targetPosition);
-            if (distanceKm < ordnance.MinimumRangeKm
-                || distanceKm > ordnance.MaximumRangeKm)
-            {
-                AddRecord(
-                    pass,
-                    OrdnanceEmploymentRecordStage.PreparationAborted,
-                    releaseAt,
-                    0,
-                    "Ground-attack preparation aborted because release range was no longer valid.");
-                return;
-            }
-
+            var targetReferences = validTargets
+                .Select(target => target.Target)
+                .ToList();
             var launches = SpendGroundRounds(
                 source,
                 pass.OrdnanceTypeDefinitionId,
                 pass.PreferredSourceAircraftId,
-                validTargets,
+                targetReferences,
                 releaseAt);
             if (launches.Count == 0)
             {
@@ -1233,24 +1263,29 @@ namespace Engine.Models
             }
 
             validTargets = validTargets.Take(launches.Count).ToList();
+            targetReferences = targetReferences.Take(launches.Count).ToList();
             var targetGroups = BuildGroundEffectTargetGroups(
-                validTargets,
+                targetReferences,
                 pass.GroundOpportunityTargets,
                 ordnance.MaximumGroundTargetsPerWeapon);
 
-            var rangeSpan = Math.Max(
-                0.01f,
-                ordnance.MaximumRangeKm - ordnance.MinimumRangeKm);
-            var rangeRatio = Mathf.Clamp01(
-                (distanceKm - ordnance.MinimumRangeKm) / rangeSpan);
-            var travelSeconds = AirspaceGeometry.HorizontalTravelSeconds(
-                Vector3.Distance(source.Flight.PositionFeet, targetPosition),
-                ordnance.EffectSpeedKnots);
             for (var index = 0; index < launches.Count; index++)
             {
                 var launch = launches[index];
                 launch.Sequence = 1;
-                var primary = validTargets[index].Clone();
+                var primary = validTargets[index].Target.Clone();
+                var targetPosition = validTargets[index].PositionFeet;
+                var distanceKm = HorizontalDistanceKm(
+                    source.Flight.PositionFeet,
+                    targetPosition);
+                var rangeSpan = Math.Max(
+                    0.01f,
+                    ordnance.MaximumRangeKm - ordnance.MinimumRangeKm);
+                var rangeRatio = Mathf.Clamp01(
+                    (distanceKm - ordnance.MinimumRangeKm) / rangeSpan);
+                var travelSeconds = AirspaceGeometry.HorizontalTravelSeconds(
+                    Vector3.Distance(source.Flight.PositionFeet, targetPosition),
+                    ordnance.EffectSpeedKnots);
                 var hitProbability = Mathf.Clamp01(
                     ordnance.HitProbability
                     * ordnance.GetEffectiveness(primary.TargetCategory)
@@ -2803,15 +2838,9 @@ namespace Engine.Models
 
         private bool TryGetSamSitePosition(SamSite site, out Vector3 position)
         {
-            if (gameManager.airDefenseSiteSystem.TryGetTileId(site, out var tileId))
-            {
-                position = AirspaceGeometry.TileCenterFeet(
-                    tileId,
-                    gameManager.SimulationSettings.TileDistanceKM);
-                return true;
-            }
-            position = default;
-            return false;
+            return gameManager.airDefenseSiteSystem.TryGetPositionFeet(
+                site,
+                out position);
         }
 
         private IReadOnlyDictionary<Guid, FlightContext> BuildFlightContexts()
@@ -2986,6 +3015,18 @@ namespace Engine.Models
                    / AirspaceGeometry.FeetPerKilometer;
         }
 
+        private static bool IsGroundTargetInRange(
+            Vector3 sourcePositionFeet,
+            Vector3 targetPositionFeet,
+            OrdnanceTypeDefinition ordnance)
+        {
+            var distanceKm = HorizontalDistanceKm(
+                sourcePositionFeet,
+                targetPositionFeet);
+            return distanceKm >= ordnance.MinimumRangeKm
+                   && distanceKm <= ordnance.MaximumRangeKm;
+        }
+
         private bool TryResolveGroundTarget(
             GroundAttackOpportunityTarget target,
             out ResolvedGroundTarget resolved)
@@ -3005,7 +3046,10 @@ namespace Engine.Models
                         || site.IsDestroyed
                         || !gameManager.airDefenseSiteSystem.TryGetTileId(
                             site,
-                            out var siteTileId))
+                            out var siteTileId)
+                        || !gameManager.airDefenseSiteSystem.TryGetPositionFeet(
+                            site,
+                            out var sitePositionFeet))
                         return false;
                     var component = site.Components.FirstOrDefault(candidate =>
                         candidate != null
@@ -3021,6 +3065,7 @@ namespace Engine.Models
                         Alliance = gameManager.airDefenseSiteSystem
                             .GetEffectiveAlliance(site),
                         TileId = siteTileId,
+                        PositionFeet = sitePositionFeet,
                         Component = component,
                         ComponentDefinition = componentDefinition
                     };
@@ -3037,6 +3082,8 @@ namespace Engine.Models
                         Alliance = gameManager.GetCountryAlliance(
                             division.CountryId),
                         TileId = division.TileId,
+                        PositionFeet = AirspaceGeometry.TileCenterFeet(
+                            division.TileId),
                         Division = division
                     };
                     return true;
@@ -3054,6 +3101,7 @@ namespace Engine.Models
                     {
                         Alliance = buildingTile.Controller,
                         TileId = building.TileId,
+                        PositionFeet = building.PositionFeet,
                         Building = building
                     };
                     return true;
@@ -3078,6 +3126,7 @@ namespace Engine.Models
                         Alliance = gameManager.GetCountryAlliance(
                             squadron.CountryId),
                         TileId = airportBuilding.TileId,
+                        PositionFeet = airportBuilding.PositionFeet,
                         Aircraft = aircraft
                     };
                     return true;
@@ -3092,6 +3141,8 @@ namespace Engine.Models
                     {
                         Alliance = landTile.Controller,
                         TileId = reference.TileId,
+                        PositionFeet = AirspaceGeometry.TileCenterFeet(
+                            reference.TileId),
                         LandTile = landTile
                     };
                     return true;
@@ -3209,6 +3260,7 @@ namespace Engine.Models
         {
             public Alliance Alliance;
             public Vector3Int TileId;
+            public Vector3 PositionFeet;
             public AirDefenseComponent Component;
             public AirDefenseComponentDefinition ComponentDefinition;
             public Division Division;

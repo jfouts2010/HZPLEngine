@@ -5,8 +5,6 @@ namespace Models.Gameplay.Campaign
     [Serializable]
     public class AirDefenseBuilding : Building
     {
-        public Guid CountryId;
-
         public override BuildingType Type
         {
             get { return BuildingType.AirDefense; }
@@ -18,7 +16,6 @@ namespace Models.Gameplay.Campaign
 
         public AirDefenseBuilding(BuildingStartingCondition startingCondition) : base(startingCondition)
         {
-            CountryId = startingCondition.CountryId;
         }
     }
 }

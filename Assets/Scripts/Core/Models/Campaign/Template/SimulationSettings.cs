@@ -14,12 +14,8 @@ namespace Models.Gameplay.Campaign
         public const int MaxOperationalCadenceHours = 6;
         public const int DefaultOperationalCadenceHours = 6;
 
-        public const int MinTileDistanceKM = 1;
-        public const int DefaultTileDistanceKM = 20;
-
         public int SimulationTickMinutes = DefaultSimulationTickMinutes;
         public int OperationalCadenceHours = DefaultOperationalCadenceHours;
-        public int TileDistanceKM = DefaultTileDistanceKM;
 
         public void Normalize()
         {
@@ -32,10 +28,6 @@ namespace Models.Gameplay.Campaign
                 OperationalCadenceHours <= 0 ? DefaultOperationalCadenceHours : OperationalCadenceHours,
                 MinOperationalCadenceHours,
                 MaxOperationalCadenceHours);
-
-            TileDistanceKM = Mathf.Max(
-                MinTileDistanceKM,
-                TileDistanceKM <= 0 ? DefaultTileDistanceKM : TileDistanceKM);
         }
 
         public static bool CrossedOperationalCadenceBoundary(

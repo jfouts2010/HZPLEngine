@@ -7,10 +7,9 @@ namespace Models.Gameplay.Campaign
     public class BuildingStartingCondition
     {
         public Guid BuildingId = Guid.NewGuid();
-        public Vector3Int TileId;
+        public Vector3 PositionFeet;
         public BuildingType Type;
         public BuildingLevel Level = new BuildingLevel();
-        public Guid CountryId;
         public Guid SamSiteTemplateId;
     }
 }

@@ -158,7 +158,7 @@ namespace Engine.Service
             builder.AppendLine(
                 $"- Tick: {gameManager.SimulationSettings.SimulationTickMinutes} min"
                 + $" | Operational cadence: {gameManager.SimulationSettings.OperationalCadenceHours} h"
-                + $" | Tile: {gameManager.SimulationSettings.TileDistanceKM} km");
+                + $" | Tile: {CampaignMapCoordinates.TileCenterSpacingKilometers} km");
             builder.AppendLine();
             builder.AppendLine("## Reading these logs");
             builder.AppendLine();

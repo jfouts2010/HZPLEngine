@@ -52,6 +52,7 @@ namespace Engine.Models
     {
         public Guid BuildingId;
         public Vector3Int TileId;
+        public Vector3 PositionFeet;
         public BuildingType Type;
         public float InformationQuality;
         public DateTime ObservedAt;
@@ -84,6 +85,7 @@ namespace Engine.Models
         public SamSiteHostType HostType;
         public Guid HostId;
         public Vector3Int TileId;
+        public Vector3 PositionFeet;
         public float InformationQuality;
         public DateTime ObservedAt;
         public bool IsDisabled;
@@ -112,6 +114,7 @@ namespace Engine.Models
     {
         public Guid AirportBuildingId;
         public Vector3Int AirportTileId;
+        public Vector3 PositionFeet;
         public float InformationQuality;
         public DateTime ObservedAt;
         public ObservedAirportCondition Condition;
@@ -405,6 +408,7 @@ namespace Engine.Models
                 {
                     BuildingId = building.BuildingId,
                     TileId = building.TileId,
+                    PositionFeet = building.PositionFeet,
                     Type = building.Type,
                     InformationQuality = MaximumInformationQuality,
                     ObservedAt = observedAt,
@@ -437,7 +441,10 @@ namespace Engine.Models
                 if (!IsHostile(observerAlliance, subjectAlliance)
                     || !gameManager.airDefenseSiteSystem.TryGetTileId(
                         site,
-                        out var tileId))
+                        out var tileId)
+                    || !gameManager.airDefenseSiteSystem.TryGetPositionFeet(
+                        site,
+                        out var positionFeet))
                 {
                     continue;
                 }
@@ -449,6 +456,7 @@ namespace Engine.Models
                     HostType = site.HostType,
                     HostId = site.HostId,
                     TileId = tileId,
+                    PositionFeet = positionFeet,
                     InformationQuality = MaximumInformationQuality,
                     ObservedAt = observedAt,
                     IsDisabled = site.IsDisabled,
@@ -498,6 +506,7 @@ namespace Engine.Models
                 {
                     AirportBuildingId = airport.BuildingId,
                     AirportTileId = airport.TileId,
+                    PositionFeet = airport.PositionFeet,
                     InformationQuality = MaximumInformationQuality,
                     ObservedAt = observedAt,
                     Condition = GetObservedCondition(airport),

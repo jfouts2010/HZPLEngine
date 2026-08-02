@@ -63,9 +63,7 @@ namespace Engine.Service
                     .Where(report => report != null)
                     .ToList()
             };
-            var threats = threatAssessment.BuildKnownThreats(
-                picture,
-                snapshot.TileDistanceKm);
+            var threats = threatAssessment.BuildKnownThreats(picture);
             if (threats.Count == 0)
                 return false;
 
@@ -75,13 +73,11 @@ namespace Engine.Service
                 var altitudeFeet = Math.Max(
                     0f,
                     origin.AircraftType.NominalCruiseAltitudeFeet);
-                var originPosition = AirspaceGeometry.TileCenterFeet(
-                    origin.Squadron.AirportTileId,
-                    snapshot.TileDistanceKm,
+                var originPosition = WithAltitude(
+                    origin.Squadron.AirportPositionFeet,
                     altitudeFeet);
-                var destinationPosition = AirspaceGeometry.TileCenterFeet(
-                    objective.Airport.AirportTileId,
-                    snapshot.TileDistanceKm,
+                var destinationPosition = WithAltitude(
+                    objective.Airport.PositionFeet,
                     altitudeFeet);
                 var maneuverClearanceFeet = AirspaceGeometry
                     .ConservativeSamManeuverClearanceFeet(
@@ -92,8 +88,7 @@ namespace Engine.Service
                         destinationPosition,
                         destinationPosition,
                         originPosition,
-                        snapshot.TileDistanceKm
-                        * AirspaceGeometry.FeetPerKilometer,
+                        CampaignMapCoordinates.TileCenterSpacingFeet,
                         origin.AircraftType.AircraftTypeDefinitionId,
                         threats,
                         maneuverClearanceFeet));
@@ -193,9 +188,8 @@ namespace Engine.Service
                     Airport = airport,
                     Origin = origin,
                     DistanceKm = HorizontalDistanceKm(
-                        origin.Squadron.AirportTileId,
-                        airport.AirportTileId,
-                        snapshot.TileDistanceKm)
+                        origin.Squadron.AirportPositionFeet,
+                        airport.PositionFeet)
                 }))
                 .Where(value => value.Origin.AircraftType.RangeKm <= 0f
                                 || value.DistanceKm * 2f
@@ -300,20 +294,19 @@ namespace Engine.Service
         }
 
         private static float HorizontalDistanceKm(
-            Vector3Int first,
-            Vector3Int second,
-            float tileDistanceKm)
+            Vector3 first,
+            Vector3 second)
         {
-            var firstPosition = AirspaceGeometry.TileCenterFeet(
-                first,
-                tileDistanceKm);
-            var secondPosition = AirspaceGeometry.TileCenterFeet(
-                second,
-                tileDistanceKm);
             return Vector2.Distance(
-                       new Vector2(firstPosition.x, firstPosition.z),
-                       new Vector2(secondPosition.x, secondPosition.z))
+                       new Vector2(first.x, first.z),
+                       new Vector2(second.x, second.z))
                    / AirspaceGeometry.FeetPerKilometer;
+        }
+
+        private static Vector3 WithAltitude(Vector3 positionFeet, float altitudeFeet)
+        {
+            positionFeet.y = altitudeFeet;
+            return positionFeet;
         }
 
         private static string ShortId(Guid id)

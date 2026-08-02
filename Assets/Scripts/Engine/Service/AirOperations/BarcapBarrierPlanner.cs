@@ -294,7 +294,8 @@ namespace Engine.Service
             var threatDistanceKm = AirMissionArea.HexDistance(
                                        plan.ThreatReferenceTileId,
                                        midpoint)
-                                   * snapshot.TileDistanceKm;
+                                   * CampaignMapCoordinates
+                                       .TileCenterSpacingKilometers;
             var availableAlongBarrierRadii = snapshot.FriendlySquadrons
                 .Where(squadron => squadron.ReadyAircraftCount > 0)
                 .Select(squadron => priorityService.GetAircraftType(
@@ -342,7 +343,8 @@ namespace Engine.Service
             var coveredTiles = bestAlongBarrierRadius <= 0f
                 ? 1
                 : Mathf.FloorToInt(
-                      bestAlongBarrierRadius / snapshot.TileDistanceKm)
+                      bestAlongBarrierRadius / CampaignMapCoordinates
+                          .TileCenterSpacingKilometers)
                   * 2 + 1;
             return Math.Max(
                 1,
@@ -460,8 +462,8 @@ namespace Engine.Service
 
         private static int DirectionSector(Vector3Int origin, Vector3Int target)
         {
-            var direction = AirspaceGeometry.TileCenterFeet(target, 1f)
-                            - AirspaceGeometry.TileCenterFeet(origin, 1f);
+            var direction = AirspaceGeometry.TileCenterFeet(target)
+                            - AirspaceGeometry.TileCenterFeet(origin);
             var angle = Mathf.Atan2(direction.z, direction.x) * Mathf.Rad2Deg;
             if (angle < 0f)
                 angle += 360f;
@@ -474,8 +476,8 @@ namespace Engine.Service
             HashSet<Vector3Int> friendlyTiles)
         {
             var center = SelectMedoid(tiles);
-            var threatDirection = AirspaceGeometry.TileCenterFeet(threatTile, 1f)
-                                  - AirspaceGeometry.TileCenterFeet(center, 1f);
+            var threatDirection = AirspaceGeometry.TileCenterFeet(threatTile)
+                                  - AirspaceGeometry.TileCenterFeet(center);
             threatDirection.y = 0f;
             if (threatDirection.sqrMagnitude < 0.001f)
                 threatDirection = Vector3.forward;
@@ -483,7 +485,7 @@ namespace Engine.Service
                 .normalized;
             var ordered = tiles
                 .OrderBy(tile => Vector3.Dot(
-                    AirspaceGeometry.TileCenterFeet(tile, 1f),
+                    AirspaceGeometry.TileCenterFeet(tile),
                     tangent))
                 .ThenBy(tile => tile.x)
                 .ThenBy(tile => tile.y)
@@ -586,8 +588,8 @@ namespace Engine.Service
             Vector3Int threatTile,
             HashSet<Vector3Int> friendlyTiles)
         {
-            var threatDirection = AirspaceGeometry.TileCenterFeet(threatTile, 1f)
-                                  - AirspaceGeometry.TileCenterFeet(center, 1f);
+            var threatDirection = AirspaceGeometry.TileCenterFeet(threatTile)
+                                  - AirspaceGeometry.TileCenterFeet(center);
             threatDirection.y = 0f;
             if (threatDirection.sqrMagnitude < 0.001f)
                 threatDirection = Vector3.forward;
@@ -599,8 +601,8 @@ namespace Engine.Service
                 {
                     Tile = tile,
                     Projection = Vector3.Dot(
-                        AirspaceGeometry.TileCenterFeet(tile, 1f)
-                        - AirspaceGeometry.TileCenterFeet(center, 1f),
+                        AirspaceGeometry.TileCenterFeet(tile)
+                        - AirspaceGeometry.TileCenterFeet(center),
                         tangent)
                 })
                 .ToList();
@@ -659,15 +661,12 @@ namespace Engine.Service
         {
             var center = plan.BarrierTileIds[
                 plan.BarrierTileIds.Count / 2];
-            var centerPosition = AirspaceGeometry.TileCenterFeet(center, 1f);
+            var centerPosition = AirspaceGeometry.TileCenterFeet(center);
             var plannedApproach = centerPosition
                                   - AirspaceGeometry.TileCenterFeet(
-                                      plan.ThreatReferenceTileId,
-                                      1f);
+                                      plan.ThreatReferenceTileId);
             var candidateApproach = centerPosition
-                                    - AirspaceGeometry.TileCenterFeet(
-                                        threat,
-                                        1f);
+                                    - AirspaceGeometry.TileCenterFeet(threat);
             if (plannedApproach.sqrMagnitude < 0.001f
                 || candidateApproach.sqrMagnitude < 0.001f)
             {

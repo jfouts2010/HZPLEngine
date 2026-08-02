@@ -12,7 +12,6 @@ namespace Engine.Models
     {
         public Alliance Alliance { get; }
         public DateTime CurrentTime { get; }
-        public int TileDistanceKm { get; }
         public IReadOnlyList<AirPlanningSquadronSnapshot> FriendlySquadrons { get; }
         public IReadOnlyList<Vector3Int> FriendlyAirportTiles { get; }
         public IReadOnlyList<Vector3Int> FriendlyAirfieldTiles { get; }
@@ -26,7 +25,6 @@ namespace Engine.Models
         public AirPlanningSnapshot(
             Alliance alliance,
             DateTime currentTime,
-            int tileDistanceKm,
             IReadOnlyList<AirPlanningSquadronSnapshot> friendlySquadrons,
             IReadOnlyList<Vector3Int> friendlyAirportTiles,
             IReadOnlyList<Vector3Int> friendlyAirfieldTiles,
@@ -38,7 +36,6 @@ namespace Engine.Models
         {
             Alliance = alliance;
             CurrentTime = currentTime;
-            TileDistanceKm = Math.Max(1, tileDistanceKm);
             FriendlySquadrons = friendlySquadrons;
             FriendlyAirportTiles = friendlyAirportTiles;
             FriendlyAirfieldTiles = friendlyAirfieldTiles;
@@ -62,6 +59,7 @@ namespace Engine.Models
         public Guid AircraftTypeDefinitionId { get; }
         public Guid AirportBuildingId { get; }
         public Vector3Int AirportTileId { get; }
+        public Vector3 AirportPositionFeet { get; }
         public int ReadyAircraftCount { get; }
         public int AssignedAircraftCount { get; }
 
@@ -71,6 +69,7 @@ namespace Engine.Models
             Guid aircraftTypeDefinitionId,
             Guid airportBuildingId,
             Vector3Int airportTileId,
+            Vector3 airportPositionFeet,
             int readyAircraftCount,
             int assignedAircraftCount)
         {
@@ -79,6 +78,7 @@ namespace Engine.Models
             AircraftTypeDefinitionId = aircraftTypeDefinitionId;
             AirportBuildingId = airportBuildingId;
             AirportTileId = airportTileId;
+            AirportPositionFeet = airportPositionFeet;
             ReadyAircraftCount = Math.Max(0, readyAircraftCount);
             AssignedAircraftCount = Math.Max(0, assignedAircraftCount);
         }
@@ -125,6 +125,7 @@ namespace Engine.Models
                     squadron.AircraftTypeDefinitionId,
                     squadron.AirportBuildingId,
                     airportBuilding.TileId,
+                    airportBuilding.PositionFeet,
                     squadron.ReadyAircraft,
                     squadron.AssignedAircraft);
 
@@ -134,7 +135,6 @@ namespace Engine.Models
             return new AirPlanningSnapshot(
                 alliance,
                 gameManager.CurrentTime,
-                gameManager.SimulationSettings.TileDistanceKM,
                 friendlySquadrons,
                 GetAirportTiles(alliance),
                 GetFriendlyAirfieldTiles(alliance),

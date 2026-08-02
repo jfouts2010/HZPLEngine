@@ -44,7 +44,7 @@ namespace Models.Gameplay.Campaign
                     SimulationTickMinutes = 5,
                     OperationalCadenceHours = 6
                 },
-                ContentHash = "mechanics-test-campaign-v4",
+                ContentHash = "mechanics-test-campaign-v6",
                 CountryAllianceAssignments = CreateCountryAllianceAssignments(),
                 OrdnanceAllowances = CreateOrdnanceAllowances(),
                 SamSiteTemplateAllowances = CreateSamSiteTemplateAllowances(),
@@ -257,7 +257,10 @@ namespace Models.Gameplay.Campaign
                 CreateBuilding(RedMountainAirportBuildingId.ToString(), RedMountainTileId, BuildingType.Airport, 4),
                 CreateBuilding("33421d61-a7dd-42fe-b069-f65cd0295c62", RedMountainTileId, BuildingType.SupplyHub, 6),
                 CreateBuilding("d30ad13b-82a8-4f4c-a990-08614182716d", RedMountainTileId, BuildingType.PowerPlant, 2),
-                CreateStaticSamBuilding(RedSa2BuildingId.ToString(), RedMountainTileId, RedCountryId, TestModule.Sa2SiteTemplateId)
+                CreateStaticSamBuilding(
+                    RedSa2BuildingId.ToString(),
+                    RedMountainTileId,
+                    TestModule.Sa2SiteTemplateId)
             };
         }
 
@@ -393,7 +396,7 @@ namespace Models.Gameplay.Campaign
             return new BuildingStartingCondition
             {
                 BuildingId = Guid.Parse(buildingId),
-                TileId = tileId,
+                PositionFeet = CampaignMapCoordinates.TileCenterFeet(tileId),
                 Type = type,
                 Level = new BuildingLevel(level, damage)
             };
@@ -402,16 +405,14 @@ namespace Models.Gameplay.Campaign
         private static BuildingStartingCondition CreateStaticSamBuilding(
             string buildingId,
             Vector3Int tileId,
-            Guid countryId,
             Guid samSiteTemplateId)
         {
             return new BuildingStartingCondition
             {
                 BuildingId = Guid.Parse(buildingId),
-                TileId = tileId,
+                PositionFeet = CampaignMapCoordinates.TileCenterFeet(tileId),
                 Type = BuildingType.AirDefense,
                 Level = new BuildingLevel(1),
-                CountryId = countryId,
                 SamSiteTemplateId = samSiteTemplateId
             };
         }
