@@ -501,6 +501,43 @@
     border-color: var(--line);
 }
 
+.perspective-controls {
+    height: 30px;
+    flex-direction: row;
+    margin-top: 5px;
+    margin-bottom: 10px;
+}
+
+.perspective-button {
+    flex-grow: 1;
+    height: 26px;
+    min-width: 0;
+    margin-right: 3px;
+    padding-left: 4px;
+    padding-right: 4px;
+    border-width: 1px;
+    border-color: var(--line);
+    background-color: rgb(35, 43, 54);
+    color: var(--muted);
+    font-size: 9px;
+}
+
+.perspective-button--selected {
+    background-color: rgb(66, 74, 86);
+    border-color: rgb(178, 190, 205);
+    color: white;
+}
+
+.perspective-button--blue.perspective-button--selected {
+    background-color: rgb(45, 96, 166);
+    border-color: rgb(82, 148, 231);
+}
+
+.perspective-button--red.perspective-button--selected {
+    background-color: rgb(139, 53, 52);
+    border-color: rgb(214, 92, 86);
+}
+
 .overlay-toggle {
     height: 25px;
     color: var(--text);

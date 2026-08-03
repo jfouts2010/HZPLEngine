@@ -5,6 +5,13 @@ namespace Models.Module
 {
     public static class TestModule
     {
+        private const string LongRangeVhfSearchFusionGroup =
+            "long_range_vhf_search";
+        private const string PrecisionFireControlFusionGroup =
+            "precision_fire_control";
+        private const string ShortRangeOrganicFusionGroup =
+            "short_range_organic";
+
         public static readonly Guid Id = Guid.Parse("92f96fd1-d2f1-4e28-a047-30b0940dc45f");
         public static readonly Guid BlueCountryId = Guid.Parse("64bfb064-0136-44d3-9983-620cf38d8245");
         public static readonly Guid RedCountryId = Guid.Parse("f6610c73-4f7b-4a71-9695-2f085dc43a7f");
@@ -46,11 +53,9 @@ namespace Models.Module
         public static readonly Guid OsaRadarComponentId = Guid.Parse("9daab0e8-3d79-49f3-91b5-feb343f09fac");
         public static readonly Guid OsaLauncherComponentId = Guid.Parse("f7f2f3d3-0e2b-4f6f-9b7e-617b1ec23cb3");
         public static readonly Guid OsaCommandComponentId = Guid.Parse("1ad7d010-b81c-48af-9844-854a864385e6");
-        public static readonly Guid OmniscientTestRadarComponentId =
-            Guid.Parse("c84d4b34-0287-49dd-8437-f2da98dcda80");
         public static readonly Guid Sa2SiteTemplateId = Guid.Parse("9a408a92-9a60-4fb6-bd38-18cb6f2771a5");
         public static readonly Guid OsaSiteTemplateId = Guid.Parse("710226da-3875-4312-81ea-29606aca76c6");
-        public static readonly Guid OmniscientTestRadarSiteTemplateId =
+        public static readonly Guid SurveillanceRadarSiteTemplateId =
             Guid.Parse("a7c3f3e8-595a-4266-a2ea-bbadde9f2a16");
 
         public static readonly Guid BlueArmoredDivisionTemplateId = Guid.Parse("4153b384-6e76-42df-a1e5-d54582022bee");
@@ -100,7 +105,7 @@ namespace Models.Module
                     rangeKm: 1400f,
                     enduranceHours: 2.4f,
                     radarQuality: 0.7f,
-                    radarDetectability: 0.9f,
+                    radarDetectability: 0.6f,
                     radarDefense: 0.55f,
                     infraredDefense: 0.5f,
                     gunDefense: 0.7f,
@@ -133,7 +138,7 @@ namespace Models.Module
                     rangeKm: 1100f,
                     enduranceHours: 2.0f,
                     radarQuality: 0.78f,
-                    radarDetectability: 0.9f,
+                    radarDetectability: 0.6f,
                     radarDefense: 0.45f,
                     infraredDefense: 0.5f,
                     gunDefense: 0.72f,
@@ -184,7 +189,7 @@ namespace Models.Module
                     rangeKm: 5500f,
                     enduranceHours: 10f,
                     radarQuality: 0.1f,
-                    radarDetectability: 1f,
+                    radarDetectability: 0.9f,
                     radarDefense: 0.35f,
                     infraredDefense: 0.3f,
                     gunDefense: 0.05f,
@@ -226,7 +231,7 @@ namespace Models.Module
                     rangeKm: 7300f,
                     enduranceHours: 8f,
                     radarQuality: 0.1f,
-                    radarDetectability: 1f,
+                    radarDetectability: 0.9f,
                     radarDefense: 0.3f,
                     infraredDefense: 0.3f,
                     gunDefense: 0.05f,
@@ -469,6 +474,8 @@ namespace Models.Module
                     targetToughness: 2,
                     detectionRangeKm: 75f,
                     maxAltitudeMeters: 24000f,
+                    antennaHeightMeters: 5f,
+                    fusionCorrelationGroup: PrecisionFireControlFusionGroup,
                     trackQuality: 0.75f,
                     providesWeaponQualityTrack: true,
                     maximumSupportedMissiles: 3,
@@ -481,6 +488,8 @@ namespace Models.Module
                     targetToughness: 2,
                     detectionRangeKm: 120f,
                     maxAltitudeMeters: 24000f,
+                    antennaHeightMeters: 10f,
+                    fusionCorrelationGroup: LongRangeVhfSearchFusionGroup,
                     trackQuality: 0.5f,
                     providesWeaponQualityTrack: false,
                     searchesWhileUnassigned: true),
@@ -511,6 +520,8 @@ namespace Models.Module
                     targetToughness: 2,
                     detectionRangeKm: 35f,
                     maxAltitudeMeters: 12000f,
+                    antennaHeightMeters: 4f,
+                    fusionCorrelationGroup: ShortRangeOrganicFusionGroup,
                     trackQuality: 0.55f,
                     providesWeaponQualityTrack: true),
                 new LauncherAirDefenseComponentDefinition(
@@ -531,16 +542,7 @@ namespace Models.Module
                     OsaCommandComponentId,
                     "SA-8 Osa command component",
                     OrdnanceTargetCategory.Vehicle,
-                    targetToughness: 2),
-                new RadarAirDefenseComponentDefinition(
-                    OmniscientTestRadarComponentId,
-                    "Advanced-campaign omniscient test radar",
-                    OrdnanceTargetCategory.Radar,
-                    targetToughness: 2,
-                    detectionRangeKm: 100000f,
-                    maxAltitudeMeters: 100000f,
-                    trackQuality: 1f,
-                    providesWeaponQualityTrack: false)
+                    targetToughness: 2)
             };
         }
 
@@ -570,12 +572,12 @@ namespace Models.Module
                         new SamSiteTemplateComponent(OsaCommandComponentId, 1)
                     }),
                 new SamSiteTemplate(
-                    OmniscientTestRadarSiteTemplateId,
-                    "Advanced-campaign omniscient test radar site",
+                    SurveillanceRadarSiteTemplateId,
+                    "Spoon Rest surveillance radar site",
                     SamSiteHostConstraint.StaticOnly,
                     new List<SamSiteTemplateComponent>
                     {
-                        new SamSiteTemplateComponent(OmniscientTestRadarComponentId, 1)
+                        new SamSiteTemplateComponent(SpoonRestComponentId, 1)
                     })
             };
         }

@@ -188,6 +188,9 @@ namespace Engine.Monobehaviours.Managers
         private Toggle overlayOrdnanceToggle;
         private Toggle overlayRailToggle;
         private Toggle overlayAirControlToggle;
+        private Button perspectiveObserverButton;
+        private Button perspectiveBlueButton;
+        private Button perspectiveRedButton;
         private VisualElement windowLayer;
         private VisualElement flightDetailPopup;
         private VisualElement flightDetailDragHandle;
@@ -207,8 +210,10 @@ namespace Engine.Monobehaviours.Managers
         private bool showingAirOps;
         private AirOperationsView airOperationsView = AirOperationsView.Flights;
         private Alliance airFlightAlliance = Alliance.Bluefor;
+        private MapPerspective mapPerspective = MapPerspective.Observer;
         private WorkbenchPage workbenchPage = WorkbenchPage.Tile;
         private readonly List<FlightPickTarget> flightPickTargets = new List<FlightPickTarget>();
+        private readonly List<Vector3> airMarkerPositions = new List<Vector3>();
         private readonly List<CombatPickTarget> combatPickTargets = new List<CombatPickTarget>();
         private Vector2 lastPickScreenPosition = new Vector2(float.MinValue, float.MinValue);
         private int currentPickIndex;
@@ -230,6 +235,13 @@ namespace Engine.Monobehaviours.Managers
             Packages,
             Flights,
             OrdnancePasses
+        }
+
+        private enum MapPerspective
+        {
+            Observer,
+            Bluefor,
+            Redfor
         }
 
         private enum WorkbenchPage
@@ -303,9 +315,11 @@ namespace Engine.Monobehaviours.Managers
             {
                 foreach (Transform child in airOverlayRoot)
                 {
-                    if (!child.name.StartsWith("Air Flight ", StringComparison.Ordinal))
+                    var isFlight = child.name.StartsWith("Air Flight ", StringComparison.Ordinal);
+                    var isTrack = child.name.StartsWith("Air Track ", StringComparison.Ordinal);
+                    if (!isFlight && !isTrack)
                         continue;
-                    var label = child.Find("Flight Label");
+                    var label = child.Find(isTrack ? "Track Label" : "Flight Label");
                     if (label != null)
                         label.gameObject.SetActive(size <= 14f);
                 }
@@ -339,6 +353,7 @@ namespace Engine.Monobehaviours.Managers
             RefreshSamCoverageOverlay();
             RefreshOrdnanceOverlay();
             RefreshFlightDetails();
+            UpdateAirOperationsUi();
             RefreshPinnedInspectors();
         }
 
@@ -368,6 +383,7 @@ namespace Engine.Monobehaviours.Managers
             ClearSamCoverageOverlay();
             ClearOrdnanceOverlay();
             flightPickTargets.Clear();
+            airMarkerPositions.Clear();
             combatPickTargets.Clear();
 
             foreach (var campaignTile in gameManager.tileSystem.Tiles)
@@ -638,6 +654,9 @@ namespace Engine.Monobehaviours.Managers
             overlayOrdnanceToggle = root.Q<Toggle>("overlay-ordnance-toggle");
             overlayRailToggle = root.Q<Toggle>("overlay-rail-toggle");
             overlayAirControlToggle = root.Q<Toggle>("overlay-air-control-toggle");
+            perspectiveObserverButton = root.Q<Button>("perspective-observer-button");
+            perspectiveBlueButton = root.Q<Button>("perspective-blue-button");
+            perspectiveRedButton = root.Q<Button>("perspective-red-button");
             windowLayer = root.Q<VisualElement>("window-layer");
             flightDetailPopup = root.Q<VisualElement>("flight-detail-popup");
             flightDetailDragHandle = root.Q<VisualElement>("flight-detail-drag-handle");
@@ -682,6 +701,9 @@ namespace Engine.Monobehaviours.Managers
             ApplyRuntimeFont(diagnosticsErrorsButton);
             ApplyRuntimeFont(diagnosticsWarningsButton);
             ApplyRuntimeFont(resetLayoutButton);
+            ApplyRuntimeFont(perspectiveObserverButton);
+            ApplyRuntimeFont(perspectiveBlueButton);
+            ApplyRuntimeFont(perspectiveRedButton);
             ApplyRuntimeFont(flightDetailPin);
             ApplyRuntimeFont(flightDetailFocus);
             ApplyRuntimeFont(togglePanelButton);
@@ -791,6 +813,12 @@ namespace Engine.Monobehaviours.Managers
                 airBlueFlightsButton.clicked += () => ShowAirFlightAlliance(Alliance.Bluefor);
             if (airRedFlightsButton != null)
                 airRedFlightsButton.clicked += () => ShowAirFlightAlliance(Alliance.Redfor);
+            if (perspectiveObserverButton != null)
+                perspectiveObserverButton.clicked += () => SetMapPerspective(MapPerspective.Observer);
+            if (perspectiveBlueButton != null)
+                perspectiveBlueButton.clicked += () => SetMapPerspective(MapPerspective.Bluefor);
+            if (perspectiveRedButton != null)
+                perspectiveRedButton.clicked += () => SetMapPerspective(MapPerspective.Redfor);
 
             if (flightDetailClose != null)
             {
@@ -807,6 +835,12 @@ namespace Engine.Monobehaviours.Managers
             ConfigureWorkbenchPanelResize();
             ConfigureOverlayToggles();
             ConfigureDiagnosticsFilters();
+
+            var savedPerspective = (MapPerspective)Mathf.Clamp(
+                PlayerPrefs.GetInt("HZPL.Workbench.MapPerspective", (int)MapPerspective.Observer),
+                (int)MapPerspective.Observer,
+                (int)MapPerspective.Redfor);
+            SetMapPerspective(savedPerspective, false);
 
             var savedPage = (WorkbenchPage)Mathf.Clamp(
                 PlayerPrefs.GetInt("HZPL.Workbench.Page", (int)WorkbenchPage.Tile),
@@ -1052,6 +1086,28 @@ namespace Engine.Monobehaviours.Managers
             var redCommander = gameManager?.GetAllianceAirTaskingCommander(Alliance.Redfor);
             foreach (var campaignTile in tilesById.Values)
             {
+                if (TryGetPerspectiveAlliance(out var viewerAlliance))
+                {
+                    var viewerCommander = viewerAlliance == Alliance.Bluefor
+                        ? blueCommander
+                        : redCommander;
+                    var hasViewerEstimate = TryGetAirInterferencePicture(
+                        viewerCommander,
+                        campaignTile.TileId,
+                        out var viewerBalance,
+                        out var viewerInterference);
+                    airControlTilemap.SetColor(
+                        GetCell(campaignTile.TileId),
+                        GetAirInterferenceOverlayColor(
+                            hasViewerEstimate
+                                ? viewerAlliance == Alliance.Bluefor
+                                    ? viewerBalance
+                                    : -viewerBalance
+                                : 0f,
+                            hasViewerEstimate ? viewerInterference : 0f));
+                    continue;
+                }
+
                 var hasBlueEstimate = TryGetAirInterferencePicture(
                     blueCommander,
                     campaignTile.TileId,
@@ -1884,6 +1940,89 @@ namespace Engine.Monobehaviours.Managers
             button.EnableInClassList("campaign-air-view-tab--selected", selected);
         }
 
+        private void SetMapPerspective(MapPerspective perspective, bool persist = true)
+        {
+            mapPerspective = perspective;
+            if (persist)
+                PlayerPrefs.SetInt("HZPL.Workbench.MapPerspective", (int)perspective);
+
+            perspectiveObserverButton?.EnableInClassList(
+                "perspective-button--selected",
+                perspective == MapPerspective.Observer);
+            perspectiveBlueButton?.EnableInClassList(
+                "perspective-button--selected",
+                perspective == MapPerspective.Bluefor);
+            perspectiveRedButton?.EnableInClassList(
+                "perspective-button--selected",
+                perspective == MapPerspective.Redfor);
+
+            if (TryGetPerspectiveAlliance(out var viewerAlliance))
+            {
+                airFlightAlliance = viewerAlliance;
+                airBlueFlightsButton?.EnableInClassList(
+                    "campaign-air-alliance-tab--selected",
+                    viewerAlliance == Alliance.Bluefor);
+                airRedFlightsButton?.EnableInClassList(
+                    "campaign-air-alliance-tab--selected",
+                    viewerAlliance == Alliance.Redfor);
+            }
+
+            selectedFlightId = Guid.Empty;
+            inspectedFlightId = Guid.Empty;
+            inspectedPackageId = Guid.Empty;
+            highlightedOrdnanceSourceFlightId = Guid.Empty;
+            highlightedOrdnanceTargetFlightId = Guid.Empty;
+            foreach (var inspector in pinnedInspectors.ToList())
+                inspector.Window?.RemoveFromHierarchy();
+            pinnedInspectors.Clear();
+            ClearAirInspection();
+            if (flightDetailBackdrop != null)
+                flightDetailBackdrop.style.display = DisplayStyle.None;
+            flightDetailContent?.Clear();
+
+            if (gameManager == null || !gameManager.IsCampaignStarted)
+                return;
+
+            RefreshAirOverlaysForSelection();
+            RefreshSamCoverageOverlay();
+            RefreshOrdnanceOverlay();
+            UpdateAirOperationsUi();
+            RefreshAirControlOverlay();
+        }
+
+        private bool TryGetPerspectiveAlliance(out Alliance alliance)
+        {
+            alliance = mapPerspective switch
+            {
+                MapPerspective.Bluefor => Alliance.Bluefor,
+                MapPerspective.Redfor => Alliance.Redfor,
+                _ => Alliance.Neutral
+            };
+            return mapPerspective != MapPerspective.Observer;
+        }
+
+        private IEnumerable<Alliance> GetPerspectiveCommandAlliances()
+        {
+            if (TryGetPerspectiveAlliance(out var alliance))
+            {
+                yield return alliance;
+                yield break;
+            }
+
+            yield return Alliance.Bluefor;
+            yield return Alliance.Redfor;
+        }
+
+        private bool TryGetPerspectiveTrack(Guid flightId, out IADSTrack track)
+        {
+            track = null;
+            if (!TryGetPerspectiveAlliance(out var alliance))
+                return false;
+
+            track = gameManager?.GetAllianceIADS(alliance)?.GetTrackForFlight(flightId);
+            return track != null && track.IsEstablished;
+        }
+
         private void ShowAirFlightAlliance(Alliance alliance)
         {
             if (alliance != Alliance.Bluefor && alliance != Alliance.Redfor)
@@ -1906,11 +2045,16 @@ namespace Engine.Monobehaviours.Managers
             if (gameManager == null || airOpsSummary == null)
                 return;
 
-            var commanders = new[]
+            var allCommanders = new[]
                 {
                     gameManager.GetAllianceAirTaskingCommander(Alliance.Bluefor),
                     gameManager.GetAllianceAirTaskingCommander(Alliance.Redfor)
                 }
+                .Where(commander => commander != null)
+                .ToList();
+            var visibleAlliances = GetPerspectiveCommandAlliances().ToHashSet();
+            var commanders = allCommanders
+                .Where(commander => visibleAlliances.Contains(commander.Alliance))
                 .ToList();
             var requests = commanders
                 .SelectMany(commander => commander.MissionRequests)
@@ -1924,20 +2068,31 @@ namespace Engine.Monobehaviours.Managers
                 .OrderBy(package => package.Alliance)
                 .ThenBy(package => package.EarliestTakeoffTime)
                 .ToList();
-            var flights = packages
+            var allPackages = allCommanders
+                .SelectMany(commander => commander.Packages)
+                .Where(package => !package.HasPhysicallyEnded)
+                .OrderBy(package => package.Alliance)
+                .ThenBy(package => package.EarliestTakeoffTime)
+                .ToList();
+            var flights = allPackages
                 .SelectMany(package => package.Flights)
                 .Where(flight => !flight.HasPhysicallyEnded)
                 .OrderBy(flight => flight.PlannedTakeoffTime)
                 .ToList();
             var ordnancePasses = GetLastTurnOrdnanceReleaseRecords()
+                .Where(record => !TryGetPerspectiveAlliance(out var viewerAlliance)
+                                 || GetRecordAlliance(record) == viewerAlliance)
                 .OrderByDescending(record => record.OccurredAt)
                 .ToList();
-            var airborneCount = flights.Count(flight => flight.IsAirborne);
+            var visibleFlightCount = CountPerspectiveVisibleFlights(flights, allPackages);
+            var airborneCount = CountPerspectiveVisibleAirborneFlights(flights, allPackages);
 
             airOpsSummary.text =
                 $"Planning cycle {commanders.Select(commander => commander.PlanningCycle).DefaultIfEmpty().Max()}  •  " +
-                $"{flights.Count} current flights\n" +
-                "Airborne flight positions and remaining routes are drawn on the map.";
+                $"{visibleFlightCount} visible flights and tracks\n" +
+                (mapPerspective == MapPerspective.Observer
+                    ? "Observer view uses authoritative positions, platform types, and routes."
+                    : "Friendly flights are exact; hostile aircraft appear only through established IADS tracks.");
             ApplyRuntimeFont(airOpsSummary);
             if (airRequestCount != null)
                 airRequestCount.text = requests.Count.ToString();
@@ -1951,25 +2106,69 @@ namespace Engine.Monobehaviours.Managers
             if (airPackagesButton != null)
                 airPackagesButton.text = $"Packages  {packages.Count}";
             if (airFlightsButton != null)
-                airFlightsButton.text = $"Flights  {flights.Count}";
+                airFlightsButton.text = $"Flights  {visibleFlightCount}";
             if (airPassesButton != null)
                 airPassesButton.text = $"Ordnance  {ordnancePasses.Count}";
             if (airBlueFlightsButton != null)
                 airBlueFlightsButton.text =
-                    $"Blue flights  {flights.Count(flight => GetFlightAlliance(flight, packages) == Alliance.Bluefor)}";
+                    $"Blue  {CountPerspectiveVisibleFlights(flights, allPackages, Alliance.Bluefor)}";
             if (airRedFlightsButton != null)
                 airRedFlightsButton.text =
-                    $"Red flights  {flights.Count(flight => GetFlightAlliance(flight, packages) == Alliance.Redfor)}";
+                    $"Red  {CountPerspectiveVisibleFlights(flights, allPackages, Alliance.Redfor)}";
 
             RebuildAirRequestsList(requests);
             RebuildAirPackagesList(packages, commanders);
             RebuildAirFlightsList(
-                flights.Where(flight => GetFlightAlliance(flight, packages) == airFlightAlliance).ToList(),
-                packages);
+                flights.Where(flight => GetFlightAlliance(flight, allPackages) == airFlightAlliance).ToList(),
+                allPackages);
             RebuildAirPassesList(ordnancePasses);
             UpdateAirOverviewUi();
             if (selectedFlightId != Guid.Empty)
                 RefreshFlightDetails();
+        }
+
+        private int CountPerspectiveVisibleFlights(
+            IReadOnlyList<AirFlight> flights,
+            IReadOnlyList<AirPackage> packages,
+            Alliance? subjectAlliance = null)
+        {
+            if (flights == null)
+                return 0;
+
+            var count = 0;
+            foreach (var flight in flights)
+            {
+                var alliance = GetFlightAlliance(flight, packages);
+                if (subjectAlliance.HasValue && alliance != subjectAlliance.Value)
+                    continue;
+
+                if (!TryGetPerspectiveAlliance(out var viewerAlliance)
+                    || alliance == viewerAlliance
+                    || flight.IsAirborne && TryGetPerspectiveTrack(flight.FlightId, out _))
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+
+        private int CountPerspectiveVisibleAirborneFlights(
+            IReadOnlyList<AirFlight> flights,
+            IReadOnlyList<AirPackage> packages)
+        {
+            if (flights == null)
+                return 0;
+
+            return flights.Count(flight =>
+            {
+                if (!flight.IsAirborne)
+                    return false;
+                var alliance = GetFlightAlliance(flight, packages);
+                return !TryGetPerspectiveAlliance(out var viewerAlliance)
+                       || alliance == viewerAlliance
+                       || TryGetPerspectiveTrack(flight.FlightId, out _);
+            });
         }
 
         private void UpdateAirOverviewUi()
@@ -1978,7 +2177,7 @@ namespace Engine.Monobehaviours.Managers
                 return;
 
             airOverviewGrid.Clear();
-            foreach (var alliance in new[] { Alliance.Bluefor, Alliance.Redfor })
+            foreach (var alliance in GetPerspectiveCommandAlliances())
             {
                 var squadrons = gameManager.squadronSystem.Squadrons
                     .Where(squadron => gameManager.GetCountryAlliance(squadron.CountryId) == alliance)
@@ -2131,7 +2330,7 @@ namespace Engine.Monobehaviours.Managers
         private IEnumerable<string> BuildAirOverviewLines()
         {
             var lines = new List<string>();
-            foreach (var alliance in new[] { Alliance.Bluefor, Alliance.Redfor })
+            foreach (var alliance in GetPerspectiveCommandAlliances())
             {
                 var squadrons = gameManager.squadronSystem.Squadrons
                     .Where(squadron => gameManager.GetCountryAlliance(squadron.CountryId) == alliance)
@@ -2405,16 +2604,44 @@ namespace Engine.Monobehaviours.Managers
                 return;
 
             airFlightsList.Clear();
-            if (flights.Count == 0)
-            {
-                airFlightsList.Add(CreateAirEmptyLabel("No current flights."));
-                return;
-            }
-
+            var visibleRows = 0;
             foreach (var flight in flights)
             {
                 var package = GetOwningPackage(flight, packages);
                 var alliance = package.Alliance;
+                if (TryGetPerspectiveAlliance(out var viewerAlliance)
+                    && alliance != viewerAlliance)
+                {
+                    if (!flight.IsAirborne
+                        || !TryGetPerspectiveTrack(flight.FlightId, out var track))
+                    {
+                        continue;
+                    }
+
+                    var identifiedType = track.HasIdentifiedAircraftType
+                        ? GetAircraftType(track.IdentifiedAircraftTypeDefinitionId)
+                        : null;
+                    var identification = identifiedType?.Name ?? "Unknown platform";
+                    var trackTitle =
+                        $"{GetAllianceLabel(alliance)} TRACK {ShortId(track.TrackId)}  •  "
+                        + (track.IsStale
+                            ? "STALE"
+                            : track.HasIdentifiedAircraftType ? "IDENTIFIED" : "UNKNOWN PLATFORM");
+                    var trackFields = new List<AirCardField>
+                    {
+                        new AirCardField("Platform", identification),
+                        new AirCardField("Estimated aircraft", track.EstimatedAircraftCount.ToString()),
+                        new AirCardField("Track quality", track.Quality.ToString("0.00")),
+                        new AirCardField(
+                            "Last known",
+                            $"{track.LastKnownPositionFeet.y:0} ft / heading {track.EstimatedHeadingDegrees:0}°"),
+                        new AirCardField("Observed", track.LastObservedAt.ToString("MM-dd HH:mm:ss"))
+                    };
+                    airFlightsList.Add(CreateAirCard(alliance, trackTitle, trackFields));
+                    visibleRows++;
+                    continue;
+                }
+
                 var squadron = gameManager.squadronSystem.Squadrons
                     .First(candidate => candidate.SquadronId == flight.SquadronId);
                 var nextWaypoint = flight.CurrentWaypointIndex >= 0
@@ -2443,7 +2670,11 @@ namespace Engine.Monobehaviours.Managers
                     fields,
                     () => OpenFlightDetails(flight.FlightId),
                     () => InspectFlightRoute(flight.FlightId)));
+                visibleRows++;
             }
+
+            if (visibleRows == 0)
+                airFlightsList.Add(CreateAirEmptyLabel("No visible flights or tracks."));
         }
 
         private void RebuildAirPassesList(IReadOnlyList<OrdnanceEmploymentRecord> records)
@@ -2650,6 +2881,13 @@ namespace Engine.Monobehaviours.Managers
 
         private void OpenFlightDetails(Guid flightId)
         {
+            if (TryGetPerspectiveAlliance(out var viewerAlliance)
+                && TryFindFlight(flightId, out _, out var package, out _)
+                && package.Alliance != viewerAlliance)
+            {
+                return;
+            }
+
             selectedFlightId = flightId;
             RefreshAirOverlaysForSelection();
             if (flightDetailBackdrop != null)
@@ -2664,6 +2902,7 @@ namespace Engine.Monobehaviours.Managers
         {
             ClearAirOverlays();
             flightPickTargets.Clear();
+            airMarkerPositions.Clear();
             CreateAirOverlays();
             SetAirRouteVisibility(overlayRoutesToggle == null || overlayRoutesToggle.value);
             ApplySelectedFlightMarker();
@@ -2730,6 +2969,13 @@ namespace Engine.Monobehaviours.Managers
 
         private void InspectFlightRoute(Guid flightId)
         {
+            if (TryGetPerspectiveAlliance(out var viewerAlliance)
+                && TryFindFlight(flightId, out _, out var package, out _)
+                && package.Alliance != viewerAlliance)
+            {
+                return;
+            }
+
             if (gameManager == null || !gameManager.IsGamePaused)
             {
                 SetAirInspectionStatus("Pause the campaign before inspecting a flight route.");
@@ -4699,12 +4945,22 @@ namespace Engine.Monobehaviours.Managers
             foreach (var alliance in new[] { Alliance.Bluefor, Alliance.Redfor })
             {
                 var commander = gameManager.GetAllianceAirTaskingCommander(alliance);
+                if (commander == null)
+                    continue;
                 foreach (var package in commander.Packages)
                 {
                     foreach (var flight in package.Flights)
                     {
                         if (!flight.IsAirborne || !flight.HasPosition)
                             continue;
+
+                        if (TryGetPerspectiveAlliance(out var viewerAlliance)
+                            && alliance != viewerAlliance)
+                        {
+                            if (TryGetPerspectiveTrack(flight.FlightId, out var track))
+                                CreateAirTrackMarker(track, alliance);
+                            continue;
+                        }
 
                         if (flight.FlightId == selectedFlightId)
                             CreateAirIntentVisuals(flight, alliance);
@@ -4719,9 +4975,11 @@ namespace Engine.Monobehaviours.Managers
 
         private void CreateBarcapBarrierOverlays()
         {
-            foreach (var alliance in new[] { Alliance.Bluefor, Alliance.Redfor })
+            foreach (var alliance in GetPerspectiveCommandAlliances())
             {
                 var commander = gameManager.GetAllianceAirTaskingCommander(alliance);
+                if (commander == null)
+                    continue;
                 var liveRequestIds = commander.Packages
                     .Where(package => !package.IsTerminal)
                     .Select(package => package.MissionRequestId)
@@ -5172,7 +5430,16 @@ namespace Engine.Monobehaviours.Managers
         {
             var sourcePosition = AirPositionToMapPosition(source.PositionFeet);
             var guidancePosition = AirPositionToMapPosition(guidancePositionFeet);
-            var targetPosition = AirPositionToMapPosition(target.PositionFeet);
+            var targetPositionFeet = target.PositionFeet;
+            if (TryGetPerspectiveAlliance(out var viewerAlliance)
+                && TryFindFlight(target.FlightId, out _, out var targetPackage, out _)
+                && targetPackage.Alliance != viewerAlliance)
+            {
+                targetPositionFeet = TryGetPerspectiveTrack(target.FlightId, out var track)
+                    ? track.LastKnownPositionFeet
+                    : guidancePositionFeet;
+            }
+            var targetPosition = AirPositionToMapPosition(targetPositionFeet);
             if (Vector3.Distance(sourcePosition, guidancePosition) <= 0.01f)
                 return;
 
@@ -6201,6 +6468,7 @@ namespace Engine.Monobehaviours.Managers
 
         private enum AirPlatformClass
         {
+            Unknown,
             Fighter,
             Strike,
             AirborneC2,
@@ -6302,9 +6570,27 @@ namespace Engine.Monobehaviours.Managers
             var fighterBody = MirrorAirMarkerOutline(FighterHalfOutline);
             var strikeBody = MirrorAirMarkerOutline(StrikeHalfOutline);
             var heavyBody = MirrorAirMarkerOutline(HeavyHalfOutline);
+            var unknownContactBody = new[]
+            {
+                new Vector2(1.30f, 0f),
+                new Vector2(0f, 1.30f),
+                new Vector2(-1.30f, 0f),
+                new Vector2(0f, -1.30f)
+            };
 
             return new Dictionary<AirPlatformClass, AirMarkerShape>
             {
+                // A diamond contact with a heading tick remains intentionally
+                // non-platform-specific until the IADS track identifies its type.
+                [AirPlatformClass.Unknown] = new AirMarkerShape(
+                    new[] { unknownContactBody },
+                    new[]
+                    {
+                        BuildAirMarkerCircle(Vector2.zero, 0.24f, 18),
+                        BuildAirMarkerBar(new Vector2(0.67f, 0f), 0.30f, 0.08f)
+                    },
+                    0.92f),
+
                 [AirPlatformClass.Fighter] = new AirMarkerShape(
                     new[] { fighterBody },
                     new[]
@@ -6436,6 +6722,16 @@ namespace Engine.Monobehaviours.Managers
                     definition.AircraftTypeDefinitionId == squadron.AircraftTypeDefinitionId);
         }
 
+        private static AircraftTypeDefinition GetAircraftType(Guid aircraftTypeDefinitionId)
+        {
+            if (aircraftTypeDefinitionId == Guid.Empty)
+                return null;
+
+            return ModuleSingleton.Instance?.ActiveModule?.AircraftTypeDefinitions
+                .FirstOrDefault(definition =>
+                    definition.AircraftTypeDefinitionId == aircraftTypeDefinitionId);
+        }
+
         private static string GetAircraftTypeShortName(AircraftTypeDefinition aircraftType)
         {
             if (aircraftType == null || string.IsNullOrWhiteSpace(aircraftType.Name))
@@ -6451,13 +6747,14 @@ namespace Engine.Monobehaviours.Managers
             var markerObject = new GameObject($"Air Flight {ShortId(flight.FlightId)}");
             markerObject.transform.SetParent(airOverlayRoot, false);
             var logicalPosition = AirPositionToMapPosition(flight.PositionFeet);
-            var overlapIndex = flightPickTargets.Count(target =>
-                Vector3.Distance(target.MapPosition, logicalPosition) < 0.08f);
+            var overlapIndex = airMarkerPositions.Count(position =>
+                Vector3.Distance(position, logicalPosition) < 0.08f);
             var offsetAngle = overlapIndex * 137.5f * Mathf.Deg2Rad;
             var offset = overlapIndex == 0
                 ? Vector3.zero
                 : new Vector3(Mathf.Cos(offsetAngle), Mathf.Sin(offsetAngle), 0f) * 0.10f;
             markerObject.transform.localPosition = logicalPosition + offset;
+            airMarkerPositions.Add(markerObject.transform.localPosition);
             flightPickTargets.Add(new FlightPickTarget(
                 flight.FlightId,
                 markerObject.transform.localPosition));
@@ -6502,6 +6799,84 @@ namespace Engine.Monobehaviours.Managers
 
             // Shadow copy keeps the label readable over bright terrain.
             var shadowObject = new GameObject("Flight Label Shadow");
+            shadowObject.transform.SetParent(labelObject.transform, false);
+            shadowObject.transform.localPosition = new Vector3(0.008f, -0.008f, 0.01f);
+            var shadowText = shadowObject.AddComponent<TextMesh>();
+            shadowText.anchor = text.anchor;
+            shadowText.alignment = text.alignment;
+            shadowText.characterSize = text.characterSize;
+            shadowText.fontSize = text.fontSize;
+            shadowText.color = new Color(0.02f, 0.03f, 0.05f, 0.85f);
+            shadowText.text = text.text;
+            shadowObject.GetComponent<MeshRenderer>().sortingOrder = 28;
+        }
+
+        private void CreateAirTrackMarker(IADSTrack track, Alliance subjectAlliance)
+        {
+            if (track == null)
+                return;
+
+            var markerObject = new GameObject($"Air Track {ShortId(track.TrackId)}");
+            markerObject.transform.SetParent(airOverlayRoot, false);
+            var logicalPosition = AirPositionToMapPosition(track.LastKnownPositionFeet);
+            var overlapIndex = airMarkerPositions.Count(position =>
+                Vector3.Distance(position, logicalPosition) < 0.08f);
+            var offsetAngle = overlapIndex * 137.5f * Mathf.Deg2Rad;
+            var offset = overlapIndex == 0
+                ? Vector3.zero
+                : new Vector3(Mathf.Cos(offsetAngle), Mathf.Sin(offsetAngle), 0f) * 0.10f;
+            markerObject.transform.localPosition = logicalPosition + offset;
+            airMarkerPositions.Add(markerObject.transform.localPosition);
+
+            var aircraftType = track.HasIdentifiedAircraftType
+                ? GetAircraftType(track.IdentifiedAircraftTypeDefinitionId)
+                : null;
+            var platformClass = aircraftType == null
+                ? AirPlatformClass.Unknown
+                : GetAirPlatformClass(aircraftType);
+            var shape = AirMarkerShapes[platformClass];
+            var sprites = GetAirMarkerSprites(platformClass);
+
+            var iconObject = new GameObject("Track Icon");
+            iconObject.transform.SetParent(markerObject.transform, false);
+            iconObject.transform.localPosition = new Vector3(0f, 0f, -0.34f);
+            iconObject.transform.localRotation = Quaternion.Euler(
+                0f,
+                0f,
+                -track.EstimatedHeadingDegrees);
+
+            AddAirMarkerLayer(iconObject.transform, "Track Outline", sprites.Outline, 26);
+            var body = AddAirMarkerLayer(iconObject.transform, "Track Body", sprites.Body, 27);
+            if (body != null)
+            {
+                var color = GetAirAllianceColor(subjectAlliance);
+                color.a = track.IsStale ? 0.48f : 0.90f;
+                body.color = color;
+            }
+            AddAirMarkerLayer(iconObject.transform, "Track Detail", sprites.Detail, 28);
+
+            var typeName = GetAircraftTypeShortName(aircraftType);
+            var labelObject = new GameObject("Track Label");
+            labelObject.transform.SetParent(markerObject.transform, false);
+            labelObject.transform.localPosition = new Vector3(
+                shape.HalfExtent * AirMarkerWorldPerShapeUnit * shape.Scale + 0.03f,
+                0.09f,
+                -0.36f);
+            var text = labelObject.AddComponent<TextMesh>();
+            text.anchor = TextAnchor.LowerLeft;
+            text.alignment = TextAlignment.Left;
+            text.characterSize = 0.018f;
+            text.fontSize = 22;
+            text.color = track.IsStale
+                ? new Color(0.72f, 0.75f, 0.80f)
+                : Color.white;
+            text.text =
+                $"{(string.IsNullOrEmpty(typeName) ? "UNKNOWN TRACK" : typeName)} ×~{track.EstimatedAircraftCount}\n"
+                + $"Q {track.Quality:0.00} • {(track.IsStale ? "STALE" : "TRACK")} • "
+                + $"{track.LastKnownPositionFeet.y / 1000f:0.#}k ft";
+            labelObject.GetComponent<MeshRenderer>().sortingOrder = 29;
+
+            var shadowObject = new GameObject("Track Label Shadow");
             shadowObject.transform.SetParent(labelObject.transform, false);
             shadowObject.transform.localPosition = new Vector3(0.008f, -0.008f, 0.01f);
             var shadowText = shadowObject.AddComponent<TextMesh>();

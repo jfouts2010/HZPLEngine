@@ -174,6 +174,7 @@ namespace Engine.Monobehaviours.Managers
             _simulationLogWriter = new SimulationLogWriter(
                 this,
                 _airTaskingSystem,
+                _IADSSystem,
                 activeModule,
                 _campaignStartTime);
             IsGamePaused = true;

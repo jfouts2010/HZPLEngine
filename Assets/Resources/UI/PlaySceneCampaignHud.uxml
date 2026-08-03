@@ -106,6 +106,12 @@
             </ui:VisualElement>
 
             <ui:VisualElement name="overlay-palette" class="overlay-palette" picking-mode="Position">
+                <ui:Label text="VIEW PERSPECTIVE" class="workbench-kicker" />
+                <ui:VisualElement name="perspective-controls" class="perspective-controls">
+                    <ui:Button name="perspective-observer-button" text="Observer" class="perspective-button perspective-button--selected" />
+                    <ui:Button name="perspective-blue-button" text="Blue" class="perspective-button perspective-button--blue" />
+                    <ui:Button name="perspective-red-button" text="Red" class="perspective-button perspective-button--red" />
+                </ui:VisualElement>
                 <ui:Label text="MAP OVERLAYS" class="workbench-kicker" />
                 <ui:Toggle name="overlay-units-toggle" text="Division counters" value="true" class="overlay-toggle" />
                 <ui:Toggle name="overlay-combats-toggle" text="Combat bubbles" value="true" class="overlay-toggle" />

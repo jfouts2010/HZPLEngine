@@ -99,6 +99,10 @@ namespace Models.Gameplay.Campaign
         private static readonly Vector3Int RedVulnerableAirbaseTileId = new Vector3Int(4, 0, -4);
         private static readonly Vector3Int RedDeadCorridorSamTileId =
             new Vector3Int(2, 0, -2);
+        private static readonly Vector3Int RedNorthernSurveillanceRadarTileId =
+            new Vector3Int(6, -3, -3);
+        private static readonly Vector3Int RedSouthernSurveillanceRadarTileId =
+            new Vector3Int(2, 5, -7);
         private static readonly Vector3Int NeutralHubTileId = new Vector3Int(0, 0, 0);
         private static readonly Vector3Int[] BlueFrontTileIds =
         {
@@ -134,7 +138,7 @@ namespace Models.Gameplay.Campaign
                     SimulationTickMinutes = 5,
                     OperationalCadenceHours = 6
                 },
-                ContentHash = "advanced-mechanics-test-campaign-v15",
+                ContentHash = "advanced-mechanics-test-campaign-v16",
                 CountryAllianceAssignments = CreateCountryAllianceAssignments(),
                 OrdnanceAllowances = CreateOrdnanceAllowances(),
                 SamSiteTemplateAllowances = CreateSamSiteTemplateAllowances(),
@@ -196,7 +200,7 @@ namespace Models.Gameplay.Campaign
             {
                 TestModule.Sa2SiteTemplateId,
                 TestModule.OsaSiteTemplateId,
-                TestModule.OmniscientTestRadarSiteTemplateId
+                TestModule.SurveillanceRadarSiteTemplateId
             };
             return new Dictionary<Alliance, List<Guid>>
             {
@@ -344,9 +348,6 @@ namespace Models.Gameplay.Campaign
                 CreateStaticSamBuilding("d352b464-f4b1-4ece-866f-eac4d2c31f88", BlueVulnerableAirbaseTileId),
                 CreateStaticSamBuilding("4ce0420b-3559-41a2-96ee-933220a83a81", new Vector3Int(-1, 2, -1)),
                 CreateStaticSamBuilding("4f146295-ea92-4de1-90cd-0da593c14fa7", new Vector3Int(-1, 5, -4)),
-                CreateOmniscientTestRadarBuilding(
-                    "cc043c90-f4c1-4d2d-a4f9-1cc41462a760",
-                    BlueCapitalTileId),
                 CreateBuilding("b6f4e9d7-3c8a-416c-f145-7d2ae629185d", RedCapitalTileId, BuildingType.PowerPlant, 4),
                 CreateBuilding(RedCapitalAirportBuildingId.ToString(), RedCapitalTileId, BuildingType.Airport, 5),
                 CreateBuilding(RedDefensiveAirportBuildingId.ToString(), RedDefensiveAirbaseTileId, BuildingType.Airport, 7),
@@ -369,9 +370,16 @@ namespace Models.Gameplay.Campaign
                     "4e854b37-5479-4473-9daf-338cc7b01b69",
                     RedDeadCorridorSamTileId),
                 CreateStaticSamBuilding("7c526362-4d00-466d-aa43-63535843ae99", new Vector3Int(2, 4, -6)),
-                CreateOmniscientTestRadarBuilding(
+                // Blue's five SA-2 batteries already provide five Spoon Rest
+                // acquisition radars. These two radar-only sites give Red the
+                // same number of long-range surveillance sensors without
+                // adding launchers or changing the intended SAM threat layout.
+                CreateSurveillanceRadarBuilding(
                     "7603f203-51ce-4ceb-ab40-83fc9d2975a9",
-                    RedCapitalTileId)
+                    RedNorthernSurveillanceRadarTileId),
+                CreateSurveillanceRadarBuilding(
+                    "4c804d69-61ef-496a-a54d-cd4a3ac6e3bf",
+                    RedSouthernSurveillanceRadarTileId)
             };
         }
 
@@ -709,7 +717,7 @@ namespace Models.Gameplay.Campaign
             };
         }
 
-        private static BuildingStartingCondition CreateOmniscientTestRadarBuilding(
+        private static BuildingStartingCondition CreateSurveillanceRadarBuilding(
             string buildingId,
             Vector3Int tileId)
         {
@@ -719,7 +727,7 @@ namespace Models.Gameplay.Campaign
                 PositionFeet = CampaignMapCoordinates.TileCenterFeet(tileId),
                 Type = BuildingType.AirDefense,
                 Level = new BuildingLevel(1),
-                SamSiteTemplateId = TestModule.OmniscientTestRadarSiteTemplateId
+                SamSiteTemplateId = TestModule.SurveillanceRadarSiteTemplateId
             };
         }
     }

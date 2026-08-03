@@ -188,7 +188,7 @@ Aircraft type capability data includes flight performance, range and endurance, 
 
 **Aircraft radar quality** is the normalized quality of an aircraft type's own radar and contributes only when that aircraft is sensing, tracking, or supporting weapon employment against another target.
 
-**Aircraft radar detectability** is the normalized ease with which hostile radar can detect and build track quality against that aircraft type. Higher values are easier to detect. Radar detectability is distinct from the aircraft's own radar quality and radar defense; changing onboard radar performance must not change how visible the aircraft is to enemy sensors.
+**Aircraft radar detectability** is the normalized ease with which hostile radar can detect and build track quality against that aircraft type. Higher values are easier to detect. Detectability scales a radar's authored equipment range by its fourth root; its effect on quality buildup follows from that adjusted range rather than a second direct multiplier. Radar detectability is distinct from the aircraft's own radar quality and radar defense; changing onboard radar performance must not change how visible the aircraft is to enemy sensors.
 
 **Aircraft air-to-air defense** — three normalized aircraft-type ratings for defeating an otherwise valid radar-guided missile, infrared-guided missile, or gun attack. Radar defense represents onboard RF self-protection after tracking has occurred, infrared defense represents thermal signature and generic infrared countermeasures, and gun defense represents how difficult the aircraft is to track and hit during a gun opportunity. These ratings modify hit probability, not detection, WVR opportunity control, or damage after a hit. Flares and chaff are implicit and have no separate definitions, inventories, or effectiveness values.
 
@@ -1207,7 +1207,9 @@ Template allowance controls which named SAM systems an alliance can field during
 
 A radar definition is a reusable Module catalog definition for a radar capability, such as a Fan Song fire-control radar or an early warning radar. It describes the radar capability once so it can be used by SAM components, static SAM buildings, standalone radar buildings, or future sensor hosts without duplicating radar behavior.
 
-Radar definitions are authored capabilities, not runtime placed assets. Runtime hosts determine where the radar capability exists, who controls it, and whether the hosted radar component or building is damaged, suppressed, or emitting.
+Radar definitions are authored capabilities, not runtime placed assets. Runtime hosts determine where the radar capability exists, who controls it, and whether the hosted radar component or building is damaged, suppressed, or emitting. A radar definition also authors antenna height above its host and a fusion correlation group. The host supplies ground elevation; v1 hosts are at sea level, while the boundary permits later elevated radar stations without changing radar definitions.
+
+A radar fusion correlation group identifies radar definitions that contribute substantially similar observations to the shared air picture. Successive quality-cap contributions from the same group receive diminishing weight even when they come from different radar definitions. Radars from different groups retain their normal fusion contribution because their observations are treated as complementary at the campaign abstraction.
 
 ### Static SAM site
 
@@ -1258,7 +1260,7 @@ Remote cueing may add current track awareness for another site, but remote cuein
 
 _Avoid_: creating one co-located track for every member aircraft or treating a package as the tracked object.
 
-An IADS current track records the flight's last known airspace position, a bounded recent history of observed position and heading, estimated aircraft count, and estimated combat power. The motion history supports course-persistence and bounded-patrol assessment without revealing the hostile flight's true route or mission. At `0.75` track quality, IADS records the identified aircraft type and retains that identification for the remaining lifetime of the track even if quality later decays. Below that threshold, the true aircraft type is not alliance knowledge. A track may reference the true flight entity for simulation bookkeeping, duplicate prevention, and resolution, but that reference is not itself alliance knowledge about squadron, mission, or package.
+An IADS current track records the flight's last known airspace position, a bounded recent history of observed position and heading, estimated aircraft count, and estimated combat power. The motion history supports course-persistence and bounded-patrol assessment without revealing the hostile flight's true route or mission. At `0.50` track quality, IADS records the identified aircraft type and retains that identification for the remaining lifetime of the track even if quality later decays. Below that threshold, the true aircraft type is not alliance knowledge. A track may reference the true flight entity for simulation bookkeeping, duplicate prevention, and resolution, but that reference is not itself alliance knowledge about squadron, mission, or package.
 
 ### Stale IADS track
 
@@ -1272,7 +1274,9 @@ If a stale track is reacquired before expiry, it keeps the same track identity, 
 
 IADS track quality is one continuous 0.0 to 1.0 estimate of the alliance's combined certainty about a hostile flight's current position, altitude, heading, and speed. Quality `1.0` means the track contains complete current kinematic information at the campaign abstraction; lower quality means its position and predicted motion are less dependable. HZPL does not persist separate position-, altitude-, velocity-, or confidence-quality fields.
 
-Each observing radar contributes an individual situation-dependent quality cap and build rate. Independent radar caps fuse by combining their remaining uncertainty, so additional radars can raise the achievable shared quality as well as build it faster; build-rate contributions retain diminishing returns. Quality moves toward the currently fused cap rather than snapping down to it, loses quality when the observed flight changes heading, speed, or altitude, and decays quickly when observation is lost.
+Each observing radar contributes an individual situation-dependent quality cap and build rate. Radar visibility is limited independently by its detectability-adjusted equipment range and a standard refracted-Earth radar horizon calculated from radar and target altitude. Terrain masking is deferred. Target radar detectability scales equipment range by its fourth root and is not applied again to cap or build rate.
+
+Radar caps fuse by combining their remaining uncertainty, so additional radars can raise the achievable shared quality as well as build it faster. Successive cap contributions within one fusion correlation group receive a `0.65` exponential multiplier; radars in different groups retain their normal fusion contribution. Build-rate contributions retain their own global diminishing returns. Quality moves toward the currently fused cap rather than snapping down to it, loses quality when the observed flight changes heading, speed, or altitude, and decays quickly when observation is lost.
 
 A flight contact must reach at least 0.10 IADS track quality before it becomes an IADS current track. Sub-threshold tentative acquisitions retain their accumulated quality internally only while continuously observed, allowing successive radar updates to establish a contact without exposing it to IADS consumers. The 0.10 threshold creates current tracks; established stale tracks below that quality persist until their stale expiry threshold is reached.
 

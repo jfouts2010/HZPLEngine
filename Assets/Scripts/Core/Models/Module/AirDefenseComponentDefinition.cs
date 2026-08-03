@@ -32,6 +32,8 @@ namespace Models.Module
     {
         public float DetectionRangeKm { get; }
         public float MaxAltitudeMeters { get; }
+        public float AntennaHeightMeters { get; }
+        public string FusionCorrelationGroup { get; }
         public float TrackQuality { get; }
         public bool ProvidesWeaponQualityTrack { get; }
         public bool SearchesWhileUnassigned { get; }
@@ -45,6 +47,8 @@ namespace Models.Module
             int targetToughness,
             float detectionRangeKm,
             float maxAltitudeMeters,
+            float antennaHeightMeters,
+            string fusionCorrelationGroup,
             float trackQuality,
             bool providesWeaponQualityTrack = false,
             string thirdPartyId = "",
@@ -55,6 +59,11 @@ namespace Models.Module
         {
             DetectionRangeKm = Math.Max(0f, detectionRangeKm);
             MaxAltitudeMeters = Math.Max(0f, maxAltitudeMeters);
+            AntennaHeightMeters = Math.Max(0f, antennaHeightMeters);
+            FusionCorrelationGroup = string.IsNullOrWhiteSpace(
+                fusionCorrelationGroup)
+                ? samComponentDefinitionId.ToString("N")
+                : fusionCorrelationGroup.Trim();
             TrackQuality = Math.Max(0f, Math.Min(1f, trackQuality));
             ProvidesWeaponQualityTrack = providesWeaponQualityTrack;
             SearchesWhileUnassigned = searchesWhileUnassigned;
@@ -66,24 +75,33 @@ namespace Models.Module
                 : 0;
         }
 
-        public float CalculateRangeFactor(float distanceKm)
+        public float CalculateDetectabilityAdjustedRangeKm(
+            float radarDetectability)
         {
-            if (DetectionRangeKm <= 0f || distanceKm < 0f || distanceKm > DetectionRangeKm)
+            var detectability = Math.Max(
+                0f,
+                Math.Min(1f, radarDetectability));
+            if (DetectionRangeKm <= 0f || detectability <= 0f)
                 return 0f;
 
-            return Math.Max(0f, Math.Min(1f, 1f - distanceKm / DetectionRangeKm));
+            return DetectionRangeKm
+                   * (float)Math.Pow(detectability, 0.25d);
         }
 
-        public float CalculateTrackQualityCap(float radarDetectability, float distanceKm)
+        public float CalculateTrackQualityCap(float rangeFactor)
         {
-            var detectability = Math.Max(0f, Math.Min(1f, radarDetectability));
-            var rangeFactor = CalculateRangeFactor(distanceKm);
-            if (rangeFactor <= 0f)
+            var clampedRangeFactor = Math.Max(
+                0f,
+                Math.Min(1f, rangeFactor));
+            if (clampedRangeFactor <= 0f)
                 return 0f;
 
             return Math.Max(
                 0f,
-                Math.Min(1f, TrackQuality * detectability * (0.5f + 0.5f * rangeFactor)));
+                Math.Min(
+                    1f,
+                    TrackQuality
+                    * (0.5f + 0.5f * clampedRangeFactor)));
         }
     }
 

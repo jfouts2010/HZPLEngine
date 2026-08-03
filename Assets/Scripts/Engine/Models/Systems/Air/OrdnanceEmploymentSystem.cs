@@ -767,7 +767,8 @@ namespace Engine.Models
             return IsTargetInsideRadarEnvelope(
                 definition,
                 supportPosition,
-                target.Flight.PositionFeet);
+                target.Flight.PositionFeet,
+                target.AircraftType.RadarDetectability);
         }
 
         private bool TryGetGuidanceSourcePosition(
@@ -2656,22 +2657,23 @@ namespace Engine.Models
                     Component = component,
                     Definition = (RadarAirDefenseComponentDefinition)
                         airDefenseComponentDefinitions[component.SamComponentDefinitionId],
-                    DistanceKm = Vector3.Distance(
-                                     sitePosition,
-                                     target.Flight.PositionFeet)
-                                 / AirspaceGeometry.FeetPerKilometer
+                    Geometry = RadarDetectionGeometryCalculator.Calculate(
+                        (RadarAirDefenseComponentDefinition)
+                        airDefenseComponentDefinitions[component.SamComponentDefinitionId],
+                        sitePosition,
+                        target.Flight.PositionFeet,
+                        target.AircraftType.RadarDetectability)
                 })
                 .Where(item => IsTargetInsideRadarEnvelope(
                     item.Definition,
-                    sitePosition,
-                    target.Flight.PositionFeet))
+                    target.Flight.PositionFeet,
+                    item.Geometry))
                 .Select(item => new
                 {
                     item.Component,
                     item.Definition,
                     LocalQualityCap = item.Definition.CalculateTrackQualityCap(
-                        target.AircraftType.RadarDetectability,
-                        item.DistanceKm)
+                        item.Geometry.RangeFactor)
                 })
                 .Where(item => item.LocalQualityCap > 0f)
                 .Where(item => CanRadarAcceptNewSalvo(
@@ -2825,14 +2827,31 @@ namespace Engine.Models
         private static bool IsTargetInsideRadarEnvelope(
             RadarAirDefenseComponentDefinition definition,
             Vector3 radarPosition,
-            Vector3 targetPosition)
+            Vector3 targetPosition,
+            float targetRadarDetectability)
         {
-            var distanceKm = Vector3.Distance(radarPosition, targetPosition)
-                             / AirspaceGeometry.FeetPerKilometer;
+            var geometry = RadarDetectionGeometryCalculator.Calculate(
+                definition,
+                radarPosition,
+                targetPosition,
+                targetRadarDetectability);
+            return IsTargetInsideRadarEnvelope(
+                definition,
+                targetPosition,
+                geometry);
+        }
+
+        private static bool IsTargetInsideRadarEnvelope(
+            RadarAirDefenseComponentDefinition definition,
+            Vector3 targetPosition,
+            RadarDetectionGeometry geometry)
+        {
             var maximumAltitudeFeet = definition.MaxAltitudeMeters
                                       * AirspaceGeometry.FeetPerKilometer
                                       / 1000f;
-            return distanceKm <= definition.DetectionRangeKm
+            return geometry.RangeFactor > 0f
+                   && geometry.IsWithinEquipmentRange
+                   && geometry.IsWithinRadarHorizon
                    && targetPosition.y <= maximumAltitudeFeet;
         }
 

@@ -14,6 +14,8 @@ namespace Engine.Models
         private readonly GameManager gameManager;
         private readonly AllianceIADS blueforIads;
         private readonly AllianceIADS redforIads;
+        private readonly List<IADSTrackDiagnostic> pendingTrackDiagnostics =
+            new List<IADSTrackDiagnostic>();
 
         public IADSSystem(GameManager gameManager)
             : this(gameManager, new AllianceIADS(Alliance.Bluefor), new AllianceIADS(Alliance.Redfor))
@@ -39,6 +41,20 @@ namespace Engine.Models
             };
         }
 
+        /// <summary>
+        /// Transfers diagnostics accumulated by five-second tactical updates to
+        /// the simulation log without making diagnostic history campaign state.
+        /// </summary>
+        public IReadOnlyList<IADSTrackDiagnostic> DrainTrackDiagnostics()
+        {
+            if (pendingTrackDiagnostics.Count == 0)
+                return Array.Empty<IADSTrackDiagnostic>();
+
+            var drained = pendingTrackDiagnostics.ToList();
+            pendingTrackDiagnostics.Clear();
+            return drained;
+        }
+
         public void TacticalTurn(float elapsedSeconds, DateTime observedAt)
         {
             var activeModule = ModuleSingleton.Instance.ActiveModule;
@@ -50,7 +66,7 @@ namespace Engine.Models
             var airDefenseSites = gameManager.airDefenseSiteSystem.Sites.ToList();
             var activeFlights = gameManager.GetAirborneFlights().ToList();
             var flightContexts = BuildFlightContexts(activeFlights);
-            blueforIads.RefreshTracks(
+            pendingTrackDiagnostics.AddRange(blueforIads.RefreshTracks(
                 activeFlights,
                 flightContexts.AllianceByFlightId,
                 flightContexts.AircraftTypeByFlightId,
@@ -60,8 +76,8 @@ namespace Engine.Models
                 radarDefinitionLookup,
                 aircraftTypeDefinitions,
                 elapsedSeconds,
-                observedAt);
-            redforIads.RefreshTracks(
+                observedAt));
+            pendingTrackDiagnostics.AddRange(redforIads.RefreshTracks(
                 activeFlights,
                 flightContexts.AllianceByFlightId,
                 flightContexts.AircraftTypeByFlightId,
@@ -71,7 +87,7 @@ namespace Engine.Models
                 radarDefinitionLookup,
                 aircraftTypeDefinitions,
                 elapsedSeconds,
-                observedAt);
+                observedAt));
         }
 
         private FlightContexts BuildFlightContexts(IEnumerable<AirFlight> flights)
