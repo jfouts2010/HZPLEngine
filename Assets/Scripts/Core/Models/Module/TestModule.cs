@@ -63,19 +63,45 @@ namespace Models.Module
 
         public static ModuleDefinition GetTestModule()
         {
-            return new ModuleDefinition(
+            return CreateModule(
                 Id,
                 "Standalone Test Module",
                 "Standalone",
                 "HZPL Engine",
-                new NoOpSimAdapter(),
+                new NoOpSimAdapter());
+        }
+
+        internal static ModuleDefinition CreateModule(
+            Guid moduleId,
+            string displayName,
+            string name,
+            string gameName,
+            ISimAdapter simAdapter,
+            IReadOnlyDictionary<Guid, string> thirdPartyIds = null)
+        {
+            return new ModuleDefinition(
+                moduleId,
+                displayName,
+                name,
+                gameName,
+                simAdapter,
                 CreateCountries(),
-                CreateAircraftTypeDefinitions(),
-                CreateOrdnanceTypeDefinitions(),
-                CreateSamComponentDefinitions(),
+                CreateAircraftTypeDefinitions(thirdPartyIds),
+                CreateOrdnanceTypeDefinitions(thirdPartyIds),
+                CreateSamComponentDefinitions(thirdPartyIds),
                 CreateSamSiteTemplates(),
                 CreateBattalionDefinitions(),
                 CreateDivisionTemplates());
+        }
+
+        private static string GetThirdPartyId(
+            IReadOnlyDictionary<Guid, string> thirdPartyIds,
+            Guid definitionId)
+        {
+            return thirdPartyIds != null
+                   && thirdPartyIds.TryGetValue(definitionId, out var thirdPartyId)
+                ? thirdPartyId
+                : string.Empty;
         }
 
         private static List<CountryDefinition> CreateCountries()
@@ -88,13 +114,15 @@ namespace Models.Module
             };
         }
 
-        private static List<AircraftTypeDefinition> CreateAircraftTypeDefinitions()
+        private static List<AircraftTypeDefinition> CreateAircraftTypeDefinitions(
+            IReadOnlyDictionary<Guid, string> thirdPartyIds)
         {
             return new List<AircraftTypeDefinition>
             {
                 new AircraftTypeDefinition(
                     F16AircraftTypeId,
                     "F-16C Fighting Falcon",
+                    thirdPartyId: GetThirdPartyId(thirdPartyIds, F16AircraftTypeId),
                     cruiseSpeedKnots: 459f,
                     combatSpeedKnots: 529f,
                     climbRateFeetPerMinute: 18000f,
@@ -128,6 +156,7 @@ namespace Models.Module
                 new AircraftTypeDefinition(
                     Mig29AircraftTypeId,
                     "MiG-29 Fulcrum",
+                    thirdPartyId: GetThirdPartyId(thirdPartyIds, Mig29AircraftTypeId),
                     cruiseSpeedKnots: 486f,
                     combatSpeedKnots: 567f,
                     climbRateFeetPerMinute: 20000f,
@@ -158,6 +187,7 @@ namespace Models.Module
                 new AircraftTypeDefinition(
                     E3AircraftTypeId,
                     "E-3 Sentry",
+                    thirdPartyId: GetThirdPartyId(thirdPartyIds, E3AircraftTypeId),
                     cruiseSpeedKnots: 432f,
                     combatSpeedKnots: 432f,
                     climbRateFeetPerMinute: 3000f,
@@ -179,6 +209,7 @@ namespace Models.Module
                 new AircraftTypeDefinition(
                     Kc135AircraftTypeId,
                     "KC-135 Stratotanker",
+                    thirdPartyId: GetThirdPartyId(thirdPartyIds, Kc135AircraftTypeId),
                     cruiseSpeedKnots: 459f,
                     combatSpeedKnots: 459f,
                     climbRateFeetPerMinute: 3500f,
@@ -200,6 +231,7 @@ namespace Models.Module
                 new AircraftTypeDefinition(
                     A50AircraftTypeId,
                     "A-50 Mainstay",
+                    thirdPartyId: GetThirdPartyId(thirdPartyIds, A50AircraftTypeId),
                     cruiseSpeedKnots: 432f,
                     combatSpeedKnots: 432f,
                     climbRateFeetPerMinute: 3000f,
@@ -221,6 +253,7 @@ namespace Models.Module
                 new AircraftTypeDefinition(
                     Il78AircraftTypeId,
                     "Il-78 Midas",
+                    thirdPartyId: GetThirdPartyId(thirdPartyIds, Il78AircraftTypeId),
                     cruiseSpeedKnots: 421f,
                     combatSpeedKnots: 421f,
                     climbRateFeetPerMinute: 3000f,
@@ -242,13 +275,15 @@ namespace Models.Module
             };
         }
 
-        private static List<OrdnanceTypeDefinition> CreateOrdnanceTypeDefinitions()
+        private static List<OrdnanceTypeDefinition> CreateOrdnanceTypeDefinitions(
+            IReadOnlyDictionary<Guid, string> thirdPartyIds)
         {
             return new List<OrdnanceTypeDefinition>
             {
                 new OrdnanceTypeDefinition(
                     Aim120OrdnanceTypeId,
                     "AIM-120 AMRAAM",
+                    thirdPartyId: GetThirdPartyId(thirdPartyIds, Aim120OrdnanceTypeId),
                     weight: 1f,
                     effectPower: 2,
                     effectivenessByTargetCategory: new Dictionary<OrdnanceTargetCategory, float>
@@ -271,6 +306,7 @@ namespace Models.Module
                 new OrdnanceTypeDefinition(
                     Aim9OrdnanceTypeId,
                     "AIM-9 Sidewinder",
+                    thirdPartyId: GetThirdPartyId(thirdPartyIds, Aim9OrdnanceTypeId),
                     weight: 0.75f,
                     effectPower: 1,
                     effectivenessByTargetCategory: new Dictionary<OrdnanceTargetCategory, float>
@@ -291,6 +327,7 @@ namespace Models.Module
                 new OrdnanceTypeDefinition(
                     M61GunOrdnanceTypeId,
                     "M61A1 20 mm Gun Burst",
+                    thirdPartyId: GetThirdPartyId(thirdPartyIds, M61GunOrdnanceTypeId),
                     weight: 0f,
                     effectPower: 1,
                     effectivenessByTargetCategory:
@@ -316,6 +353,7 @@ namespace Models.Module
                 new OrdnanceTypeDefinition(
                     Agm88OrdnanceTypeId,
                     "AGM-88 HARM",
+                    thirdPartyId: GetThirdPartyId(thirdPartyIds, Agm88OrdnanceTypeId),
                     weight: 3f,
                     effectPower: 3,
                     effectivenessByTargetCategory: new Dictionary<OrdnanceTargetCategory, float>
@@ -332,6 +370,7 @@ namespace Models.Module
                 new OrdnanceTypeDefinition(
                     Gbu38OrdnanceTypeId,
                     "GBU-38 JDAM",
+                    thirdPartyId: GetThirdPartyId(thirdPartyIds, Gbu38OrdnanceTypeId),
                     weight: 2f,
                     effectPower: 3,
                     effectivenessByTargetCategory: new Dictionary<OrdnanceTargetCategory, float>
@@ -349,6 +388,7 @@ namespace Models.Module
                 new OrdnanceTypeDefinition(
                     Agm65OrdnanceTypeId,
                     "AGM-65 Maverick",
+                    thirdPartyId: GetThirdPartyId(thirdPartyIds, Agm65OrdnanceTypeId),
                     weight: 2f,
                     effectPower: 3,
                     effectivenessByTargetCategory: new Dictionary<OrdnanceTargetCategory, float>
@@ -365,6 +405,7 @@ namespace Models.Module
                 new OrdnanceTypeDefinition(
                     R27OrdnanceTypeId,
                     "R-27 Alamo",
+                    thirdPartyId: GetThirdPartyId(thirdPartyIds, R27OrdnanceTypeId),
                     weight: 1.25f,
                     effectPower: 2,
                     effectivenessByTargetCategory: new Dictionary<OrdnanceTargetCategory, float>
@@ -386,6 +427,7 @@ namespace Models.Module
                 new OrdnanceTypeDefinition(
                     R73OrdnanceTypeId,
                     "R-73 Archer",
+                    thirdPartyId: GetThirdPartyId(thirdPartyIds, R73OrdnanceTypeId),
                     weight: 0.75f,
                     effectPower: 1,
                     effectivenessByTargetCategory: new Dictionary<OrdnanceTargetCategory, float>
@@ -406,6 +448,7 @@ namespace Models.Module
                 new OrdnanceTypeDefinition(
                     Gsh301GunOrdnanceTypeId,
                     "GSh-30-1 30 mm Gun Burst",
+                    thirdPartyId: GetThirdPartyId(thirdPartyIds, Gsh301GunOrdnanceTypeId),
                     weight: 0f,
                     effectPower: 1,
                     effectivenessByTargetCategory:
@@ -431,6 +474,7 @@ namespace Models.Module
                 new OrdnanceTypeDefinition(
                     Sa2InterceptorOrdnanceTypeId,
                     "V-750 SAM",
+                    thirdPartyId: GetThirdPartyId(thirdPartyIds, Sa2InterceptorOrdnanceTypeId),
                     weight: 0f,
                     effectPower: 3,
                     effectivenessByTargetCategory: new Dictionary<OrdnanceTargetCategory, float>
@@ -447,6 +491,7 @@ namespace Models.Module
                 new OrdnanceTypeDefinition(
                     OsaInterceptorOrdnanceTypeId,
                     "9M33 SAM",
+                    thirdPartyId: GetThirdPartyId(thirdPartyIds, OsaInterceptorOrdnanceTypeId),
                     weight: 0f,
                     effectPower: 2,
                     effectivenessByTargetCategory: new Dictionary<OrdnanceTargetCategory, float>
@@ -463,7 +508,8 @@ namespace Models.Module
             };
         }
 
-        private static List<AirDefenseComponentDefinition> CreateSamComponentDefinitions()
+        private static List<AirDefenseComponentDefinition> CreateSamComponentDefinitions(
+            IReadOnlyDictionary<Guid, string> thirdPartyIds)
         {
             return new List<AirDefenseComponentDefinition>
             {
@@ -472,6 +518,7 @@ namespace Models.Module
                     "Fan Song radar component",
                     OrdnanceTargetCategory.Radar,
                     targetToughness: 2,
+                    thirdPartyId: GetThirdPartyId(thirdPartyIds, FanSongComponentId),
                     detectionRangeKm: 75f,
                     maxAltitudeMeters: 24000f,
                     antennaHeightMeters: 5f,
@@ -486,6 +533,7 @@ namespace Models.Module
                     "Spoon Rest acquisition radar component",
                     OrdnanceTargetCategory.Radar,
                     targetToughness: 2,
+                    thirdPartyId: GetThirdPartyId(thirdPartyIds, SpoonRestComponentId),
                     detectionRangeKm: 120f,
                     maxAltitudeMeters: 24000f,
                     antennaHeightMeters: 10f,
@@ -498,6 +546,7 @@ namespace Models.Module
                     "SA-2 launcher rail",
                     OrdnanceTargetCategory.Building,
                     targetToughness: 2,
+                    thirdPartyId: GetThirdPartyId(thirdPartyIds, Sa2LauncherComponentId),
                     minEngagementRangeKm: 7f,
                     maxEngagementRangeKm: 35f,
                     minEngagementAltitudeMeters: 300f,
@@ -512,12 +561,14 @@ namespace Models.Module
                     SamCommandPostComponentId,
                     "SAM command post",
                     OrdnanceTargetCategory.Building,
-                    targetToughness: 2),
+                    targetToughness: 2,
+                    thirdPartyId: GetThirdPartyId(thirdPartyIds, SamCommandPostComponentId)),
                 new RadarAirDefenseComponentDefinition(
                     OsaRadarComponentId,
                     "SA-8 Osa organic radar",
                     OrdnanceTargetCategory.Radar,
                     targetToughness: 2,
+                    thirdPartyId: GetThirdPartyId(thirdPartyIds, OsaRadarComponentId),
                     detectionRangeKm: 35f,
                     maxAltitudeMeters: 12000f,
                     antennaHeightMeters: 4f,
@@ -529,6 +580,7 @@ namespace Models.Module
                     "SA-8 Osa launcher",
                     OrdnanceTargetCategory.Vehicle,
                     targetToughness: 2,
+                    thirdPartyId: GetThirdPartyId(thirdPartyIds, OsaLauncherComponentId),
                     minEngagementRangeKm: 1.5f,
                     maxEngagementRangeKm: 12f,
                     minEngagementAltitudeMeters: 25f,
@@ -542,7 +594,8 @@ namespace Models.Module
                     OsaCommandComponentId,
                     "SA-8 Osa command component",
                     OrdnanceTargetCategory.Vehicle,
-                    targetToughness: 2)
+                    targetToughness: 2,
+                    thirdPartyId: GetThirdPartyId(thirdPartyIds, OsaCommandComponentId))
             };
         }
 

@@ -150,13 +150,18 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Engine.Monobehaviours.Managers.GameManager
   AutoStartTestCampaign: 1
-  SelectedTestCampaign: 1
-  CampaignTiles: []
-  Tiles: []
+  SelectedTestCampaign: 2
+  SupplyCapitals: []
   buildingSystem:
     Buildings: []
   divisionSystem:
     Divisions: []
+  squadronSystem:
+    Squadrons: []
+  airDefenseSiteSystem:
+    Sites: []
+  intelligenceSystem:
+    Pictures: []
   references:
     version: 2
     RefIds: []
@@ -190,6 +195,7 @@ MonoBehaviour:
   gameManager: {fileID: 521809840}
   grid: {fileID: 0}
   tilemap: {fileID: 0}
+  airControlTilemap: {fileID: 0}
   sceneCamera: {fileID: 534150684}
   uiDocument: {fileID: 1733400202}
   panelSettings: {fileID: 11400000, guid: a43a592d8bbd47b1b156da0f9d1a086f, type: 2}

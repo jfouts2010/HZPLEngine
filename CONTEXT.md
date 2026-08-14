@@ -48,6 +48,28 @@ When the player is not flying an exported mission, the sim adapter is not involv
 
 The sim adapter may be a stub during early development when the project is focused on standalone dynamic-campaign simulation rather than export or import.
 
+### Scenario export snapshot
+
+A **scenario export snapshot** is an immutable, simulator-neutral capture of a
+paused runtime campaign moment. It contains only the physical state needed by a
+sim adapter: mapped aircraft and loadouts, current positions and remaining
+routes, airport state, and eligible SAM sites. The adapter translates this
+snapshot into its simulator's mission format; it does not query or mutate live
+campaign systems while writing the mission.
+
+### AI observation export
+
+An **AI observation export** is a generated simulator mission in which every
+aircraft is AI-controlled and the human watches rather than occupying a pilot
+slot. It is the first DCS export mode because it tests placement, routing,
+tasking, payloads, airport ownership, and SAM behavior without adding player
+intervention semantics.
+
+The DCS AI observation scope contains airborne flights, airports, and active
+SAM sites. It excludes ordinary ground formations and infrastructure. A future
+player-intervention export is a distinct mode because a DCS `Player` or `Client`
+unit is not an AI-controlled aircraft waiting to be taken over.
+
 ### Mappable entity
 
 A campaign or catalog entity that carries a **third-party ID** so the sim adapter can place or reference the correct asset when exporting a sortie.

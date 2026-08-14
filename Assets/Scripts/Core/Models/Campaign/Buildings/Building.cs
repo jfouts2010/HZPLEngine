@@ -7,6 +7,7 @@ namespace Models.Gameplay.Campaign
     public abstract class Building
     {
         public Guid BuildingId;
+        public string ThirdPartyId = string.Empty;
         [SerializeField]
         private Vector3 positionFeet;
         public BuildingLevel Level = new BuildingLevel();
@@ -32,6 +33,7 @@ namespace Models.Gameplay.Campaign
         protected Building(BuildingStartingCondition startingCondition)
         {
             BuildingId = startingCondition.BuildingId;
+            ThirdPartyId = startingCondition.ThirdPartyId ?? string.Empty;
             positionFeet = startingCondition.PositionFeet;
             Level = startingCondition.Level == null
                 ? new BuildingLevel()

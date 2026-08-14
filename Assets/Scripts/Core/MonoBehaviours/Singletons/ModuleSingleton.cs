@@ -69,7 +69,8 @@ namespace Monobehaviours.Singletons
         {
             return new List<ModuleDefinition>
             {
-                TestModule.GetTestModule()
+                TestModule.GetTestModule(),
+                DcsPrototypeModule.GetDcsPrototypeModule()
             };
         }
     }

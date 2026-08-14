@@ -68,6 +68,11 @@
                         <ui:VisualElement class="stat-tile"><ui:Label name="air-airborne-count" text="0" class="stat-value" /><ui:Label text="AIRBORNE" class="stat-label" /></ui:VisualElement>
                     </ui:VisualElement>
                     <ui:VisualElement name="air-overview-grid" class="air-overview-grid" />
+                    <ui:VisualElement class="dcs-export-panel">
+                        <ui:Label text="DCS AI OBSERVATION" class="workbench-kicker" />
+                        <ui:Button name="export-dcs-ai-button" text="Export current air picture (.miz)" class="workbench-button workbench-button--primary dcs-export-button" />
+                        <ui:Label name="export-dcs-status" text="Pause with at least one flight airborne, then export." class="dcs-export-status" />
+                    </ui:VisualElement>
                     <ui:VisualElement class="segmented-control">
                         <ui:Button name="air-requests-button" text="Requests" class="segment" />
                         <ui:Button name="air-packages-button" text="Packages" class="segment" />

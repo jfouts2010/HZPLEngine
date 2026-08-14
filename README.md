@@ -29,6 +29,8 @@ The project separates its simulation rules from simulator-specific content:
   particular third-party simulator.
 - The current **Standalone Module** exercises the complete campaign workflow
   with test content and a no-op simulator adapter.
+- The **DCS Prototype Module** binds a Caucasus test campaign to DCS identifiers
+  and can export a paused, AI-only observation mission.
 
 This structure is designed to allow future integrations to replace content and
 translation layers without rewriting the campaign simulation itself.
@@ -95,6 +97,7 @@ No third-party flight simulator is required for the current Standalone Module.
 | Select playback speed | **5 SEC** or **5 MIN** |
 | Advance while paused | **Next +5s** or **Next +5m**, depending on the selected increment |
 | Inspect the campaign | Use the **Tile**, **Ground**, **Air**, **Last Turn**, and **Diagnostics** tabs |
+| Export a DCS AI observation mission | While paused in the DCS Prototype Module, open **Air** and select **Export current air picture (.miz)** |
 | Toggle map information | Use the overlay palette for units, combat, movement, routes, BARCAP and territory boundaries, SAM coverage, ordnance, railways, and air interference |
 | Pan the map | <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>, arrow keys, middle-mouse drag, or right-mouse drag |
 | Zoom the map | Mouse wheel while the pointer is over the map |
@@ -156,14 +159,17 @@ needed to support the air campaign.
 - [`CONTEXT.md`](CONTEXT.md) defines the project's canonical domain vocabulary.
 - [`docs/adr`](docs/adr) records important architectural decisions and their
   trade-offs.
+- [`docs/dcs-ai-observation-export.md`](docs/dcs-ai-observation-export.md)
+  describes the DCS prototype export and its in-simulator test checklist.
 
 Contributors should read those documents before changing core rules or
 introducing new domain terminology.
 
 ## Current limitations
 
-- Only the Standalone test Module is registered.
-- Third-party scenario export and mission-result import are not implemented.
+- The DCS export is a Caucasus-only, AI-observation prototype with a limited
+  aircraft, weapon, airport, and SAM catalog.
+- DCS mission-result import and player intervention are not implemented.
 - Campaign play is observer-focused; player command is future work.
 - Close-range air combat beyond the current BVR-to-merge boundary is deferred.
 - The UI is a development and diagnostic workbench rather than a finished game

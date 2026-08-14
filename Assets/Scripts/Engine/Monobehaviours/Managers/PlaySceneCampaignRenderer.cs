@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using Engine.Models;
 using Engine.Models.Ground;
@@ -137,6 +138,8 @@ namespace Engine.Monobehaviours.Managers
         private Label airRequestCount;
         private Label airPackageCount;
         private Label airAirborneCount;
+        private Button exportDcsAiButton;
+        private Label exportDcsStatus;
         private Button airRequestsButton;
         private Button airPackagesButton;
         private Button airFlightsButton;
@@ -405,6 +408,8 @@ namespace Engine.Monobehaviours.Managers
                 CreateTileLabel(campaignTile, hexCenter);
             }
 
+            UpdateTilemapChunkCullingBounds();
+
             CreateUnitCounters();
             CreateRailwayLines();
             CreateMovementArrows();
@@ -603,6 +608,8 @@ namespace Engine.Monobehaviours.Managers
             airRequestCount = root.Q<Label>("air-request-count");
             airPackageCount = root.Q<Label>("air-package-count");
             airAirborneCount = root.Q<Label>("air-airborne-count");
+            exportDcsAiButton = root.Q<Button>("export-dcs-ai-button");
+            exportDcsStatus = root.Q<Label>("export-dcs-status");
             airRequestsButton = root.Q<Button>("air-requests-button");
             airPackagesButton = root.Q<Button>("air-packages-button");
             airFlightsButton = root.Q<Button>("air-flights-button");
@@ -680,6 +687,8 @@ namespace Engine.Monobehaviours.Managers
             ApplyRuntimeFont(airRequestCount);
             ApplyRuntimeFont(airPackageCount);
             ApplyRuntimeFont(airAirborneCount);
+            ApplyRuntimeFont(exportDcsAiButton);
+            ApplyRuntimeFont(exportDcsStatus);
             ApplyRuntimeFont(airRequestsButton);
             ApplyRuntimeFont(airPackagesButton);
             ApplyRuntimeFont(airFlightsButton);
@@ -783,6 +792,11 @@ namespace Engine.Monobehaviours.Managers
             {
                 airOpsTabButton.pickingMode = PickingMode.Position;
                 airOpsTabButton.clicked += () => ShowWorkbenchPage(WorkbenchPage.Air);
+            }
+            if (exportDcsAiButton != null)
+            {
+                exportDcsAiButton.pickingMode = PickingMode.Position;
+                exportDcsAiButton.clicked += ExportDcsAiObservationMission;
             }
             if (groundTabButton != null)
                 groundTabButton.clicked += () => ShowWorkbenchPage(WorkbenchPage.Ground);
@@ -1075,6 +1089,45 @@ namespace Engine.Monobehaviours.Managers
                     hexCenter - airControlTilemap.GetCellCenterLocal(cell),
                     Quaternion.identity,
                     new Vector3(1f, HexHeight, 1f)));
+        }
+
+        private void UpdateTilemapChunkCullingBounds()
+        {
+            if (tilemap == null || hexCentersByCell.Count == 0)
+                return;
+
+            // Tiles are stored in rectangular cube-coordinate cells and then
+            // translated to their rendered hex centers. Automatic chunk bounds
+            // only account for sprite size, so Unity can cull a source chunk
+            // even while its translated tiles are visible.
+            var cullingExtension = new Vector3(HexWidth, HexHeight, 1f);
+            foreach (var pair in hexCentersByCell)
+            {
+                var displacement = pair.Value - tilemap.GetCellCenterLocal(pair.Key);
+                cullingExtension.x = Mathf.Max(
+                    cullingExtension.x,
+                    Mathf.Abs(displacement.x) + HexWidth);
+                cullingExtension.y = Mathf.Max(
+                    cullingExtension.y,
+                    Mathf.Abs(displacement.y) + HexHeight);
+            }
+
+            ApplyChunkCullingBounds(tilemap, cullingExtension);
+            ApplyChunkCullingBounds(airControlTilemap, cullingExtension);
+        }
+
+        private static void ApplyChunkCullingBounds(Tilemap targetTilemap, Vector3 cullingExtension)
+        {
+            if (targetTilemap == null)
+                return;
+
+            var tilemapRenderer = targetTilemap.GetComponent<TilemapRenderer>();
+            if (tilemapRenderer == null)
+                return;
+
+            tilemapRenderer.detectChunkCullingBounds =
+                TilemapRenderer.DetectChunkCullingBounds.Manual;
+            tilemapRenderer.chunkCullingBounds = cullingExtension;
         }
 
         private void RefreshAirControlOverlay()
@@ -2100,6 +2153,17 @@ namespace Engine.Monobehaviours.Managers
                 airPackageCount.text = packages.Count.ToString();
             if (airAirborneCount != null)
                 airAirborneCount.text = airborneCount.ToString();
+            if (exportDcsAiButton != null)
+            {
+                var activeModule = ModuleSingleton.Instance.ActiveModule;
+                exportDcsAiButton.SetEnabled(
+                    gameManager.IsGamePaused
+                    && activeModule != null
+                    && activeModule.Id == DcsPrototypeModule.Id);
+                exportDcsAiButton.tooltip = gameManager.IsGamePaused
+                    ? "Exports every currently airborne aircraft as DCS AI, plus active SAM sites and airport ownership."
+                    : "Pause the campaign before exporting a DCS mission.";
+            }
 
             if (airRequestsButton != null)
                 airRequestsButton.text = $"Requests  {requests.Count}";
@@ -2125,6 +2189,95 @@ namespace Engine.Monobehaviours.Managers
             UpdateAirOverviewUi();
             if (selectedFlightId != Guid.Empty)
                 RefreshFlightDetails();
+        }
+
+        private void ExportDcsAiObservationMission()
+        {
+            try
+            {
+                var module = ModuleSingleton.Instance.ActiveModule;
+                if (module == null || module.SimAdapter == null)
+                    throw new InvalidOperationException(
+                        "The active module does not support scenario export.");
+
+                var snapshot = ScenarioExportSnapshotBuilder.Capture(
+                    gameManager,
+                    module);
+                var artifact = module.SimAdapter.ExportScenario(snapshot);
+                var outputDirectory = GetDcsMissionExportDirectory();
+                Directory.CreateDirectory(outputDirectory);
+                var outputPath = GetAvailableExportPath(
+                    outputDirectory,
+                    artifact.SuggestedFileName);
+                File.WriteAllBytes(outputPath, artifact.Content);
+
+                SetDcsExportStatus(
+                    $"Exported {snapshot.AirborneFlights.Count} AI flight(s), "
+                    + $"{snapshot.SamSites.Count} SAM site(s), and "
+                    + $"{snapshot.Airports.Count} airport record(s).\n{outputPath}"
+                    + (artifact.Warnings.Count > 0
+                        ? $"\n{artifact.Warnings.Count} export warning(s); see the Console."
+                        : string.Empty));
+                foreach (var warning in artifact.Warnings)
+                    Debug.LogWarning($"DCS export: {warning}");
+                Debug.Log($"DCS AI observation mission exported to {outputPath}");
+            }
+            catch (Exception exception)
+            {
+                SetDcsExportStatus($"Export failed: {exception.Message}");
+                Debug.LogException(exception);
+            }
+        }
+
+        private void SetDcsExportStatus(string message)
+        {
+            if (exportDcsStatus == null)
+                return;
+
+            exportDcsStatus.text = message ?? string.Empty;
+            exportDcsStatus.EnableInClassList(
+                "dcs-export-status--visible",
+                !string.IsNullOrWhiteSpace(message));
+            ApplyRuntimeFont(exportDcsStatus);
+        }
+
+        private static string GetDcsMissionExportDirectory()
+        {
+            var savedGames = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                "Saved Games");
+            foreach (var installationName in new[] { "DCS", "DCS.openbeta" })
+            {
+                var missionDirectory = Path.Combine(
+                    savedGames,
+                    installationName,
+                    "Missions");
+                if (Directory.Exists(missionDirectory))
+                    return missionDirectory;
+            }
+
+            return Path.Combine(Application.persistentDataPath, "DCS Missions");
+        }
+
+        private static string GetAvailableExportPath(
+            string directory,
+            string suggestedFileName)
+        {
+            var fileName = Path.GetFileName(suggestedFileName);
+            var candidate = Path.Combine(directory, fileName);
+            if (!File.Exists(candidate))
+                return candidate;
+
+            var stem = Path.GetFileNameWithoutExtension(fileName);
+            var extension = Path.GetExtension(fileName);
+            for (var suffix = 2; ; suffix++)
+            {
+                candidate = Path.Combine(
+                    directory,
+                    $"{stem} ({suffix}){extension}");
+                if (!File.Exists(candidate))
+                    return candidate;
+            }
         }
 
         private int CountPerspectiveVisibleFlights(

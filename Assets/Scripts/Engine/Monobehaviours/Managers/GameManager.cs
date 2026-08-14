@@ -16,7 +16,8 @@ namespace Engine.Monobehaviours.Managers
     public enum TestCampaignKind
     {
         Basic,
-        Advanced
+        Advanced,
+        CaucasusDcsPrototype
     }
 
     public enum CampaignPlaybackIncrement
@@ -96,6 +97,7 @@ namespace Engine.Monobehaviours.Managers
             {
                 TestCampaignKind.Basic => TestCampaign.Create(),
                 TestCampaignKind.Advanced => AdvancedTestCampaign.Create(),
+                TestCampaignKind.CaucasusDcsPrototype => CaucasusDcsPrototypeCampaign.Create(),
                 _ => AdvancedTestCampaign.Create()
             };
         }
@@ -104,7 +106,13 @@ namespace Engine.Monobehaviours.Managers
         {
             TemplateName = template.Name;
             ModuleId = template.ModuleId;
-            var activeModule = ModuleSingleton.Instance.ActiveModule;
+            var moduleSingleton = ModuleSingleton.Instance;
+            var activeModule = moduleSingleton.ActiveModule;
+            if (activeModule.Id != template.ModuleId
+                && !moduleSingleton.HasActiveModuleSelection
+                && moduleSingleton.TrySetActive(template.ModuleId))
+                activeModule = moduleSingleton.ActiveModule;
+
             if (activeModule.Id != template.ModuleId)
             {
                 throw new InvalidOperationException(
