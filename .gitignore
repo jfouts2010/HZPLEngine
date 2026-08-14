@@ -6,6 +6,7 @@
 # See: https://github.com/github/gitignore/tree/main/Global
 #
 .utmp/
+/.codex-temp/
 /[Ll]ibrary/
 /[Tt]emp/
 /[Oo]bj/
@@ -25,6 +26,9 @@
 
 # Recordings can get excessive in size
 /[Rr]ecordings/
+
+# Local DCS mission diagnostic bundles can be large and may contain user data.
+/[Dd]ebug[Cc]aptures/
 
 # Uncomment this line if you wish to ignore the asset store tools plugin
 # /[Aa]ssets/AssetStoreTools*
