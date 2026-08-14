@@ -1410,6 +1410,8 @@ namespace Engine.Service
             IEnumerable<AircraftLoadoutItem> loadout)
         {
             return loadout.Select(item => new AircraftLoadoutItem(
+                    item.AircraftLoadoutStationDefinitionId,
+                    item.AircraftCarriageConfigurationDefinitionId,
                     item.OrdnanceTypeDefinitionId,
                     item.Count))
                 .ToList();

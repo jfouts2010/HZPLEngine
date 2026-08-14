@@ -34,6 +34,8 @@ namespace Models.Gameplay.Campaign
         {
             Loadout = loadout
                 .Select(item => new AircraftLoadoutItem(
+                    item.AircraftLoadoutStationDefinitionId,
+                    item.AircraftCarriageConfigurationDefinitionId,
                     item.OrdnanceTypeDefinitionId,
                     item.Count))
                 .Where(item => item.Count > 0)

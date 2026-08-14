@@ -744,7 +744,7 @@ namespace Models.Module
             builder.AppendLine($"                                        [\"y\"] = {Number(y)},");
             builder.AppendLine($"                                        [\"x\"] = {Number(x)},");
             builder.AppendLine($"                                        [\"name\"] = \"{Lua(unitName)}\",");
-            AppendPayload(builder, flight, aircraft, warnings);
+            AppendPayload(builder, flight, aircraft);
             builder.AppendLine($"                                        [\"heading\"] = {Number(heading)},");
             AppendCallsign(builder, flight, callsignGroup, unitIndex);
             builder.AppendLine($"                                        [\"onboard_num\"] = \"{unitId % 1000:000}\",");
@@ -803,12 +803,11 @@ namespace Models.Module
         private static void AppendPayload(
             StringBuilder builder,
             ScenarioAirFlightSnapshot flight,
-            ScenarioAircraftSnapshot aircraft,
-            ICollection<string> warnings)
+            ScenarioAircraftSnapshot aircraft)
         {
             Stores.TryGetValue(flight.AircraftThirdPartyId, out var stores);
             stores ??= new AircraftStores(0d, 0, 0);
-            var pylons = ResolvePylons(flight, aircraft, warnings);
+            var pylons = ResolvePylons(aircraft);
             builder.AppendLine("                                        [\"payload\"] =");
             builder.AppendLine("                                        {");
             builder.AppendLine("                                            [\"pylons\"] =");
@@ -836,75 +835,41 @@ namespace Models.Module
         }
 
         private static Dictionary<int, string> ResolvePylons(
-            ScenarioAirFlightSnapshot flight,
-            ScenarioAircraftSnapshot aircraft,
-            ICollection<string> warnings)
+            ScenarioAircraftSnapshot aircraft)
         {
             var result = new Dictionary<int, string>();
-            var requests = aircraft.Loadout
-                .Where(item => item.Count > 0
-                               && !string.IsNullOrWhiteSpace(item.ThirdPartyId))
-                .OrderBy(item => PylonPriority(item.OrdnanceTypeDefinitionId))
-                .ToList();
-            foreach (var request in requests)
+            foreach (var stationLoad in aircraft.ExternalStationLoads)
             {
-                var stations = PylonStations(
-                    flight.AircraftThirdPartyId,
-                    request.OrdnanceTypeDefinitionId);
-                var placed = 0;
-                foreach (var station in stations)
+                if (stationLoad.IsPartiallyExpended)
                 {
-                    if (placed >= request.Count)
-                        break;
-                    if (result.ContainsKey(station))
-                        continue;
-                    result[station] = request.ThirdPartyId;
-                    placed++;
+                    throw new InvalidOperationException(
+                        $"Aircraft {aircraft.AircraftId} has a partially expended carriage configuration that DCS cannot represent exactly.");
                 }
-                if (placed < request.Count)
+                if (!int.TryParse(
+                        stationLoad.StationThirdPartyId,
+                        NumberStyles.Integer,
+                        CultureInfo.InvariantCulture,
+                        out var station)
+                    || station <= 0)
                 {
-                    warnings.Add(
-                        $"Aircraft {aircraft.AircraftId} carried {request.Count} mapped stores of type {request.OrdnanceTypeDefinitionId}, but the prototype DCS payload placed {placed}.");
+                    throw new InvalidOperationException(
+                        $"Aircraft {aircraft.AircraftId} loadout station {stationLoad.AircraftLoadoutStationDefinitionId} has no valid DCS pylon mapping.");
                 }
+                if (string.IsNullOrWhiteSpace(
+                        stationLoad.CarriageThirdPartyId))
+                {
+                    throw new InvalidOperationException(
+                        $"Aircraft {aircraft.AircraftId} carriage configuration {stationLoad.AircraftCarriageConfigurationDefinitionId} has no DCS CLSID mapping.");
+                }
+                if (result.ContainsKey(station))
+                {
+                    throw new InvalidOperationException(
+                        $"Aircraft {aircraft.AircraftId} maps more than one HZPL loadout station to DCS pylon {station}.");
+                }
+
+                result.Add(station, stationLoad.CarriageThirdPartyId);
             }
             return result;
-        }
-
-        private static int PylonPriority(Guid ordnanceId)
-        {
-            if (ordnanceId == TestModule.Agm88OrdnanceTypeId
-                || ordnanceId == TestModule.Gbu38OrdnanceTypeId
-                || ordnanceId == TestModule.Agm65OrdnanceTypeId)
-                return 0;
-            if (ordnanceId == TestModule.Aim120OrdnanceTypeId
-                || ordnanceId == TestModule.R27OrdnanceTypeId)
-                return 1;
-            return 2;
-        }
-
-        private static IReadOnlyList<int> PylonStations(
-            string aircraftType,
-            Guid ordnanceId)
-        {
-            if (aircraftType == "F-16C_50")
-            {
-                if (ordnanceId == TestModule.Agm88OrdnanceTypeId
-                    || ordnanceId == TestModule.Gbu38OrdnanceTypeId
-                    || ordnanceId == TestModule.Agm65OrdnanceTypeId)
-                    return new[] { 3, 7 };
-                if (ordnanceId == TestModule.Aim120OrdnanceTypeId)
-                    return new[] { 1, 9, 4, 6, 3, 7 };
-                if (ordnanceId == TestModule.Aim9OrdnanceTypeId)
-                    return new[] { 2, 8, 1, 9 };
-            }
-            if (aircraftType == "MiG-29A")
-            {
-                if (ordnanceId == TestModule.R27OrdnanceTypeId)
-                    return new[] { 2, 5, 3, 4 };
-                if (ordnanceId == TestModule.R73OrdnanceTypeId)
-                    return new[] { 1, 6 };
-            }
-            return Array.Empty<int>();
         }
 
         private static void AppendVehicleCategory(

@@ -120,6 +120,8 @@ namespace Models.Gameplay.Campaign
             AircraftId = aircraftId;
             Loadout = loadout
                 .Select(item => new AircraftLoadoutItem(
+                    item.AircraftLoadoutStationDefinitionId,
+                    item.AircraftCarriageConfigurationDefinitionId,
                     item.OrdnanceTypeDefinitionId,
                     item.Count))
                 .ToList();

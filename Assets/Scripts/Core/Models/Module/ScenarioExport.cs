@@ -21,31 +21,67 @@ namespace Models.Module
     public sealed class ScenarioLoadoutItemSnapshot
     {
         public Guid OrdnanceTypeDefinitionId { get; }
-        public string ThirdPartyId { get; }
         public int Count { get; }
 
         public ScenarioLoadoutItemSnapshot(
             Guid ordnanceTypeDefinitionId,
-            string thirdPartyId,
             int count)
         {
             OrdnanceTypeDefinitionId = ordnanceTypeDefinitionId;
-            ThirdPartyId = thirdPartyId ?? string.Empty;
             Count = Math.Max(0, count);
+        }
+    }
+
+    public sealed class ScenarioStationLoadSnapshot
+    {
+        public Guid AircraftLoadoutStationDefinitionId { get; }
+        public string StationThirdPartyId { get; }
+        public Guid AircraftCarriageConfigurationDefinitionId { get; }
+        public string CarriageThirdPartyId { get; }
+        public IReadOnlyList<ScenarioLoadoutItemSnapshot> Contents { get; }
+        public bool IsPartiallyExpended { get; }
+
+        public ScenarioStationLoadSnapshot(
+            Guid aircraftLoadoutStationDefinitionId,
+            string stationThirdPartyId,
+            Guid aircraftCarriageConfigurationDefinitionId,
+            string carriageThirdPartyId,
+            IReadOnlyList<ScenarioLoadoutItemSnapshot> contents,
+            bool isPartiallyExpended)
+        {
+            AircraftLoadoutStationDefinitionId =
+                aircraftLoadoutStationDefinitionId;
+            StationThirdPartyId = stationThirdPartyId ?? string.Empty;
+            AircraftCarriageConfigurationDefinitionId =
+                aircraftCarriageConfigurationDefinitionId;
+            CarriageThirdPartyId = carriageThirdPartyId ?? string.Empty;
+            Contents = contents ?? Array.Empty<ScenarioLoadoutItemSnapshot>();
+            IsPartiallyExpended = isPartiallyExpended;
         }
     }
 
     public sealed class ScenarioAircraftSnapshot
     {
         public Guid AircraftId { get; }
-        public IReadOnlyList<ScenarioLoadoutItemSnapshot> Loadout { get; }
+        public IReadOnlyList<ScenarioStationLoadSnapshot> ExternalStationLoads
+        {
+            get;
+        }
+        public IReadOnlyList<ScenarioLoadoutItemSnapshot> InternalOrdnance
+        {
+            get;
+        }
 
         public ScenarioAircraftSnapshot(
             Guid aircraftId,
-            IReadOnlyList<ScenarioLoadoutItemSnapshot> loadout)
+            IReadOnlyList<ScenarioStationLoadSnapshot> externalStationLoads,
+            IReadOnlyList<ScenarioLoadoutItemSnapshot> internalOrdnance = null)
         {
             AircraftId = aircraftId;
-            Loadout = loadout ?? Array.Empty<ScenarioLoadoutItemSnapshot>();
+            ExternalStationLoads = externalStationLoads
+                                   ?? Array.Empty<ScenarioStationLoadSnapshot>();
+            InternalOrdnance = internalOrdnance
+                               ?? Array.Empty<ScenarioLoadoutItemSnapshot>();
         }
     }
 

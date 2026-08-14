@@ -70,7 +70,7 @@ public sealed class DcsAiObservationMissionExporterTests
             {
                 new ScenarioAircraftSnapshot(
                     Guid.NewGuid(),
-                    Array.Empty<ScenarioLoadoutItemSnapshot>())
+                    Array.Empty<ScenarioStationLoadSnapshot>())
             },
             Array.Empty<ScenarioWaypointSnapshot>());
     }

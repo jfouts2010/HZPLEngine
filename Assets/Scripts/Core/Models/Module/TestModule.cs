@@ -29,6 +29,52 @@ namespace Models.Module
         public static readonly Guid A50AircraftTypeId = Guid.Parse("bca85d49-3ba3-432f-a9e3-559521f4e120");
         public static readonly Guid Il78AircraftTypeId = Guid.Parse("05863902-90d7-41b0-b0b2-a7871017ae82");
 
+        public static readonly Guid F16Station1Id =
+            Guid.Parse("13a7e000-1678-4e1c-90d8-f802454a8f50");
+        public static readonly Guid F16Station2Id =
+            Guid.Parse("a4d8c828-68e2-419d-9b7a-3e89fce91848");
+        public static readonly Guid F16Station3Id =
+            Guid.Parse("f6e9bb8c-5aa7-4567-b5fd-0a1a80a45ed6");
+        public static readonly Guid F16Station4Id =
+            Guid.Parse("d2f002f5-72e0-4e5d-9687-1e8e4c03764e");
+        public static readonly Guid F16Station5Id =
+            Guid.Parse("1f50509e-e43c-4257-8182-d248d016434b");
+        public static readonly Guid F16Station6Id =
+            Guid.Parse("c1b5c399-7d72-40cf-9621-7cdb617cfbf7");
+        public static readonly Guid F16Station7Id =
+            Guid.Parse("b6d3560f-044b-4774-928f-96f11468fc79");
+        public static readonly Guid F16Station8Id =
+            Guid.Parse("73d106db-ec8f-49ad-a60a-064bdc9e22f5");
+        public static readonly Guid F16Station9Id =
+            Guid.Parse("5e6e1e94-d6ce-413a-86ac-6401601530c6");
+        public static readonly Guid Mig29Station1Id =
+            Guid.Parse("9715a229-7e4c-4706-92bc-f6b56a2169c5");
+        public static readonly Guid Mig29Station2Id =
+            Guid.Parse("bb3f67ec-f7f0-4dc0-8d0d-8391beff311c");
+        public static readonly Guid Mig29Station3Id =
+            Guid.Parse("a855f97e-fc7a-4651-a58a-b7c7d20f154e");
+        public static readonly Guid Mig29Station4Id =
+            Guid.Parse("d3f67c21-abc0-43d7-9cde-708221e1352d");
+        public static readonly Guid Mig29Station5Id =
+            Guid.Parse("31adc4f3-5b0b-4ff9-94bd-dca1f3f89fe1");
+        public static readonly Guid Mig29Station6Id =
+            Guid.Parse("eab448fa-abd3-46c2-9502-50a6677b5a0f");
+
+        public static readonly Guid F16Aim120CarriageId =
+            Guid.Parse("3e91c664-86f3-49c0-a9f0-9b291d9f2dad");
+        public static readonly Guid F16Aim9CarriageId =
+            Guid.Parse("28652ca3-cd70-4136-9d51-f179bf555347");
+        public static readonly Guid F16Agm88CarriageId =
+            Guid.Parse("77206db0-3987-48a8-8f0f-3f5cc752137f");
+        public static readonly Guid F16Gbu38CarriageId =
+            Guid.Parse("76839102-7074-461a-a956-d255f6518d9f");
+        public static readonly Guid F16Agm65CarriageId =
+            Guid.Parse("fefa5e97-57fe-415a-9cb0-05151972c3e2");
+        public static readonly Guid Mig29R27CarriageId =
+            Guid.Parse("f6cf2134-f59c-4cc1-a883-1b0e0316d437");
+        public static readonly Guid Mig29R73CarriageId =
+            Guid.Parse("08055404-439a-4e5b-9baf-f1836005ea77");
+
         public static readonly Guid Aim120OrdnanceTypeId = Guid.Parse("7486758d-565b-4a19-8d26-29dd717b0e22");
         public static readonly Guid Aim9OrdnanceTypeId = Guid.Parse("5e7975e2-09a8-46f4-bb2d-05de209b60b8");
         public static readonly Guid Agm88OrdnanceTypeId = Guid.Parse("3160216b-64bf-45b8-b245-c7ee2303864e");
@@ -139,20 +185,15 @@ namespace Models.Module
                     gunDefense: 0.7f,
                     survivability: 0.65f,
                     ordnanceCapacity: 12f,
-                    compatibleOrdnanceTypeDefinitionIds: new List<Guid>
-                    {
-                        Aim120OrdnanceTypeId,
-                        Aim9OrdnanceTypeId,
-                        Agm88OrdnanceTypeId,
-                        Gbu38OrdnanceTypeId,
-                        Agm65OrdnanceTypeId
-                    },
                     canReceiveAerialRefueling: true,
                     airInterferenceCapability: 1f,
                     internalGunOrdnanceTypeDefinitionId: M61GunOrdnanceTypeId,
                     internalGunBurstCount: 6,
                     wvrCombatRating: 0.72f,
-                    defensiveTurnRateDegreesPerSecond: 9f),
+                    defensiveTurnRateDegreesPerSecond: 9f,
+                    loadoutStations: CreateF16LoadoutStations(thirdPartyIds),
+                    carriageConfigurations:
+                    CreateF16CarriageConfigurations(thirdPartyIds)),
                 new AircraftTypeDefinition(
                     Mig29AircraftTypeId,
                     "MiG-29 Fulcrum",
@@ -173,17 +214,15 @@ namespace Models.Module
                     gunDefense: 0.72f,
                     survivability: 0.7f,
                     ordnanceCapacity: 10f,
-                    compatibleOrdnanceTypeDefinitionIds: new List<Guid>
-                    {
-                        R27OrdnanceTypeId,
-                        R73OrdnanceTypeId
-                    },
                     canReceiveAerialRefueling: true,
                     airInterferenceCapability: 0.95f,
                     internalGunOrdnanceTypeDefinitionId: Gsh301GunOrdnanceTypeId,
                     internalGunBurstCount: 5,
                     wvrCombatRating: 0.74f,
-                    defensiveTurnRateDegreesPerSecond: 9.6f),
+                    defensiveTurnRateDegreesPerSecond: 9.6f,
+                    loadoutStations: CreateMig29LoadoutStations(thirdPartyIds),
+                    carriageConfigurations:
+                    CreateMig29CarriageConfigurations(thirdPartyIds)),
                 new AircraftTypeDefinition(
                     E3AircraftTypeId,
                     "E-3 Sentry",
@@ -273,6 +312,150 @@ namespace Models.Module
                     supportSlotCapacity: 8,
                     wvrCombatRating: 0.05f)
             };
+        }
+
+        private static List<AircraftCarriageConfigurationDefinition>
+            CreateF16CarriageConfigurations(
+                IReadOnlyDictionary<Guid, string> thirdPartyIds)
+        {
+            return new List<AircraftCarriageConfigurationDefinition>
+            {
+                SingleStoreCarriage(
+                    F16Aim120CarriageId,
+                    "Single AIM-120",
+                    Aim120OrdnanceTypeId,
+                    1f,
+                    thirdPartyIds),
+                SingleStoreCarriage(
+                    F16Aim9CarriageId,
+                    "Single AIM-9",
+                    Aim9OrdnanceTypeId,
+                    0.75f,
+                    thirdPartyIds),
+                SingleStoreCarriage(
+                    F16Agm88CarriageId,
+                    "Single AGM-88",
+                    Agm88OrdnanceTypeId,
+                    3f,
+                    thirdPartyIds),
+                SingleStoreCarriage(
+                    F16Gbu38CarriageId,
+                    "Single GBU-38",
+                    Gbu38OrdnanceTypeId,
+                    2f,
+                    thirdPartyIds),
+                SingleStoreCarriage(
+                    F16Agm65CarriageId,
+                    "Single AGM-65",
+                    Agm65OrdnanceTypeId,
+                    2f,
+                    thirdPartyIds)
+            };
+        }
+
+        private static List<AircraftLoadoutStationDefinition>
+            CreateF16LoadoutStations(
+                IReadOnlyDictionary<Guid, string> thirdPartyIds)
+        {
+            return new List<AircraftLoadoutStationDefinition>
+            {
+                Station(F16Station1Id, 1, F16Station9Id, thirdPartyIds,
+                    F16Aim120CarriageId, F16Aim9CarriageId),
+                Station(F16Station2Id, 2, F16Station8Id, thirdPartyIds,
+                    F16Aim9CarriageId),
+                Station(F16Station3Id, 3, F16Station7Id, thirdPartyIds,
+                    F16Agm88CarriageId, F16Gbu38CarriageId,
+                    F16Agm65CarriageId, F16Aim120CarriageId),
+                Station(F16Station4Id, 4, F16Station6Id, thirdPartyIds,
+                    F16Aim120CarriageId),
+                Station(F16Station5Id, 5, Guid.Empty, thirdPartyIds),
+                Station(F16Station6Id, 6, F16Station4Id, thirdPartyIds,
+                    F16Aim120CarriageId),
+                Station(F16Station7Id, 7, F16Station3Id, thirdPartyIds,
+                    F16Agm88CarriageId, F16Gbu38CarriageId,
+                    F16Agm65CarriageId, F16Aim120CarriageId),
+                Station(F16Station8Id, 8, F16Station2Id, thirdPartyIds,
+                    F16Aim9CarriageId),
+                Station(F16Station9Id, 9, F16Station1Id, thirdPartyIds,
+                    F16Aim120CarriageId, F16Aim9CarriageId)
+            };
+        }
+
+        private static List<AircraftCarriageConfigurationDefinition>
+            CreateMig29CarriageConfigurations(
+                IReadOnlyDictionary<Guid, string> thirdPartyIds)
+        {
+            return new List<AircraftCarriageConfigurationDefinition>
+            {
+                SingleStoreCarriage(
+                    Mig29R27CarriageId,
+                    "Single R-27",
+                    R27OrdnanceTypeId,
+                    1.25f,
+                    thirdPartyIds),
+                SingleStoreCarriage(
+                    Mig29R73CarriageId,
+                    "Single R-73",
+                    R73OrdnanceTypeId,
+                    0.75f,
+                    thirdPartyIds)
+            };
+        }
+
+        private static List<AircraftLoadoutStationDefinition>
+            CreateMig29LoadoutStations(
+                IReadOnlyDictionary<Guid, string> thirdPartyIds)
+        {
+            return new List<AircraftLoadoutStationDefinition>
+            {
+                Station(Mig29Station1Id, 1, Mig29Station6Id, thirdPartyIds,
+                    Mig29R73CarriageId),
+                Station(Mig29Station2Id, 2, Mig29Station5Id, thirdPartyIds,
+                    Mig29R27CarriageId),
+                Station(Mig29Station3Id, 3, Mig29Station4Id, thirdPartyIds,
+                    Mig29R27CarriageId),
+                Station(Mig29Station4Id, 4, Mig29Station3Id, thirdPartyIds,
+                    Mig29R27CarriageId),
+                Station(Mig29Station5Id, 5, Mig29Station2Id, thirdPartyIds,
+                    Mig29R27CarriageId),
+                Station(Mig29Station6Id, 6, Mig29Station1Id, thirdPartyIds,
+                    Mig29R73CarriageId)
+            };
+        }
+
+        private static AircraftCarriageConfigurationDefinition
+            SingleStoreCarriage(
+                Guid configurationId,
+                string name,
+                Guid ordnanceId,
+                float externalLoadCost,
+                IReadOnlyDictionary<Guid, string> thirdPartyIds)
+        {
+            return new AircraftCarriageConfigurationDefinition(
+                configurationId,
+                name,
+                externalLoadCost,
+                new[]
+                {
+                    new AircraftCarriageOrdnanceDefinition(ordnanceId, 1)
+                },
+                GetThirdPartyId(thirdPartyIds, configurationId));
+        }
+
+        private static AircraftLoadoutStationDefinition Station(
+            Guid stationId,
+            int number,
+            Guid mirrorStationId,
+            IReadOnlyDictionary<Guid, string> thirdPartyIds,
+            params Guid[] compatibleConfigurations)
+        {
+            return new AircraftLoadoutStationDefinition(
+                stationId,
+                $"Station {number}",
+                number,
+                compatibleConfigurations,
+                mirrorStationId,
+                GetThirdPartyId(thirdPartyIds, stationId));
         }
 
         private static List<OrdnanceTypeDefinition> CreateOrdnanceTypeDefinitions(

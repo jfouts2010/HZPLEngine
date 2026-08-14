@@ -3360,8 +3360,6 @@ namespace Engine.Monobehaviours.Managers
             var lines = new List<string> { "CURRENT ORDNANCE" };
             var currentLoadout = aircraft.Loadout
                 .Where(item => item.Count > 0)
-                .OrderBy(item => GetOrdnanceName(
-                    item.OrdnanceTypeDefinitionId))
                 .ToList();
             if (currentLoadout.Count == 0)
             {
@@ -3369,8 +3367,47 @@ namespace Engine.Monobehaviours.Managers
             }
             else
             {
-                lines.AddRange(currentLoadout.Select(item =>
-                    $"  {GetOrdnanceName(item.OrdnanceTypeDefinitionId)} ×{item.Count}"));
+                var aircraftType = GetAircraftType(
+                    aircraft.AircraftTypeDefinitionId);
+                var stations = aircraftType?.LoadoutStations.ToDictionary(
+                    station => station.AircraftLoadoutStationDefinitionId)
+                               ?? new Dictionary<Guid,
+                                   AircraftLoadoutStationDefinition>();
+                foreach (var stationLoad in currentLoadout
+                             .Where(item => item
+                                                .AircraftLoadoutStationDefinitionId
+                                            != Guid.Empty)
+                             .GroupBy(item => item
+                                 .AircraftLoadoutStationDefinitionId)
+                             .OrderBy(group => stations.TryGetValue(
+                                 group.Key,
+                                 out var station)
+                                 ? station.SortOrder
+                                 : int.MaxValue)
+                             .ThenBy(group => group.Key))
+                {
+                    var stationName = stations.TryGetValue(
+                        stationLoad.Key,
+                        out var station)
+                        ? station.Name
+                        : stationLoad.Key.ToString();
+                    var contents = string.Join(
+                        ", ",
+                        stationLoad
+                            .OrderBy(item => GetOrdnanceName(
+                                item.OrdnanceTypeDefinitionId))
+                            .Select(item =>
+                                $"{GetOrdnanceName(item.OrdnanceTypeDefinitionId)} ×{item.Count}"));
+                    lines.Add($"  {stationName}: {contents}");
+                }
+
+                lines.AddRange(currentLoadout
+                    .Where(item => item.AircraftLoadoutStationDefinitionId
+                                   == Guid.Empty)
+                    .OrderBy(item => GetOrdnanceName(
+                        item.OrdnanceTypeDefinitionId))
+                    .Select(item =>
+                        $"  Internal: {GetOrdnanceName(item.OrdnanceTypeDefinitionId)} ×{item.Count}"));
             }
 
             var spentLaunches = gameManager.GetOrdnanceEmploymentRecords()

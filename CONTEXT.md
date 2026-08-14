@@ -83,7 +83,8 @@ A campaign or catalog entity that carries a **third-party ID** so the sim adapte
 - Ground unit / vehicle types (when they may appear in an exported scene)
 - Infrastructure that can appear in an exported scene (bridges, runways, fuel depots, and similar)
 - Map / theater binding for the campaign template
-- Weapon / ordnance types when the target simulator needs explicit loadout or store IDs
+- Aircraft loadout stations and carriage configurations when the target simulator needs explicit pylon and payload IDs
+- Ordnance types only when the target simulator needs a munition identity independent of its mounted payload configuration
 
 **Does not require third-party ID:**
 
@@ -206,7 +207,7 @@ _Avoid_: using a projected incoming defender to justify pulling the last physica
 
 **Aircraft type** — reusable authored identity and capability data for one aircraft model or variant in a Module catalog. Aircraft type definitions are not country-scoped; a campaign template gives an aircraft type to a country by creating a squadron for that country that uses the aircraft type.
 
-Aircraft type capability data includes flight performance, range and endurance, sensors and defensive qualities, ordnance capacity and compatibility, and explicit support capabilities where applicable. Required point-mass performance consists of cruise and combat speed in knots, climb and descent rate in feet per minute, normal and defensive turn rate in degrees per second, and nominal cruise altitude and service ceiling in feet; these values are authored per aircraft type rather than inferred from mission role. Beam, break, and drag maneuvers use the defensive turn rate, which defaults to the normal turn rate when not separately authored and cannot be authored below it. The third-party ID remains an opaque export mapping rather than a source of campaign capability.
+Aircraft type capability data includes flight performance, range and endurance, sensors and defensive qualities, external-load capacity, loadout stations and their legal carriage configurations, and explicit support capabilities where applicable. Required point-mass performance consists of cruise and combat speed in knots, climb and descent rate in feet per minute, normal and defensive turn rate in degrees per second, and nominal cruise altitude and service ceiling in feet; these values are authored per aircraft type rather than inferred from mission role. Beam, break, and drag maneuvers use the defensive turn rate, which defaults to the normal turn rate when not separately authored and cannot be authored below it. The third-party ID remains an opaque export mapping rather than a source of campaign capability.
 
 **Aircraft radar quality** is the normalized quality of an aircraft type's own radar and contributes only when that aircraft is sensing, tracking, or supporting weapon employment against another target.
 
@@ -238,9 +239,9 @@ _Avoid_: fixed BARCAP, OCA, or DEAD aircraft-role labels when suitability can be
 
 ### Ordnance
 
-**Ordnance type** — reusable authored identity data for one munition, store, gun-burst profile, or SAM interceptor in a Module catalog, such as AIM-120, GBU-38, AGM-88, an internal cannon burst, or a SAM interceptor. Its employment category, target effectiveness, and platform compatibility distinguish its uses while allowing all employment to share envelope, guidance, hit-probability, travel, and effect language. Ordnance types are mappable entities when the target simulator needs explicit loadout or munition IDs.
+**Ordnance type** — reusable authored identity data for one munition, store, gun-burst profile, or SAM interceptor in a Module catalog, such as AIM-120, GBU-38, AGM-88, an internal cannon burst, or a SAM interceptor. Its employment category, target effectiveness, and derived platform compatibility distinguish its uses while allowing all employment to share envelope, guidance, hit-probability, travel, and effect language. An ordnance type may carry an opaque third-party munition identity for import or event correlation, but an aircraft payload or rack ID belongs to its carriage configuration.
 
-**Ordnance weight** — the capacity cost of one selectable external store on an aircraft loadout. Mixed external loadouts are valid when the sum of carried ordnance weights is within the aircraft type's **ordnance capacity**. Fixed internal gun inventory is excluded.
+**Ordnance weight** — the default capacity cost of one munition when evaluating or constructing an external carriage configuration. A carriage configuration authors its complete external-load cost so racks, adapters, and multi-store configurations are counted once. Fixed internal gun inventory is excluded.
 
 **Ordnance effect power** — the coarse campaign effect strength of one store. Effect power is the v1 stat used to decide whether ordnance can meaningfully affect a target's toughness. It may correlate with warhead size or explosive power, but it is an authored campaign abstraction rather than exact physics.
 
@@ -274,9 +275,9 @@ _Avoid_: fixed BARCAP, OCA, or DEAD aircraft-role labels when suitability can be
 
 **Ordnance employment record** — a typed campaign record for one explainable stage of employment: preparation started, ordnance released, or effect resolved. All three stages are retained for timelines and debugging; ordinary player-facing presentation emphasizes releases and resolved effects rather than every preparation start.
 
-**Ordnance capacity** — the maximum total selectable external-ordnance weight an aircraft type may carry. Aircraft type definitions own ordnance capacity and a compatible ordnance allow-list. A store may be loaded only if it is on that aircraft type's allow-list and the external loadout stays within ordnance capacity. Fixed internal guns remain compatible ordnance but do not consume this capacity.
+**Ordnance capacity** — the maximum total external-load cost an aircraft type may carry. It is a whole-aircraft constraint after station legality is satisfied, not proof that a store can be mounted. Fixed internal guns do not consume this capacity.
 
-_Avoid_: bidirectional aircraft–ordnance compatibility lists that must be kept in sync on both ordnance and aircraft definitions.
+_Avoid_: separate aircraft–ordnance compatibility lists. Aircraft compatibility is derived from the ordnance contents of the carriage configurations permitted on its loadout stations.
 
 **Ordnance target category** — the class of target a store is evaluated against. Ordnance capability is expressed as **ordnance effectiveness** ratings per target category, not per mission role.
 
@@ -323,11 +324,13 @@ Campaign aircraft start empty in v1. They receive a loadout when assigned to a s
 
 When a campaign aircraft lands at the end of a sortie in v1, its flight assignment and loadout are cleared and an undamaged survivor becomes ready immediately. The next sortie assignment generates a fresh loadout, and the package preparation delay is the only turnaround abstraction; future maintenance, supply, and recovery rules may add downtime or return unused ordnance to available stock.
 
-**Aircraft loadout** — the ordnance physically carried by one campaign aircraft at a given moment, including remaining counts after expenditure. The core engine uses loadout state to know what that aircraft can still employ during autonomous simulation and, later, what to place on export.
+**Aircraft loadout station** — one stable, aircraft-type-owned external mounting location. A station is simulator-neutral and has a stable HZPL identity, authoring order, optional mirror station, and an allow-list of carriage configurations. A sim Module may map it to an opaque third-party station ID such as a DCS pylon number. Station identity does not model per-aircraft geometry or maneuver state.
 
-In v1, a loadout is an abstract count per ordnance type, such as four AIM-120 and two AGM-88, with no pylon or station geometry. Pylon placement for third-party export is deferred to the sim adapter.
+**Aircraft carriage configuration** — one complete external installation that can occupy a loadout station, such as a missile on a rail or several weapons on a rack. It owns the carried ordnance types and full counts, external-load cost, and an optional opaque third-party payload ID. A third-party payload ID belongs to the carriage configuration rather than the ordnance type because the simulator representation may include rails, racks, adapters, and quantity.
 
-A loadout must satisfy the aircraft type's ordnance capacity: the sum of each carried store's ordnance weight may not exceed that aircraft's ordnance capacity. Each carried store must also be on that aircraft type's compatible ordnance allow-list and allowed for the aircraft's alliance.
+**Aircraft loadout** — the station-assigned external ordnance and installed internal ordnance physically carried by one campaign aircraft at a given moment, including remaining counts after expenditure. External station assignments are authoritative; aggregate counts by ordnance type are derived views used by campaign combat. Internal guns remain stationless installed inventory.
+
+A planned external loadout chooses at most one carriage configuration per station. Every choice must be legal for that station, every contained ordnance type must be allowed for the aircraft's alliance, and the sum of configuration external-load costs must not exceed aircraft ordnance capacity. Planning determines desired mission inventory and then selects legal station configurations; export translates those exact assignments and must not guess placement or silently omit stores.
 
 **Mission-useful ordnance** — the carried ordnance that can still contribute to a flight's assigned mission effect. Time-based air-combat missions such as barrier combat air patrols and offensive counter-air sweeps become unable to continue their mission when no air-to-air mission-useful ordnance remains; support missions such as airborne C2 and aerial refueling do not depend on ordnance.
 

@@ -115,7 +115,6 @@ namespace Engine.Service
                 .Where(ordnance => ordnance != null)
                 .ToList();
             var counts = new Dictionary<Guid, int>();
-            var remainingCapacity = aircraftType.OrdnanceCapacity;
 
             var internalGun = compatible.FirstOrDefault(ordnance =>
                 ordnance.OrdnanceTypeDefinitionId
@@ -136,9 +135,9 @@ namespace Engine.Service
             if (requireSelfDefense)
             {
                 AddSelfDefenseStores(
+                    aircraftType,
                     counts,
                     airToAirCandidates,
-                    ref remainingCapacity,
                     ref selfDefenseShots);
                 if (selfDefenseShots < AirLoadoutPlanner.MinimumAirCombatShots
                     && internalGun != null
@@ -167,14 +166,14 @@ namespace Engine.Service
             foreach (var attack in attackSequence)
             {
                 var selected = SelectGroundStore(
+                    aircraftType,
+                    counts,
                     compatible,
-                    attack.Target.Definition,
-                    remainingCapacity);
+                    attack.Target.Definition);
                 if (selected == null)
                     continue;
 
                 Add(counts, selected.OrdnanceTypeDefinitionId, 1);
-                remainingCapacity -= selected.Weight;
                 if (attack.Required)
                     minimumEffectStores++;
                 else
@@ -193,22 +192,28 @@ namespace Engine.Service
                 // DEAD effect therefore receives first claim on capacity, while
                 // any remaining capacity may still provide organic protection.
                 AddSelfDefenseStores(
+                    aircraftType,
                     counts,
                     airToAirCandidates,
-                    ref remainingCapacity,
                     ref selfDefenseShots);
+            }
+
+            if (!AircraftLoadoutStationPlanner.TryFitExact(
+                    aircraftType,
+                    counts,
+                    out var loadout,
+                    out var stationReason))
+            {
+                reason = stationReason;
+                return false;
             }
 
             if (internalGun != null && aircraftType.InternalGunBurstCount > 0)
             {
-                counts[internalGun.OrdnanceTypeDefinitionId] =
-                    aircraftType.InternalGunBurstCount;
+                loadout.Add(new AircraftLoadoutItem(
+                    internalGun.OrdnanceTypeDefinitionId,
+                    aircraftType.InternalGunBurstCount));
             }
-
-            var loadout = counts
-                .OrderBy(entry => entry.Key)
-                .Select(entry => new AircraftLoadoutItem(entry.Key, entry.Value))
-                .ToList();
             var actualSelfDefenseShots = loadout
                 .Where(item => item.Count > 0
                                && ordnanceTypes.TryGetValue(
@@ -227,34 +232,39 @@ namespace Engine.Service
         }
 
         private static void AddSelfDefenseStores(
-            IDictionary<Guid, int> counts,
+            AircraftTypeDefinition aircraftType,
+            Dictionary<Guid, int> counts,
             IReadOnlyList<OrdnanceTypeDefinition> candidates,
-            ref float remainingCapacity,
             ref int selfDefenseShots)
         {
             while (selfDefenseShots < AirLoadoutPlanner.MinimumAirCombatShots)
             {
-                var availableCapacity = remainingCapacity;
                 var selected = candidates.FirstOrDefault(
-                    ordnance => ordnance.Weight <= availableCapacity);
+                    ordnance => CanFitWithAdditionalStore(
+                        aircraftType,
+                        counts,
+                        ordnance.OrdnanceTypeDefinitionId));
                 if (selected == null)
                     return;
 
                 Add(counts, selected.OrdnanceTypeDefinitionId, 1);
-                remainingCapacity -= selected.Weight;
                 selfDefenseShots++;
             }
         }
 
         private OrdnanceTypeDefinition SelectGroundStore(
+            AircraftTypeDefinition aircraftType,
+            IReadOnlyDictionary<Guid, int> counts,
             IReadOnlyList<OrdnanceTypeDefinition> compatible,
-            AirDefenseComponentDefinition target,
-            float remainingCapacity)
+            AirDefenseComponentDefinition target)
         {
             return compatible
                 .Where(ordnance => ordnance.EmploymentCategory
                                    != OrdnanceEmploymentCategory.Gun
-                                   && ordnance.Weight <= remainingCapacity
+                                   && CanFitWithAdditionalStore(
+                                       aircraftType,
+                                       counts,
+                                       ordnance.OrdnanceTypeDefinitionId)
                                    && CanAttackComponent(ordnance, target))
                 .OrderByDescending(ordnance =>
                     target.TargetCategory == OrdnanceTargetCategory.Radar
@@ -266,6 +276,22 @@ namespace Engine.Service
                 .ThenBy(ordnance => ordnance.Weight)
                 .ThenBy(ordnance => ordnance.OrdnanceTypeDefinitionId)
                 .FirstOrDefault();
+        }
+
+        private static bool CanFitWithAdditionalStore(
+            AircraftTypeDefinition aircraftType,
+            IReadOnlyDictionary<Guid, int> counts,
+            Guid ordnanceTypeDefinitionId)
+        {
+            var candidateCounts = counts.ToDictionary(
+                entry => entry.Key,
+                entry => entry.Value);
+            Add(candidateCounts, ordnanceTypeDefinitionId, 1);
+            return AircraftLoadoutStationPlanner.TryFitExact(
+                aircraftType,
+                candidateCounts,
+                out _,
+                out _);
         }
 
         private static int GetTargetPriority(

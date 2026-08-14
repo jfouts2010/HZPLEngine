@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace Models.Module
 {
@@ -47,6 +48,51 @@ namespace Models.Module
             SamSiteTemplates = samSiteTemplates;
             BattalionDefinitions = battalionDefinitions;
             DivisionTemplates = divisionTemplates;
+            ValidateAircraftLoadoutCatalog();
+        }
+
+        private void ValidateAircraftLoadoutCatalog()
+        {
+            if (AircraftTypeDefinitions == null
+                || OrdnanceTypeDefinitions == null)
+                return;
+
+            var ordnanceById = OrdnanceTypeDefinitions.ToDictionary(
+                definition => definition.OrdnanceTypeDefinitionId);
+            foreach (var aircraftType in AircraftTypeDefinitions)
+            {
+                foreach (var content in aircraftType.CarriageConfigurations
+                             .SelectMany(configuration => configuration.Contents))
+                {
+                    if (!ordnanceById.TryGetValue(
+                            content.OrdnanceTypeDefinitionId,
+                            out var ordnance))
+                    {
+                        throw new ArgumentException(
+                            $"Aircraft type {aircraftType.AircraftTypeDefinitionId} carriage configuration references unknown ordnance {content.OrdnanceTypeDefinitionId}.");
+                    }
+                    if (ordnance.EmploymentCategory
+                        == OrdnanceEmploymentCategory.Gun
+                        || ordnance.EmploymentCategory
+                        == OrdnanceEmploymentCategory.SurfaceToAir)
+                    {
+                        throw new ArgumentException(
+                            $"Aircraft type {aircraftType.AircraftTypeDefinitionId} carriage configuration contains non-external ordnance {content.OrdnanceTypeDefinitionId}.");
+                    }
+                }
+
+                if (aircraftType.InternalGunOrdnanceTypeDefinitionId == Guid.Empty)
+                    continue;
+                if (!ordnanceById.TryGetValue(
+                        aircraftType.InternalGunOrdnanceTypeDefinitionId,
+                        out var internalGun)
+                    || internalGun.EmploymentCategory
+                    != OrdnanceEmploymentCategory.Gun)
+                {
+                    throw new ArgumentException(
+                        $"Aircraft type {aircraftType.AircraftTypeDefinitionId} has an invalid internal-gun ordnance reference.");
+                }
+            }
         }
     }
 }

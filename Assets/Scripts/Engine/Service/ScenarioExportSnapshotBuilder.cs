@@ -88,9 +88,6 @@ namespace Engine.Service
             var aircraftTypes = (module.AircraftTypeDefinitions
                                  ?? new List<AircraftTypeDefinition>())
                 .ToDictionary(definition => definition.AircraftTypeDefinitionId);
-            var ordnanceTypes = (module.OrdnanceTypeDefinitions
-                                ?? new List<OrdnanceTypeDefinition>())
-                .ToDictionary(definition => definition.OrdnanceTypeDefinitionId);
             var airportIds = airports.ToDictionary(
                 airport => airport.BuildingId,
                 airport => airport.ThirdPartyId);
@@ -133,22 +130,85 @@ namespace Engine.Service
                         continue;
                     }
 
-                    var loadout = new List<ScenarioLoadoutItemSnapshot>();
-                    foreach (var item in campaignAircraft.Loadout
-                                 .Where(item => item != null && item.Count > 0))
+                    var stations = aircraftType.LoadoutStations.ToDictionary(
+                        station => station.AircraftLoadoutStationDefinitionId);
+                    var configurations = aircraftType.CarriageConfigurations
+                        .ToDictionary(configuration => configuration
+                            .AircraftCarriageConfigurationDefinitionId);
+                    var stationLoads = new List<ScenarioStationLoadSnapshot>();
+                    foreach (var stationGroup in campaignAircraft.Loadout
+                                 .Where(item => item != null
+                                                && item.Count > 0
+                                                && item
+                                                    .AircraftLoadoutStationDefinitionId
+                                                != Guid.Empty)
+                                 .GroupBy(item => item
+                                     .AircraftLoadoutStationDefinitionId))
                     {
-                        ordnanceTypes.TryGetValue(
-                            item.OrdnanceTypeDefinitionId,
-                            out var ordnanceType);
-                        loadout.Add(new ScenarioLoadoutItemSnapshot(
-                            item.OrdnanceTypeDefinitionId,
-                            ordnanceType?.ThirdPartyId ?? string.Empty,
-                            item.Count));
+                        if (!stations.TryGetValue(stationGroup.Key, out var station))
+                        {
+                            throw new InvalidOperationException(
+                                $"Aircraft {campaignAircraft.AircraftId} has an unknown loadout station.");
+                        }
+
+                        var configurationIds = stationGroup
+                            .Select(item => item
+                                .AircraftCarriageConfigurationDefinitionId)
+                            .Distinct()
+                            .ToList();
+                        if (configurationIds.Count != 1
+                            || !configurations.TryGetValue(
+                                configurationIds[0],
+                                out var configuration)
+                            || !station
+                                .CompatibleCarriageConfigurationDefinitionIds
+                                .Contains(configurationIds[0]))
+                        {
+                            throw new InvalidOperationException(
+                                $"Aircraft {campaignAircraft.AircraftId} has an invalid station carriage configuration.");
+                        }
+
+                        var contents = stationGroup
+                            .GroupBy(item => item.OrdnanceTypeDefinitionId)
+                            .Select(group => new ScenarioLoadoutItemSnapshot(
+                                group.Key,
+                                group.Sum(item => item.Count)))
+                            .OrderBy(item => item.OrdnanceTypeDefinitionId)
+                            .ToList();
+                        var currentCounts = contents.ToDictionary(
+                            item => item.OrdnanceTypeDefinitionId,
+                            item => item.Count);
+                        var partiallyExpended = configuration.Contents.Any(
+                            content => !currentCounts.TryGetValue(
+                                           content.OrdnanceTypeDefinitionId,
+                                           out var count)
+                                       || count != content.Count)
+                                                || currentCounts.Count
+                                                != configuration.Contents.Count;
+                        stationLoads.Add(new ScenarioStationLoadSnapshot(
+                            station.AircraftLoadoutStationDefinitionId,
+                            station.ThirdPartyId,
+                            configuration
+                                .AircraftCarriageConfigurationDefinitionId,
+                            configuration.ThirdPartyId,
+                            contents,
+                            partiallyExpended));
                     }
+
+                    var internalOrdnance = campaignAircraft.Loadout
+                        .Where(item => item != null
+                                       && item.Count > 0
+                                       && item.AircraftLoadoutStationDefinitionId
+                                       == Guid.Empty)
+                        .Select(item => new ScenarioLoadoutItemSnapshot(
+                            item.OrdnanceTypeDefinitionId,
+                            item.Count))
+                        .ToList();
 
                     aircraft.Add(new ScenarioAircraftSnapshot(
                         campaignAircraft.AircraftId,
-                        loadout));
+                        stationLoads,
+                        internalOrdnance));
                 }
 
                 if (aircraft.Count == 0)

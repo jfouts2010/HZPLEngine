@@ -32,43 +32,29 @@ namespace Engine.Service
             loadout = new List<AircraftLoadoutItem>();
             reason = string.Empty;
 
-            var compatible = aircraftType.CompatibleOrdnanceTypeDefinitionIds;
             var allowed = new HashSet<Guid>(
                 allowedOrdnanceForAlliance(alliance));
-            var candidates = compatible
-                .Where(allowed.Contains)
-                .Select(ordnanceTypeId =>
-                    ordnanceTypes.TryGetValue(ordnanceTypeId, out var ordnanceType)
-                        ? ordnanceType
-                        : null)
-                .Where(ordnanceType => ordnanceType != null
-                                       && IsAirToAir(ordnanceType)
-                                       && ordnanceType.EmploymentCategory
-                                       != OrdnanceEmploymentCategory.Gun
-                                       && ordnanceType.GetEffectiveness(
-                                           OrdnanceTargetCategory.Aircraft) > 0f
-                                       && ordnanceType.Weight <= aircraftType.OrdnanceCapacity)
-                .OrderByDescending(ordnanceType =>
-                    ordnanceType.GetEffectiveness(OrdnanceTargetCategory.Aircraft))
-                .ThenBy(ordnanceType => ordnanceType.Weight)
-                .ThenBy(ordnanceType => ordnanceType.OrdnanceTypeDefinitionId)
-                .ToList();
+            var hasExternalCandidate = aircraftType.CarriageConfigurations.Any(
+                configuration => IsAirCombatConfiguration(configuration, allowed));
 
             var internalGun = GetInternalGun(
                 aircraftType,
                 allowed);
-            if (candidates.Count == 0 && internalGun == null)
+            if (!hasExternalCandidate && internalGun == null)
             {
                 reason = "No allowed compatible air-to-air ordnance is available.";
                 return false;
             }
 
-            var best = candidates.Count == 0
+            var best = !hasExternalCandidate
                 ? null
-                : FindBestAirCombatLoadout(candidates, aircraftType.OrdnanceCapacity);
-            loadout = best?.CountByOrdnance
-                .OrderBy(entry => entry.Key)
-                .Select(entry => new AircraftLoadoutItem(entry.Key, entry.Value))
+                : FindBestAirCombatLoadout(aircraftType, allowed);
+            loadout = best?.Items
+                .Select(item => new AircraftLoadoutItem(
+                    item.AircraftLoadoutStationDefinitionId,
+                    item.AircraftCarriageConfigurationDefinitionId,
+                    item.OrdnanceTypeDefinitionId,
+                    item.Count))
                 .ToList()
                 ?? new List<AircraftLoadoutItem>();
             if (internalGun != null)
@@ -119,11 +105,8 @@ namespace Engine.Service
             if (loadout == null || loadout.Count == 0)
                 return true;
 
-            var compatible = new HashSet<Guid>(
-                aircraftType.CompatibleOrdnanceTypeDefinitionIds);
             var allowed = new HashSet<Guid>(
                 allowedOrdnanceForAlliance(alliance));
-            var totalWeight = 0f;
             var internalGunItems = 0;
             foreach (var item in loadout)
             {
@@ -143,12 +126,6 @@ namespace Engine.Service
                     return false;
                 }
 
-                if (!compatible.Contains(item.OrdnanceTypeDefinitionId))
-                {
-                    reason = "A planned loadout contains incompatible ordnance.";
-                    return false;
-                }
-
                 if (!allowed.Contains(item.OrdnanceTypeDefinitionId))
                 {
                     reason = "A planned loadout contains ordnance not allowed for its alliance.";
@@ -163,6 +140,13 @@ namespace Engine.Service
                     if (!isInternalGun)
                     {
                         reason = "A planned loadout contains a gun not installed on its aircraft.";
+                        return false;
+                    }
+                    if (item.AircraftLoadoutStationDefinitionId != Guid.Empty
+                        || item.AircraftCarriageConfigurationDefinitionId
+                        != Guid.Empty)
+                    {
+                        reason = "Internal-gun inventory cannot occupy an external loadout station.";
                         return false;
                     }
 
@@ -181,7 +165,13 @@ namespace Engine.Service
                     return false;
                 }
 
-                totalWeight += ordnanceType.Weight * item.Count;
+                if (item.AircraftLoadoutStationDefinitionId == Guid.Empty
+                    || item.AircraftCarriageConfigurationDefinitionId
+                    == Guid.Empty)
+                {
+                    reason = "External ordnance must identify its loadout station and carriage configuration.";
+                    return false;
+                }
             }
 
             var requiresInternalGun =
@@ -195,7 +185,57 @@ namespace Engine.Service
                 return false;
             }
 
-            if (totalWeight > aircraftType.OrdnanceCapacity)
+            var stations = aircraftType.LoadoutStations.ToDictionary(
+                station => station.AircraftLoadoutStationDefinitionId);
+            var configurations = aircraftType.CarriageConfigurations.ToDictionary(
+                configuration => configuration
+                    .AircraftCarriageConfigurationDefinitionId);
+            var totalLoadCost = 0f;
+            foreach (var stationLoad in loadout
+                         .Where(item => item.AircraftLoadoutStationDefinitionId
+                                        != Guid.Empty)
+                         .GroupBy(item => item.AircraftLoadoutStationDefinitionId))
+            {
+                if (!stations.TryGetValue(stationLoad.Key, out var station))
+                {
+                    reason = "A planned loadout references an unknown aircraft station.";
+                    return false;
+                }
+
+                var configurationIds = stationLoad
+                    .Select(item => item.AircraftCarriageConfigurationDefinitionId)
+                    .Distinct()
+                    .ToList();
+                if (configurationIds.Count != 1
+                    || !configurations.TryGetValue(
+                        configurationIds[0],
+                        out var configuration)
+                    || !station.CompatibleCarriageConfigurationDefinitionIds.Contains(
+                        configurationIds[0]))
+                {
+                    reason = "A planned loadout uses an invalid carriage configuration for its station.";
+                    return false;
+                }
+
+                var actualContents = stationLoad
+                    .GroupBy(item => item.OrdnanceTypeDefinitionId)
+                    .ToDictionary(group => group.Key, group => group.Sum(item => item.Count));
+                var expectedContents = configuration.Contents.ToDictionary(
+                    content => content.OrdnanceTypeDefinitionId,
+                    content => content.Count);
+                if (actualContents.Count != expectedContents.Count
+                    || actualContents.Any(entry =>
+                        !expectedContents.TryGetValue(entry.Key, out var expected)
+                        || entry.Value != expected))
+                {
+                    reason = "A planned station load does not match its carriage configuration contents.";
+                    return false;
+                }
+
+                totalLoadCost += configuration.ExternalLoadCost;
+            }
+
+            if (totalLoadCost > aircraftType.OrdnanceCapacity)
             {
                 reason = "A planned loadout exceeds aircraft ordnance capacity.";
                 return false;
@@ -231,47 +271,102 @@ namespace Engine.Service
             return gun;
         }
 
-        private static PlannedLoadout FindBestAirCombatLoadout(
-            IReadOnlyList<OrdnanceTypeDefinition> candidates,
-            float capacity)
+        private bool IsAirCombatConfiguration(
+            AircraftCarriageConfigurationDefinition configuration,
+            ISet<Guid> allowed)
         {
+            return configuration.Contents.All(content =>
+                allowed.Contains(content.OrdnanceTypeDefinitionId)
+                && ordnanceTypes.TryGetValue(
+                    content.OrdnanceTypeDefinitionId,
+                    out var ordnance)
+                && ordnance.EmploymentCategory != OrdnanceEmploymentCategory.Gun
+                && IsAirToAir(ordnance)
+                && ordnance.GetEffectiveness(
+                    OrdnanceTargetCategory.Aircraft) > 0f);
+        }
+
+        private PlannedLoadout FindBestAirCombatLoadout(
+            AircraftTypeDefinition aircraftType,
+            ISet<Guid> allowed)
+        {
+            var configurations = aircraftType.CarriageConfigurations.ToDictionary(
+                configuration => configuration
+                    .AircraftCarriageConfigurationDefinitionId);
+            var stations = AircraftLoadoutStationPlanner.OrderForPlanning(
+                aircraftType.LoadoutStations);
             var best = new PlannedLoadout();
-            Search(candidates, capacity, 0, new PlannedLoadout(), ref best);
+            Search(
+                stations,
+                configurations,
+                allowed,
+                aircraftType.OrdnanceCapacity,
+                0,
+                new PlannedLoadout(),
+                ref best);
             return best.TotalShots == 0 ? null : best;
         }
 
-        private static void Search(
-            IReadOnlyList<OrdnanceTypeDefinition> candidates,
+        private void Search(
+            IReadOnlyList<AircraftLoadoutStationDefinition> stations,
+            IReadOnlyDictionary<Guid, AircraftCarriageConfigurationDefinition>
+                configurations,
+            ISet<Guid> allowed,
             float capacity,
             int index,
             PlannedLoadout current,
             ref PlannedLoadout best)
         {
-            if (index >= candidates.Count)
+            if (index >= stations.Count)
             {
-                if (IsBetter(current, best))
+                if (IsBetter(current, best, stations))
                     best = current.Clone();
                 return;
             }
 
-            var candidate = candidates[index];
-            var remainingShots = AirCombatShotBudget - current.TotalShots;
-            var remainingCapacity = capacity - current.TotalWeight;
-            var maximumCount = Math.Min(
-                remainingShots,
-                candidate.Weight <= 0f
-                    ? remainingShots
-                    : (int)Math.Floor(remainingCapacity / candidate.Weight));
-            for (var count = 0; count <= maximumCount; count++)
+            Search(
+                stations,
+                configurations,
+                allowed,
+                capacity,
+                index + 1,
+                current,
+                ref best);
+
+            var station = stations[index];
+            foreach (var configuration in station
+                         .CompatibleCarriageConfigurationDefinitionIds
+                         .Select(id => configurations[id])
+                         .Where(configuration =>
+                             IsAirCombatConfiguration(configuration, allowed))
+                         .OrderBy(configuration =>
+                             configuration.AircraftCarriageConfigurationDefinitionId))
             {
+                var configurationShots = configuration.Contents.Sum(
+                    content => content.Count);
+                if (current.TotalShots + configurationShots
+                    > AirCombatShotBudget
+                    || current.TotalWeight + configuration.ExternalLoadCost
+                    > capacity)
+                    continue;
+
                 var next = current.Clone();
-                if (count > 0)
-                    next.Add(candidate, count);
-                Search(candidates, capacity, index + 1, next, ref best);
+                next.Add(station, configuration, ordnanceTypes);
+                Search(
+                    stations,
+                    configurations,
+                    allowed,
+                    capacity,
+                    index + 1,
+                    next,
+                    ref best);
             }
         }
 
-        private static bool IsBetter(PlannedLoadout candidate, PlannedLoadout current)
+        private static bool IsBetter(
+            PlannedLoadout candidate,
+            PlannedLoadout current,
+            IReadOnlyList<AircraftLoadoutStationDefinition> stations)
         {
             if (candidate.TotalShots != current.TotalShots)
                 return candidate.TotalShots > current.TotalShots;
@@ -286,6 +381,11 @@ namespace Engine.Service
             if (candidate.HasRadarAndInfrared != current.HasRadarAndInfrared)
                 return candidate.HasRadarAndInfrared;
 
+            var candidateSymmetry = SymmetryScore(candidate, stations);
+            var currentSymmetry = SymmetryScore(current, stations);
+            if (candidateSymmetry != currentSymmetry)
+                return candidateSymmetry > currentSymmetry;
+
             if (Math.Abs(candidate.EffectivenessTotal - current.EffectivenessTotal) > 0.0001f)
                 return candidate.EffectivenessTotal > current.EffectivenessTotal;
 
@@ -295,10 +395,41 @@ namespace Engine.Service
             return false;
         }
 
+        private static int SymmetryScore(
+            PlannedLoadout loadout,
+            IReadOnlyList<AircraftLoadoutStationDefinition> stations)
+        {
+            var configurationByStation = loadout.Items
+                .GroupBy(item => item.AircraftLoadoutStationDefinitionId)
+                .ToDictionary(
+                    group => group.Key,
+                    group => group.First()
+                        .AircraftCarriageConfigurationDefinitionId);
+            var score = 0;
+            foreach (var station in stations.Where(station =>
+                         station.MirrorStationDefinitionId != Guid.Empty
+                         && station.AircraftLoadoutStationDefinitionId
+                         .CompareTo(station.MirrorStationDefinitionId) < 0))
+            {
+                var hasStation = configurationByStation.TryGetValue(
+                    station.AircraftLoadoutStationDefinitionId,
+                    out var configuration);
+                var hasMirror = configurationByStation.TryGetValue(
+                    station.MirrorStationDefinitionId,
+                    out var mirrorConfiguration);
+                if (hasStation && hasMirror)
+                    score += configuration == mirrorConfiguration ? 2 : 1;
+                else if (hasStation || hasMirror)
+                    score--;
+            }
+
+            return score;
+        }
+
         private sealed class PlannedLoadout
         {
-            public readonly Dictionary<Guid, int> CountByOrdnance =
-                new Dictionary<Guid, int>();
+            public readonly List<AircraftLoadoutItem> Items =
+                new List<AircraftLoadoutItem>();
             public int TotalShots;
             public int RadarShots;
             public int InfraredShots;
@@ -306,17 +437,31 @@ namespace Engine.Service
             public float EffectivenessTotal;
             public bool HasRadarAndInfrared => RadarShots > 0 && InfraredShots > 0;
 
-            public void Add(OrdnanceTypeDefinition ordnanceType, int count)
+            public void Add(
+                AircraftLoadoutStationDefinition station,
+                AircraftCarriageConfigurationDefinition configuration,
+                IReadOnlyDictionary<Guid, OrdnanceTypeDefinition> ordnanceTypes)
             {
-                CountByOrdnance[ordnanceType.OrdnanceTypeDefinitionId] = count;
-                TotalShots += count;
-                TotalWeight += ordnanceType.Weight * count;
-                EffectivenessTotal += ordnanceType.GetEffectiveness(
-                    OrdnanceTargetCategory.Aircraft) * count;
-                if (ordnanceType.EmploymentCategory == OrdnanceEmploymentCategory.AirToAirRadar)
-                    RadarShots += count;
-                if (ordnanceType.EmploymentCategory == OrdnanceEmploymentCategory.AirToAirInfrared)
-                    InfraredShots += count;
+                foreach (var content in configuration.Contents)
+                {
+                    var ordnanceType =
+                        ordnanceTypes[content.OrdnanceTypeDefinitionId];
+                    Items.Add(new AircraftLoadoutItem(
+                        station.AircraftLoadoutStationDefinitionId,
+                        configuration.AircraftCarriageConfigurationDefinitionId,
+                        content.OrdnanceTypeDefinitionId,
+                        content.Count));
+                    TotalShots += content.Count;
+                    EffectivenessTotal += ordnanceType.GetEffectiveness(
+                        OrdnanceTargetCategory.Aircraft) * content.Count;
+                    if (ordnanceType.EmploymentCategory
+                        == OrdnanceEmploymentCategory.AirToAirRadar)
+                        RadarShots += content.Count;
+                    if (ordnanceType.EmploymentCategory
+                        == OrdnanceEmploymentCategory.AirToAirInfrared)
+                        InfraredShots += content.Count;
+                }
+                TotalWeight += configuration.ExternalLoadCost;
             }
 
             public PlannedLoadout Clone()
@@ -329,8 +474,11 @@ namespace Engine.Service
                     TotalWeight = TotalWeight,
                     EffectivenessTotal = EffectivenessTotal
                 };
-                foreach (var entry in CountByOrdnance)
-                    clone.CountByOrdnance[entry.Key] = entry.Value;
+                clone.Items.AddRange(Items.Select(item => new AircraftLoadoutItem(
+                    item.AircraftLoadoutStationDefinitionId,
+                    item.AircraftCarriageConfigurationDefinitionId,
+                    item.OrdnanceTypeDefinitionId,
+                    item.Count)));
                 return clone;
             }
         }
