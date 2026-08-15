@@ -206,7 +206,7 @@ namespace Models.Gameplay.Campaign
             var template = new CampaignTemplate(Name)
             {
                 ModuleId = DcsPrototypeModule.Id,
-                CampaignStartTime = new DateTime(1990, 1, 1, 6, 0, 0),
+                CampaignStartTime = new DateTime(1990, 1, 1, 10, 0, 0),
                 SimulationSettings = new SimulationSettings
                 {
                     SimulationTickMinutes = 5,

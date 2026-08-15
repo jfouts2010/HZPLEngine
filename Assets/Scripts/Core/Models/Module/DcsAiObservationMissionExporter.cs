@@ -15,6 +15,9 @@ namespace Models.Module
         private const double KnotsToMetersPerSecond = 0.514444444d;
         private const int MissionFormatVersion = 23;
         private const int RouteDrawingThickness = 8;
+        private const string DcsAiSkill = "Excellent";
+        private const string RadarDebugResourceKey = "ResKey_HZPLRadarDebug";
+        private const string RadarDebugFileName = "HZPLRadarDebug.lua";
         private static readonly UTF8Encoding Utf8WithoutBom =
             new UTF8Encoding(false);
 
@@ -73,7 +76,11 @@ namespace Models.Module
                 { "warehouses", BuildWarehouses(snapshot.Airports) },
                 { "theatre", DcsPrototypeModule.TheaterId },
                 { "l10n/DEFAULT/dictionary", BuildDictionary(snapshot) },
-                { "l10n/DEFAULT/mapResource", "mapResource = {}\n" }
+                { "l10n/DEFAULT/mapResource", BuildMapResource() },
+                {
+                    $"l10n/DEFAULT/{RadarDebugFileName}",
+                    BuildRadarDebugScript(samSites)
+                }
             };
 
             var content = BuildArchive(entries);
@@ -142,7 +149,7 @@ namespace Models.Module
             AppendAircraftRouteDrawings(builder, flights);
             AppendCoalitionContents(builder, flights, samSites, warnings);
             builder.AppendLine($"    [\"version\"] = {MissionFormatVersion},");
-            builder.AppendLine("    [\"trigrules\"] = {},");
+            AppendRadarDebugTrigger(builder);
             builder.AppendLine("    [\"currentKey\"] = 6,");
             builder.AppendLine("    [\"failures\"] = {},");
             builder.AppendLine("    [\"forcedOptions\"] =");
@@ -735,7 +742,7 @@ namespace Models.Module
             builder.AppendLine($"                                        [\"alt\"] = {Number(Math.Max(1d, origin.Altitude))},");
             builder.AppendLine("                                        [\"alt_type\"] = \"BARO\",");
             builder.AppendLine($"                                        [\"livery_id\"] = \"{Lua(DcsLivery(flight.AircraftThirdPartyId))}\",");
-            builder.AppendLine("                                        [\"skill\"] = \"High\",");
+            builder.AppendLine($"                                        [\"skill\"] = \"{DcsAiSkill}\",");
             builder.AppendLine($"                                        [\"speed\"] = {Number(speed)},");
             builder.AppendLine("                                        [\"AddPropAircraft\"] = {},");
             builder.AppendLine($"                                        [\"type\"] = \"{Lua(flight.AircraftThirdPartyId)}\",");
@@ -900,21 +907,7 @@ namespace Models.Module
             ref int nextUnitId)
         {
             var origin = ToDcs(site.Position);
-            var physicalUnits = site.Components
-                .GroupBy(component => component.ComponentDefinitionId)
-                .Select(group => new
-                {
-                    Type = group.First().ThirdPartyId,
-                    Count = group.Count()
-                })
-                .GroupBy(component => component.Type, StringComparer.Ordinal)
-                .Select(group => new
-                {
-                    Type = group.Key,
-                    Count = group.Max(component => component.Count)
-                })
-                .SelectMany(group => Enumerable.Repeat(group.Type, group.Count))
-                .ToList();
+            var physicalUnits = GetSamPhysicalUnitTypes(site);
             var name = $"HZPL-SAM-{ShortId(site.SiteId)}";
 
             builder.AppendLine($"                            [{groupIndex}] =");
@@ -958,7 +951,7 @@ namespace Models.Module
                 var y = origin.Y + Math.Sin(angle) * radius;
                 builder.AppendLine($"                                    [{index + 1}] =");
                 builder.AppendLine("                                    {");
-                builder.AppendLine("                                        [\"skill\"] = \"High\",");
+                builder.AppendLine($"                                        [\"skill\"] = \"{DcsAiSkill}\",");
                 builder.AppendLine("                                        [\"coldAtStart\"] = false,");
                 builder.AppendLine($"                                        [\"type\"] = \"{Lua(physicalUnits[index])}\",");
                 builder.AppendLine($"                                        [\"unitId\"] = {nextUnitId},");
@@ -976,6 +969,124 @@ namespace Models.Module
             builder.AppendLine($"                                [\"name\"] = \"{Lua(name)}\",");
             builder.AppendLine("                                [\"start_time\"] = 0,");
             builder.AppendLine("                            },");
+        }
+
+        private static List<string> GetSamPhysicalUnitTypes(
+            ScenarioSamSiteSnapshot site)
+        {
+            return site.Components
+                .GroupBy(component => component.ComponentDefinitionId)
+                .Select(group => new
+                {
+                    Type = group.First().ThirdPartyId,
+                    Count = group.Count()
+                })
+                .GroupBy(component => component.Type, StringComparer.Ordinal)
+                .Select(group => new
+                {
+                    Type = group.Key,
+                    Count = group.Max(component => component.Count)
+                })
+                .SelectMany(group => Enumerable.Repeat(group.Type, group.Count))
+                .ToList();
+        }
+
+        private static void AppendRadarDebugTrigger(StringBuilder builder)
+        {
+            builder.AppendLine("    [\"trig\"] =");
+            builder.AppendLine("    {");
+            builder.AppendLine("        [\"actions\"] =");
+            builder.AppendLine("        {");
+            builder.AppendLine($"            [1] = \"a_do_script_file(getValueResourceByKey(\\\"{RadarDebugResourceKey}\\\"));\",");
+            builder.AppendLine("        },");
+            builder.AppendLine("        [\"events\"] = {},");
+            builder.AppendLine("        [\"custom\"] = {},");
+            builder.AppendLine("        [\"func\"] = {},");
+            builder.AppendLine("        [\"flag\"] = { [1] = true },");
+            builder.AppendLine("        [\"conditions\"] = { [1] = \"return(true)\" },");
+            builder.AppendLine("        [\"customStartup\"] = {},");
+            builder.AppendLine("        [\"funcStartup\"] =");
+            builder.AppendLine("        {");
+            builder.AppendLine("            [1] = \"if mission.trig.conditions[1]() then mission.trig.actions[1]() end\",");
+            builder.AppendLine("        },");
+            builder.AppendLine("    },");
+            builder.AppendLine("    [\"trigrules\"] =");
+            builder.AppendLine("    {");
+            builder.AppendLine("        [1] =");
+            builder.AppendLine("        {");
+            builder.AppendLine("            [\"rules\"] = {},");
+            builder.AppendLine("            [\"eventlist\"] = \"\",");
+            builder.AppendLine("            [\"predicate\"] = \"triggerStart\",");
+            builder.AppendLine("            [\"actions\"] =");
+            builder.AppendLine("            {");
+            builder.AppendLine("                [1] =");
+            builder.AppendLine("                {");
+            builder.AppendLine("                    [\"density\"] = 1,");
+            builder.AppendLine("                    [\"zone\"] = \"\",");
+            builder.AppendLine("                    [\"preset\"] = 1,");
+            builder.AppendLine($"                    [\"file\"] = \"{RadarDebugResourceKey}\",");
+            builder.AppendLine("                    [\"predicate\"] = \"a_do_script_file\",");
+            builder.AppendLine("                    [\"ai_task\"] = { [1] = \"\", [2] = \"\" },");
+            builder.AppendLine("                },");
+            builder.AppendLine("            },");
+            builder.AppendLine("            [\"comment\"] = \"Start HZPL SAM radar debug monitor\",");
+            builder.AppendLine("        },");
+            builder.AppendLine("    },");
+        }
+
+        private static string BuildRadarDebugScript(
+            IReadOnlyList<ScenarioSamSiteSnapshot> samSites)
+        {
+            var builder = new StringBuilder(8192);
+            builder.AppendLine("HZPLRadarDebug = HZPLRadarDebug or {}");
+            builder.AppendLine("HZPLRadarDebug.unitNames = {");
+            foreach (var site in samSites.OrderBy(site => site.SiteId))
+            {
+                var groupName = $"HZPL-SAM-{ShortId(site.SiteId)}";
+                var physicalUnits = GetSamPhysicalUnitTypes(site);
+                for (var index = 0; index < physicalUnits.Count; index++)
+                {
+                    builder.AppendLine(
+                        $"    \"{Lua(groupName)}-{index + 1}\",");
+                }
+            }
+            builder.AppendLine("}");
+            builder.AppendLine("HZPLRadarDebug.states = HZPLRadarDebug.states or {}");
+            builder.AppendLine();
+            builder.AppendLine("local function report(unitName, state, unit)");
+            builder.AppendLine("    local typeName = \"radar\"");
+            builder.AppendLine("    if unit and unit:isExist() then");
+            builder.AppendLine("        typeName = unit:getTypeName() or typeName");
+            builder.AppendLine("    end");
+            builder.AppendLine("    local message = \"[HZPL RADAR] \" .. unitName .. \" (\" .. typeName .. \") -> \" .. state");
+            builder.AppendLine("    trigger.action.outText(message, 10, false)");
+            builder.AppendLine("    env.info(message)");
+            builder.AppendLine("end");
+            builder.AppendLine();
+            builder.AppendLine("function HZPLRadarDebug.poll(_, now)");
+            builder.AppendLine("    for _, unitName in ipairs(HZPLRadarDebug.unitNames) do");
+            builder.AppendLine("        local unit = Unit.getByName(unitName)");
+            builder.AppendLine("        local previous = HZPLRadarDebug.states[unitName]");
+            builder.AppendLine("        if unit and unit:isExist() and unit:isActive() then");
+            builder.AppendLine("            if unit:hasSensors(Unit.SensorType.RADAR) then");
+            builder.AppendLine("                local radarOn = unit:getRadar()");
+            builder.AppendLine("                local state = radarOn and \"ON\" or \"OFF\"");
+            builder.AppendLine("                if previous ~= state then");
+            builder.AppendLine("                    report(unitName, state, unit)");
+            builder.AppendLine("                    HZPLRadarDebug.states[unitName] = state");
+            builder.AppendLine("                end");
+            builder.AppendLine("            end");
+            builder.AppendLine("        elseif previous and previous ~= \"UNAVAILABLE\" then");
+            builder.AppendLine("            report(unitName, \"UNAVAILABLE\", unit)");
+            builder.AppendLine("            HZPLRadarDebug.states[unitName] = \"UNAVAILABLE\"");
+            builder.AppendLine("        end");
+            builder.AppendLine("    end");
+            builder.AppendLine("    return now + 1");
+            builder.AppendLine("end");
+            builder.AppendLine();
+            builder.AppendLine($"trigger.action.outText(\"[HZPL RADAR] Real-time monitor started for {samSites.Count} SAM site(s).\", 10, false)");
+            builder.AppendLine("timer.scheduleFunction(HZPLRadarDebug.poll, nil, timer.getTime() + 1)");
+            return builder.ToString();
         }
 
         private static string BuildWarehouses(
@@ -1039,6 +1150,14 @@ namespace Models.Module
                    + "    [\"DictKey_descriptionBlueTask_3\"] = \"Observe HZPL Bluefor AI operations.\",\n"
                    + "    [\"DictKey_descriptionNeutralsTask_4\"] = \"AI observation only.\",\n"
                    + $"    [\"DictKey_sortie_5\"] = \"{Lua(title)}\",\n"
+                   + "}\n";
+        }
+
+        private static string BuildMapResource()
+        {
+            return "mapResource =\n"
+                   + "{\n"
+                   + $"    [\"{RadarDebugResourceKey}\"] = \"{RadarDebugFileName}\",\n"
                    + "}\n";
         }
 
