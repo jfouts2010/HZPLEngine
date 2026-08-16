@@ -193,10 +193,10 @@ namespace Engine.Service
         {
             return flight != null
                    && (flight.IsFighterEscort
-                       || flight.MissionType
-                       == AirMissionRequestType.BarrierCombatAirPatrol
-                       || flight.MissionType
-                       == AirMissionRequestType.OffensiveCounterAirSweep);
+                       || flight.TaskType
+                       == AirFlightTaskType.Barcap
+                       || flight.TaskType
+                       == AirFlightTaskType.OcaSweep);
         }
 
         private sealed class AircraftAssignment

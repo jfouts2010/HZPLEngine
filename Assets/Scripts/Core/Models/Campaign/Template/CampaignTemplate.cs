@@ -8,6 +8,8 @@ namespace Models.Gameplay.Campaign
     [Serializable]
     public class CampaignTemplate
     {
+        public const int ScriptedAirPlanHorizonHours = 24;
+
         public static readonly Guid DefaultModuleId = Guid.Parse("92f96fd1-d2f1-4e28-a047-30b0940dc45f");
         public static readonly DateTime DefaultCampaignStartTime = new DateTime(1990, 1, 1, 6, 0, 0);
 
@@ -21,6 +23,7 @@ namespace Models.Gameplay.Campaign
         public Dictionary<Alliance, List<Guid>> SamSiteTemplateAllowances = new Dictionary<Alliance, List<Guid>>();
         public Dictionary<Alliance, AllianceAirDoctrine> AirDoctrineByAlliance =
             CreateDefaultAirDoctrineByAlliance();
+        public List<AirPackagePlan> AirPackagePlans = new List<AirPackagePlan>();
         public List<Tile> Tiles = new List<Tile>();
         [SerializeReference] public List<TileData> StartingTileData = new List<TileData>();
         public List<SupplyCapitalStartingCondition> SupplyCapitals = new List<SupplyCapitalStartingCondition>();
@@ -49,7 +52,33 @@ namespace Models.Gameplay.Campaign
 
         public void RebuildDerivedData()
         {
+            ValidateAirPackagePlanHorizon();
             HexGridTopology.AssignNeighbors(Tiles);
+        }
+
+        private void ValidateAirPackagePlanHorizon()
+        {
+            if (AirPackagePlans == null)
+                return;
+
+            var horizonEnd = CampaignStartTime.AddHours(
+                ScriptedAirPlanHorizonHours);
+            foreach (var plan in AirPackagePlans)
+            {
+                if (plan == null)
+                    continue;
+                if (plan.AvailableAt >= CampaignStartTime
+                    && plan.EffectStart >= plan.AvailableAt
+                    && plan.EffectEnd > plan.EffectStart
+                    && plan.EffectEnd <= horizonEnd)
+                {
+                    continue;
+                }
+
+                throw new InvalidOperationException(
+                    $"Campaign '{Name}' air plan {plan.PlanId} must fit "
+                    + $"within its first {ScriptedAirPlanHorizonHours} hours.");
+            }
         }
 
         private static Dictionary<Alliance, AllianceAirDoctrine> CreateDefaultAirDoctrineByAlliance()

@@ -119,7 +119,7 @@ namespace Models.Module
         public Guid FlightId { get; }
         public Guid CountryId { get; }
         public Alliance Alliance { get; }
-        public AirMissionRequestType MissionType { get; }
+        public AirFlightTaskType TaskType { get; }
         public FlightExecutionPhase ExecutionPhase { get; }
         public string AircraftThirdPartyId { get; }
         public ScenarioPosition Position { get; }
@@ -132,7 +132,7 @@ namespace Models.Module
             Guid flightId,
             Guid countryId,
             Alliance alliance,
-            AirMissionRequestType missionType,
+            AirFlightTaskType missionType,
             FlightExecutionPhase executionPhase,
             string aircraftThirdPartyId,
             ScenarioPosition position,
@@ -144,7 +144,7 @@ namespace Models.Module
             FlightId = flightId;
             CountryId = countryId;
             Alliance = alliance;
-            MissionType = missionType;
+            TaskType = missionType;
             ExecutionPhase = executionPhase;
             AircraftThirdPartyId = aircraftThirdPartyId ?? string.Empty;
             Position = position;

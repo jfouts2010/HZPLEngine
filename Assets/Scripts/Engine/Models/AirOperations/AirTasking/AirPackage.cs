@@ -12,9 +12,13 @@ namespace Models.Gameplay.Campaign
         public static readonly TimeSpan PreparationDelay = TimeSpan.FromMinutes(30);
 
         public Guid PackageId = Guid.NewGuid();
-        public Guid MissionRequestId;
+        public Guid PlanId;
         public Alliance Alliance;
+        public AirOperationType OperationType;
+        public AirMissionArea OperationArea = new AirMissionArea();
         public DateTime CreatedAt;
+        public BarcapBarrierPlan BarcapBarrier;
+        public DeadMissionPlan DeadPlan;
         private List<AirFlight> flights = new List<AirFlight>();
         private List<Guid> supportingFlightIds = new List<Guid>();
         public string Rationale = string.Empty;

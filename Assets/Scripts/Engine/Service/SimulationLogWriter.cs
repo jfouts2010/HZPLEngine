@@ -893,7 +893,7 @@ namespace Engine.Service
                     builder.Append("  TASKING    ");
                     builder.Append(diagnostic.Code);
                     builder.Append("  ");
-                    builder.Append(SimLogNames.RequestLabel(diagnostic.MissionRequestId));
+                    builder.Append(SimLogNames.PlanLabel(diagnostic.PlanId));
                     if (diagnostic.PackageId != Guid.Empty)
                     {
                         builder.Append(' ');
@@ -1017,8 +1017,6 @@ namespace Engine.Service
             var label = SimLogNames.FlightLabel(package.Alliance, flight.FlightId);
             var squadronName = ResolveSquadronName(flight.SquadronId);
             var aircraftName = ResolveAircraftName(flight.SquadronId);
-            var request = FindRequest(package);
-
             var builder = new StringBuilder();
             builder.AppendLine();
             builder.AppendLine(
@@ -1031,14 +1029,11 @@ namespace Engine.Service
                 flight.PlannedTakeoffTime,
                 label,
                 "TASKED",
-                $"{flight.MissionType}  role={flight.Role}  "
+                $"{flight.TaskType}  operation={package.OperationType}  "
                 + $"{SimLogNames.PackageLabel(package.PackageId)} "
-                + $"{SimLogNames.RequestLabel(package.MissionRequestId)}");
+                + $"{SimLogNames.PlanLabel(package.PlanId)}");
 
-            var rationale = SimLogNames.SingleLine(
-                !string.IsNullOrWhiteSpace(request?.Rationale)
-                    ? request.Rationale
-                    : package.Rationale);
+            var rationale = SimLogNames.SingleLine(package.Rationale);
             if (rationale.Length > 0)
             {
                 AppendLine(
@@ -1047,19 +1042,6 @@ namespace Engine.Service
                     label,
                     "RATIONALE",
                     rationale);
-            }
-
-            if (request != null)
-            {
-                var priority = new StringBuilder(
-                    request.Priority.ToString("0.###", CultureInfo.InvariantCulture));
-                AppendValues(priority, request.PriorityComponents);
-                AppendLine(
-                    builder,
-                    flight.PlannedTakeoffTime,
-                    label,
-                    "PRIORITY",
-                    priority.ToString());
             }
 
             if (flight.DroppedExecutionEventCount > 0)
@@ -1092,7 +1074,7 @@ namespace Engine.Service
 
             AppendIndexRow(
                 label,
-                flight.MissionType.ToString(),
+                flight.TaskType.ToString(),
                 complete ? flight.LifecycleState.ToString() : "IN-PROGRESS");
             trackDiagnosticsByFlightId.Remove(flight.FlightId);
             foreach (var key in lastReadableTrackDiagnosticByContact.Keys
@@ -1467,13 +1449,6 @@ namespace Engine.Service
                 RunFilePath,
                 $"| `{label}` | {mission} | {outcome} | {cycleIndex:D3} |"
                 + Environment.NewLine);
-        }
-
-        private AirMissionRequest FindRequest(AirPackage package)
-        {
-            var commander = airTaskingSystem.GetCommander(package.Alliance);
-            return commander?.MissionRequests.FirstOrDefault(
-                request => request.MissionRequestId == package.MissionRequestId);
         }
 
         private string ResolveSquadronName(Guid squadronId)

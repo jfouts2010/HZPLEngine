@@ -1,27 +1,25 @@
 namespace Models.Gameplay.Campaign
 {
-    public enum AirMissionRequestType
+    public enum AirOperationType
     {
-        BarrierCombatAirPatrol = 0,
-        OffensiveCounterAirSweep = 1,
-        ProvideAirborneC2 = 2,
-        ProvideAerialRefueling = 3,
-        DestructionOfEnemyAirDefenses = 4
+        Barcap = 0,
+        OcaSweep = 1,
+        AirborneC2 = 2,
+        AerialRefueling = 3,
+        Dead = 4,
+        Strike = 5
     }
 
-    public enum AirMissionRequestFulfillmentPattern
+    public enum AirFlightTaskType
     {
-        Sustained = 0,
-        Discrete = 1
-    }
-
-    public enum AirMissionRequestState
-    {
-        Actionable = 0,
-        PartiallyFulfilled = 1,
-        InProgress = 2,
-        Fulfilled = 3,
-        Purged = 4
+        Barcap = 0,
+        OcaSweep = 1,
+        AirborneC2 = 2,
+        AerialRefueling = 3,
+        DeadAttack = 4,
+        Strike = 5,
+        FighterEscort = 6,
+        SeadEscort = 7
     }
 
     public enum AirTaskingLifecycleState

@@ -16,12 +16,12 @@ public sealed class DcsAiObservationMissionExporterTests
             CreateFlight(
                 TestModule.BlueCountryId,
                 Alliance.Bluefor,
-                AirMissionRequestType.ProvideAerialRefueling,
+                AirFlightTaskType.AerialRefueling,
                 "KC-135"),
             CreateFlight(
                 TestModule.RedCountryId,
                 Alliance.Redfor,
-                AirMissionRequestType.ProvideAirborneC2,
+                AirFlightTaskType.AirborneC2,
                 "A-50")
         };
         var snapshot = new ScenarioExportSnapshot(
@@ -65,7 +65,7 @@ public sealed class DcsAiObservationMissionExporterTests
                 CreateFlight(
                     TestModule.BlueCountryId,
                     Alliance.Bluefor,
-                    AirMissionRequestType.DestructionOfEnemyAirDefenses,
+                    AirFlightTaskType.DeadAttack,
                     "F-16C_50")
             },
             new[] { samSite },
@@ -114,7 +114,7 @@ public sealed class DcsAiObservationMissionExporterTests
                 CreateFlight(
                     TestModule.BlueCountryId,
                     Alliance.Bluefor,
-                    AirMissionRequestType.DestructionOfEnemyAirDefenses,
+                    AirFlightTaskType.DeadAttack,
                     "F-16C_50")
             },
             new[]
@@ -137,7 +137,7 @@ public sealed class DcsAiObservationMissionExporterTests
     private static ScenarioAirFlightSnapshot CreateFlight(
         Guid countryId,
         Alliance alliance,
-        AirMissionRequestType missionType,
+        AirFlightTaskType missionType,
         string aircraftType)
     {
         return new ScenarioAirFlightSnapshot(

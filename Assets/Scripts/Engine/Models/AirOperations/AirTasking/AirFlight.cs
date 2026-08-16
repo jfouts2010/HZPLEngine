@@ -33,12 +33,6 @@ namespace Models.Gameplay.Campaign
         Failed = 4
     }
 
-    public enum AirFlightRole
-    {
-        PrimaryMission = 0,
-        FighterEscort = 1
-    }
-
     public enum AirEscortCoverageMode
     {
         ForwardScreen = 0,
@@ -136,8 +130,7 @@ namespace Models.Gameplay.Campaign
 
         public Guid FlightId = Guid.NewGuid();
         public Guid SquadronId;
-        public AirMissionRequestType MissionType;
-        public AirFlightRole Role = AirFlightRole.PrimaryMission;
+        public AirFlightTaskType TaskType;
         private AirEscortCoverageMode escortCoverageMode =
             AirEscortCoverageMode.ForwardScreen;
         public Guid AuthorizedSurfaceThreatSiteId;
@@ -195,14 +188,17 @@ namespace Models.Gameplay.Campaign
             tacticalState ??= new FlightTacticalState();
         public bool IsWaitingAtRendezvous => isWaitingAtRendezvous;
         public bool MissionAchieved => missionAchieved;
-        public bool IsFighterEscort => Role == AirFlightRole.FighterEscort;
+        public bool IsFighterEscort =>
+            TaskType == AirFlightTaskType.FighterEscort;
+        public bool IsSeadEscort =>
+            TaskType == AirFlightTaskType.SeadEscort;
+        public bool IsEscort => IsFighterEscort || IsSeadEscort;
         public AirEscortCoverageMode EscortCoverageMode => escortCoverageMode;
         public bool IsCloseEscortActive =>
-            IsFighterEscort
+            IsEscort
             && escortCoverageMode == AirEscortCoverageMode.CloseCover;
         public bool IsDeadAttackFlight =>
-            MissionType == AirMissionRequestType.DestructionOfEnemyAirDefenses
-            && !IsFighterEscort;
+            TaskType == AirFlightTaskType.DeadAttack;
         public bool AuthorizedSurfaceThreatPenetrationGranted =>
             authorizedSurfaceThreatPenetrationGranted;
         public DateTime NextGroundAttackOpportunityAt =>
@@ -211,10 +207,7 @@ namespace Models.Gameplay.Campaign
             groundAttackOpportunitySequence;
         public DateTime PlannedTakeoffTime =>
             GetRequiredWaypoint(AirWaypointAction.Takeoff).PlannedArrivalTime;
-        public DateTime EffectStart =>
-            (MissionType == AirMissionRequestType.BarrierCombatAirPatrol
-                ? EffectWaypoints.Last()
-                : EffectWaypoints.First()).PlannedArrivalTime;
+        public DateTime EffectStart => EffectWaypoints.First().PlannedArrivalTime;
         public bool HasSustainedEffect =>
             route.Any(waypoint => waypoint.Action == AirWaypointAction.StationEndpoint
                                   && waypoint.HasRepeat);
@@ -229,13 +222,21 @@ namespace Models.Gameplay.Campaign
                         $"Flight {FlightId} route has no effect waypoint.");
                 }
 
-                var last = effectWaypoints[effectWaypoints.Count - 1];
-                if (last.Action == AirWaypointAction.MissionAction)
-                    return last.PlannedArrivalTime;
+                var first = effectWaypoints[0];
+                var repeatedEndpoint = route.LastOrDefault(waypoint =>
+                    waypoint.Action == AirWaypointAction.StationEndpoint
+                    && waypoint.HasRepeat);
+                if (repeatedEndpoint != null)
+                    return repeatedEndpoint.RepeatUntil;
+                var lastMissionAction = effectWaypoints
+                    .LastOrDefault(waypoint =>
+                        waypoint.Action == AirWaypointAction.MissionAction);
+                if (lastMissionAction != null)
+                    return lastMissionAction.PlannedArrivalTime;
 
                 var endpoint = route
                     .LastOrDefault(waypoint => waypoint.Action == AirWaypointAction.StationEndpoint
-                                               && waypoint.RepeatFromWaypointId == last.WaypointId);
+                                               && waypoint.RepeatFromWaypointId == first.WaypointId);
                 if (endpoint == null)
                 {
                     throw new InvalidOperationException(
@@ -248,9 +249,7 @@ namespace Models.Gameplay.Campaign
             }
         }
         public AirMissionArea MissionArea =>
-            (MissionType == AirMissionRequestType.BarrierCombatAirPatrol
-                ? EffectWaypoints.Last()
-                : EffectWaypoints.First()).EffectArea
+            EffectWaypoints.First().EffectArea
             ?? throw new InvalidOperationException(
                 $"Flight {FlightId} effect waypoint has no mission area.");
         public Guid LaunchAirportBuildingId =>
@@ -520,7 +519,7 @@ namespace Models.Gameplay.Campaign
                         return FlightWaypointTransition.Advanced;
                     }
 
-                    if (!IsDeadAttackFlight && !IsFighterEscort)
+                    if (!IsDeadAttackFlight && !IsEscort)
                     {
                         missionAchieved = true;
                     }
@@ -619,7 +618,7 @@ namespace Models.Gameplay.Campaign
             DateTime occurredAt,
             string reason)
         {
-            if (!IsFighterEscort
+            if (!IsEscort
                 || !IsAirborne
                 || executionPhase == FlightExecutionPhase.Returning
                 || executionPhase == FlightExecutionPhase.Landing
@@ -758,7 +757,7 @@ namespace Models.Gameplay.Campaign
             string reason,
             IEnumerable<AirWaypoint> replacementWaypoints)
         {
-            if (MissionType != AirMissionRequestType.BarrierCombatAirPatrol
+            if (TaskType != AirFlightTaskType.Barcap
                 || lifecycleState != AirTaskingLifecycleState.Active
                 || !IsAirborne
                 || executionPhase == FlightExecutionPhase.Returning

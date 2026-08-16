@@ -63,7 +63,7 @@
                     <ui:Label text="AIR OPERATIONS PICTURE" class="workbench-kicker" />
                     <ui:Label name="air-ops-summary" text="Air operations" class="workbench-summary" />
                     <ui:VisualElement class="stat-grid">
-                        <ui:VisualElement class="stat-tile"><ui:Label name="air-request-count" text="0" class="stat-value" /><ui:Label text="REQUESTS" class="stat-label" /></ui:VisualElement>
+                        <ui:VisualElement class="stat-tile"><ui:Label name="air-plan-count" text="0" class="stat-value" /><ui:Label text="PLANS" class="stat-label" /></ui:VisualElement>
                         <ui:VisualElement class="stat-tile"><ui:Label name="air-package-count" text="0" class="stat-value" /><ui:Label text="PACKAGES" class="stat-label" /></ui:VisualElement>
                         <ui:VisualElement class="stat-tile"><ui:Label name="air-airborne-count" text="0" class="stat-value" /><ui:Label text="AIRBORNE" class="stat-label" /></ui:VisualElement>
                     </ui:VisualElement>
@@ -74,7 +74,7 @@
                         <ui:Label name="export-dcs-status" text="Pause with at least one flight airborne, then export." class="dcs-export-status" />
                     </ui:VisualElement>
                     <ui:VisualElement class="segmented-control">
-                        <ui:Button name="air-requests-button" text="Requests" class="segment" />
+                        <ui:Button name="air-plans-button" text="Plans" class="segment" />
                         <ui:Button name="air-packages-button" text="Packages" class="segment" />
                         <ui:Button name="air-flights-button" text="Flights" class="segment" />
                         <ui:Button name="air-passes-button" text="Ordnance" class="segment" />
@@ -85,7 +85,7 @@
                         <ui:Button name="air-blue-flights-button" text="Blue" class="segment segment--blue segment--selected" />
                         <ui:Button name="air-red-flights-button" text="Red" class="segment segment--red" />
                     </ui:VisualElement>
-                    <ui:VisualElement name="air-requests-list" class="dense-list campaign-air-list--hidden" />
+                    <ui:VisualElement name="air-plans-list" class="dense-list campaign-air-list--hidden" />
                     <ui:VisualElement name="air-packages-list" class="dense-list campaign-air-list--hidden" />
                     <ui:VisualElement name="air-flights-list" class="dense-list" />
                     <ui:VisualElement name="air-passes-list" class="dense-list campaign-air-list--hidden" />
@@ -127,7 +127,6 @@
                 <ui:Toggle name="overlay-sam-toggle" text="SAM sites &amp; ranges" value="true" class="overlay-toggle" />
                 <ui:Toggle name="overlay-ordnance-toggle" text="Ordnance markers" value="true" class="overlay-toggle" />
                 <ui:Toggle name="overlay-rail-toggle" text="Railways" value="true" class="overlay-toggle" />
-                <ui:Toggle name="overlay-air-control-toggle" text="Air interference" class="overlay-toggle" />
             </ui:VisualElement>
         </ui:VisualElement>
 

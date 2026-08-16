@@ -7,7 +7,7 @@ namespace Models.Gameplay.Campaign
     public sealed class AirTaskingDiagnostic
     {
         public DateTime RecordedAt;
-        public Guid MissionRequestId;
+        public Guid PlanId;
         public Guid PackageId;
         public string Code = string.Empty;
         public string Message = string.Empty;

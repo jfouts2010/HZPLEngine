@@ -366,7 +366,6 @@ namespace Engine.Models
                 cursor = next;
             }
 
-            ResolvePackageOutcomes(currentTime);
         }
 
         private void PrepareFlightsAt(DateTime currentTime)
@@ -672,8 +671,8 @@ namespace Engine.Models
             DateTime currentTime)
         {
             if (package == null
-                || flight?.MissionType
-                != AirMissionRequestType.BarrierCombatAirPatrol
+                || flight?.TaskType
+                != AirFlightTaskType.Barcap
                 || flight.IsFighterEscort
                 || aircraftType == null
                 || package.Flights.Any(candidate => candidate.IsAirborne))
@@ -711,7 +710,7 @@ namespace Engine.Models
                 commander?.AddDiagnostic(new AirTaskingDiagnostic
                 {
                     RecordedAt = currentTime,
-                    MissionRequestId = package.MissionRequestId,
+                    PlanId = package.PlanId,
                     PackageId = package.PackageId,
                     Code = "barcap-preflight-sam-clear",
                     Message = "Current-intelligence BARCAP route revalidation passed "
@@ -738,11 +737,11 @@ namespace Engine.Models
                          + $"planningAge={planningAgeMinutes:0.0}min; "
                          + "blockingSamWasInPlanningThreatSet="
                          + $"{!absentFromPlanningThreatSet}. "
-                         + "The request remains actionable for rematerialization.";
+                         + "The explicit plan will not be retried automatically.";
             commander?.AddDiagnostic(new AirTaskingDiagnostic
             {
                 RecordedAt = currentTime,
-                MissionRequestId = package.MissionRequestId,
+                PlanId = package.PlanId,
                 PackageId = package.PackageId,
                 Code = "barcap-preflight-sam-blocked",
                 Message = reason,
@@ -1258,13 +1257,11 @@ namespace Engine.Models
                                              == AirTaskingLifecycleState.Active)
                          .OrderBy(candidate => candidate.PackageId))
             {
-                var request = airTaskingSystem.GetCommander(package.Alliance)
-                    ?.GetRequest(package.MissionRequestId);
-                if (request?.RequestType
-                        != AirMissionRequestType.DestructionOfEnemyAirDefenses
-                    || request.DeadPlan == null
+                var deadPlan = package.DeadPlan;
+                if (package.OperationType != AirOperationType.Dead
+                    || deadPlan == null
                     || !gameManager.airDefenseSiteSystem.TryGetSite(
-                        request.DeadPlan.TargetSiteId,
+                        deadPlan.TargetSiteId,
                         out var site))
                     continue;
 
@@ -1295,7 +1292,7 @@ namespace Engine.Models
                     continue;
                 }
 
-                request.DeadPlan.TargetComponentIds = (currentReport.Components
+                deadPlan.TargetComponentIds = (currentReport.Components
                                                         ?? new List<AirDefenseComponentIntelligenceReport>())
                     .Where(component => component != null
                                         && !component.IsDamaged)
@@ -1320,7 +1317,7 @@ namespace Engine.Models
                 var corridorStillBlocked = siteNoLongerHostile
                                            || IsDeadCorridorStillBlocked(
                                                package.Alliance,
-                                               request.DeadPlan);
+                                               deadPlan);
                 if (!siteNoLongerHostile
                     && minimumEffectAchievedByPackage
                     && !hasFunctionalShooterChain)
@@ -1376,7 +1373,7 @@ namespace Engine.Models
                             flight,
                             probingSquadron,
                             site,
-                            request.DeadPlan.TargetComponentIds);
+                            deadPlan.TargetComponentIds);
                     flight.UpdateSurfaceThreatPenetrationAuthorization(
                         (minimumEffectAchievedByPackage
                          && !hasFunctionalShooterChain)
@@ -1390,7 +1387,7 @@ namespace Engine.Models
                                 ? "The package permanently removed the target SAM's functional shooter chain."
                                 : "The target SAM's shooter chain ended without a qualifying package effect.");
 
-                    var targetInsideFixedArea = request.MissionArea.Contains(
+                    var targetInsideFixedArea = package.OperationArea.Contains(
                         currentReport.TileId);
                     if (siteNoLongerHostile
                         || !targetInsideFixedArea
@@ -1439,7 +1436,7 @@ namespace Engine.Models
                         squadron,
                         site,
                         siteTileId,
-                        request.DeadPlan.TargetComponentIds,
+                        deadPlan.TargetComponentIds,
                         currentTime);
 
                     var unresolvedGroundEffect = ordnanceEmploymentSystem
@@ -1456,7 +1453,7 @@ namespace Engine.Models
                             flight,
                             squadron,
                             site,
-                            request.DeadPlan.TargetComponentIds))
+                            deadPlan.TargetComponentIds))
                     {
                         flight.EndDeadAttackAndBeginRecovery(
                             currentTime,
@@ -1476,11 +1473,9 @@ namespace Engine.Models
             out string reason)
         {
             reason = string.Empty;
-            var request = airTaskingSystem.GetCommander(package.Alliance)
-                ?.GetRequest(package.MissionRequestId);
-            if (request?.RequestType
-                    != AirMissionRequestType.DestructionOfEnemyAirDefenses
-                || request.DeadPlan == null)
+            var deadPlan = package.DeadPlan;
+            if (package.OperationType != AirOperationType.Dead
+                || deadPlan == null)
                 return false;
 
             var report = gameManager.intelligenceSystem
@@ -1488,7 +1483,7 @@ namespace Engine.Models
                 ?.HostileAirDefenseSites
                 ?.FirstOrDefault(candidate => candidate != null
                                               && candidate.SiteId
-                                              == request.DeadPlan.TargetSiteId
+                                              == deadPlan.TargetSiteId
                                               && candidate.InformationQuality > 0f);
             if (report == null)
             {
@@ -1510,29 +1505,28 @@ namespace Engine.Models
                 .Distinct()
                 .OrderBy(id => id)
                 .ToList();
-            var plannedComponentIds = (request.DeadPlan.TargetComponentIds
+            var plannedComponentIds = (deadPlan.TargetComponentIds
                                        ?? new List<Guid>())
                 .Where(id => id != Guid.Empty)
                 .Distinct()
                 .OrderBy(id => id)
                 .ToList();
-            request.DeadPlan.TargetComponentIds = refreshedComponentIds;
-            if (report.TileId != request.MissionArea.CenterTileId)
+            deadPlan.TargetComponentIds = refreshedComponentIds;
+            if (report.TileId != package.OperationArea.CenterTileId)
             {
-                request.MissionArea.CenterTileId = report.TileId;
                 reason =
                     "The assigned mobile SAM moved before takeoff; "
-                    + "the package must be rematerialized around its current position.";
+                    + "the explicit package plan no longer matches its position.";
                 return true;
             }
             if (!plannedComponentIds.SequenceEqual(refreshedComponentIds))
             {
                 reason =
                     "The known DEAD component set changed before takeoff; "
-                    + "the package must be rematerialized with current target coverage.";
+                    + "the explicit package plan no longer matches current target coverage.";
                 return true;
             }
-            if (!IsDeadCorridorStillBlocked(package.Alliance, request.DeadPlan))
+            if (!IsDeadCorridorStillBlocked(package.Alliance, deadPlan))
             {
                 reason = "The supported corridor opened before the DEAD package took off.";
                 return true;
@@ -2055,8 +2049,8 @@ namespace Engine.Models
         {
             reason = string.Empty;
             if (package == null
-                || flight?.MissionType
-                != AirMissionRequestType.BarrierCombatAirPatrol
+                || flight?.TaskType
+                != AirFlightTaskType.Barcap
                 || flight.LifecycleState != AirTaskingLifecycleState.Active
                 || flight.ExecutionPhase == FlightExecutionPhase.Returning
                 || flight.ExecutionPhase == FlightExecutionPhase.Landing
@@ -2066,9 +2060,7 @@ namespace Engine.Models
                     out var assignedStationCenterFeet))
                 return false;
 
-            var commander = airTaskingSystem.GetCommander(package.Alliance);
-            var request = commander?.GetRequest(package.MissionRequestId);
-            var barrier = request?.BarcapBarrier;
+            var barrier = package.BarcapBarrier;
             var originalCoverage = flight.PlannedBarcapCoverage;
             if (barrier?.BarrierTileIds == null
                 || barrier.BarrierTileIds.Count == 0
@@ -2916,36 +2908,6 @@ namespace Engine.Models
             flight.Land(occurredAt);
         }
 
-        private void ResolvePackageOutcomes(DateTime currentTime)
-        {
-            foreach (var alliance in new[] { Alliance.Bluefor, Alliance.Redfor })
-            {
-                var commander = airTaskingSystem.GetCommander(alliance);
-                foreach (var package in commander.Packages
-                             .Where(candidate => candidate.HasPhysicallyEnded))
-                {
-                    if (package.LifecycleState == AirTaskingLifecycleState.Completed)
-                    {
-                        var request = commander.GetRequest(
-                            package.MissionRequestId);
-                        if (request?.FulfillmentPattern
-                            == AirMissionRequestFulfillmentPattern.Sustained)
-                        {
-                            // Sustained request fulfillment is owned by
-                            // projected coverage across rotations, not the
-                            // outcome of any one completed flight.
-                            continue;
-                        }
-
-                        commander.MarkRequestFulfilled(
-                            package.MissionRequestId,
-                            currentTime,
-                            "All package flights completed their routes and recovered.");
-                    }
-                }
-            }
-        }
-
         private void ResolveAirbaseOverruns(DateTime currentTime)
         {
             var flights = airTaskingSystem.GetPackages()
@@ -3030,10 +2992,10 @@ namespace Engine.Models
         {
             return flight != null
                    && (flight.IsFighterEscort
-                       || flight.MissionType
-                       == AirMissionRequestType.BarrierCombatAirPatrol
-                       || flight.MissionType
-                       == AirMissionRequestType.OffensiveCounterAirSweep);
+                       || flight.TaskType
+                       == AirFlightTaskType.Barcap
+                       || flight.TaskType
+                       == AirFlightTaskType.OcaSweep);
         }
 
         private float GetGuidanceSpeedKnots(

@@ -422,7 +422,7 @@ Neutral can control tiles the same way Bluefor and Redfor can. Neutral is not an
 
 **Ground tasking commander** — the per-alliance command authority that evaluates the land situation and assigns ground orders and offensive plans. It is represented in code by `GroundTaskingCommander`.
 
-**Alliance air tasking commander** — the per-alliance command authority that owns alliance air doctrine, current mission requests, packages, flights, projected effects, and support-demand history. Bluefor and Redfor each have one; Neutral has none by default.
+**Alliance air tasking commander** — the per-alliance runtime authority that owns committed packages, flights, and tasking diagnostics. Bluefor and Redfor each have one; Neutral has none by default. During the scripted-planning phase it does not generate operational demand or compose packages.
 
 Ground tasking, air tasking, and IADS use separate per-alliance command state while operating under shared core-engine rules.
 
@@ -640,13 +640,13 @@ Within each simulation tick, resolution order should stay deterministic. Air pic
 
 Supply recalculation happens after ground movement and tile capture for the game turn, and supply recovery or decay uses that freshly recalculated supply state.
 
-Air-tasking planning runs after the tick's current air, ground, and campaign effects resolve so it evaluates the freshest stable state. It then refreshes projected air effects, performs global priority rebuilding when the tick crosses an operational-cadence boundary, and runs support fulfillment before combat fulfillment.
-
-In v1, each alliance may evaluate at most eight mission requests and create at most four packages per simulation tick. Request and alliance processing use stable ordering so the planning budget does not make seeded results nondeterministic.
+Air tasking currently validates existing commitments and materializes due authored package plans after the tick's current air, ground, and campaign effects resolve. Plans and flights use stable authored identities and ordering so the result remains deterministic.
 
 ### Air planning cadence
 
 How often the air-tasking layer performs global planning and lightweight local planning.
+
+**Current development cutover:** autonomous air planning is intentionally disabled while mission execution is developed. Campaign templates author explicit `AirPackagePlan` records containing operation intent, named squadrons, aircraft strength, flight tasks, route geometry, effect timing, escort relationships, and optional BARCAP or DEAD payloads. Development schedules cover at most the first 24 campaign hours. Each due plan is attempted once and flows through the ordinary package builder, reservations, airport scheduling, execution, recovery, logging, and export paths. There is no current mission-request graph, priority scoring, projected-effect fulfillment, air-control assessment, support-demand history, or automatic rematerialization. The autonomous-planning concepts below describe deferred design work, not active runtime behavior.
 
 Global air planning runs on a longer cadence aligned with ground operational cadence — template-configurable within engine bounds (**one to six hours**; **default six hours**). It recalculates theater-wide mission priorities and purges unfulfilled requests from the previous planning cycle.
 

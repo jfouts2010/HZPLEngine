@@ -239,7 +239,7 @@ namespace Engine.Service
                     flight.FlightId,
                     squadron.CountryId,
                     gameManager.GetCountryAlliance(squadron.CountryId),
-                    flight.MissionType,
+                    flight.TaskType,
                     flight.ExecutionPhase,
                     aircraftType.ThirdPartyId,
                     Position(flight.PositionFeet),

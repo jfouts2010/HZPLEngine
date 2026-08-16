@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Models.Module;
 using UnityEngine;
 
@@ -13,6 +14,20 @@ namespace Models.Gameplay.Campaign
         private const int HexRadius = 7;
         private const int RearFighterAircraftPerSquadron = 6;
         private const int ForwardFighterAircraftPerSquadron = 3;
+        private const int InitialBarcapPreparationHours = 2;
+        private const int BarcapHandoffOverlapMinutes = 10;
+        // Both rear-base routes reach their authored station in under ten minutes.
+        private const int BarcapTransitFuelAllowanceMinutes = 10;
+        // Preserve fuel for the higher burn incurred by defensive commits.
+        private const int BarcapCombatFuelAllowanceMinutes = 15;
+        // Thirty-minute package preparation, transit, and one five-minute tick.
+        private const int BarcapPlanMaterializationLeadMinutes = 45;
+        private const float BarcapAltitudeFeet = 40000f;
+        private const float BarcapResponseRadiusKm = 80f;
+        private const int BarcapAircraftPerFlight = 2;
+
+        private static readonly DateTime CampaignStartTime =
+            new DateTime(1990, 1, 1, 6, 0, 0);
 
         private static readonly Guid BlueCountryId = TestModule.BlueCountryId;
         private static readonly Guid RedCountryId = TestModule.RedCountryId;
@@ -129,20 +144,23 @@ namespace Models.Gameplay.Campaign
 
         public static CampaignTemplate Create()
         {
+            var airDoctrineByAlliance = CreateAirDoctrineByAlliance();
             var template = new CampaignTemplate(Name)
             {
                 ModuleId = TestModule.Id,
-                CampaignStartTime = new DateTime(1990, 1, 1, 6, 0, 0),
+                CampaignStartTime = CampaignStartTime,
                 SimulationSettings = new SimulationSettings
                 {
                     SimulationTickMinutes = 5,
                     OperationalCadenceHours = 6
                 },
-                ContentHash = "advanced-mechanics-test-campaign-v16",
+                ContentHash = "advanced-mechanics-test-campaign-v19",
                 CountryAllianceAssignments = CreateCountryAllianceAssignments(),
                 OrdnanceAllowances = CreateOrdnanceAllowances(),
                 SamSiteTemplateAllowances = CreateSamSiteTemplateAllowances(),
-                AirDoctrineByAlliance = CreateAirDoctrineByAlliance(),
+                AirDoctrineByAlliance = airDoctrineByAlliance,
+                AirPackagePlans = CreateAirPackagePlans(
+                    airDoctrineByAlliance),
                 Tiles = CreateTiles(),
                 StartingTileData = CreateStartingTileData(),
                 SupplyCapitals = CreateSupplyCapitals(),
@@ -223,18 +241,392 @@ namespace Models.Gameplay.Campaign
             return new AllianceAirDoctrine
             {
                 RiskTolerance = AllianceAirDoctrine.DefaultRiskTolerance,
-                DesiredAirCombatAdvantage = AllianceAirDoctrine.DefaultDesiredAirCombatAdvantage,
-                BaselineAirborneC2Slots = 11,
-                BaselineAerialRefuelingSlots = 4,
-                PriorityWeights = new Dictionary<AirMissionRequestType, float>
+                DesiredAirCombatAdvantage =
+                    AllianceAirDoctrine.DefaultDesiredAirCombatAdvantage
+            };
+        }
+
+        private static List<AirPackagePlan> CreateAirPackagePlans(
+            IReadOnlyDictionary<Alliance, AllianceAirDoctrine>
+                airDoctrineByAlliance)
+        {
+            var plans = new List<AirPackagePlan>();
+            var aircraftTypes = TestModule.GetTestModule()
+                .AircraftTypeDefinitions
+                .ToDictionary(type => type.AircraftTypeDefinitionId);
+            AddBarcapRotations(
+                plans,
+                Alliance.Bluefor,
+                aircraftTypes[TestModule.F16AircraftTypeId],
+                airDoctrineByAlliance[Alliance.Bluefor],
+                new[]
                 {
-                    { AirMissionRequestType.BarrierCombatAirPatrol, 1.15f },
-                    { AirMissionRequestType.OffensiveCounterAirSweep, 1f },
-                    { AirMissionRequestType.DestructionOfEnemyAirDefenses, 0.85f },
-                    { AirMissionRequestType.ProvideAirborneC2, 0.9f },
-                    { AirMissionRequestType.ProvideAerialRefueling, 0.9f }
+                    BlueRearFighterSquadronIds[0],
+                    BlueRearFighterSquadronIds[2]
+                },
+                "northern",
+                new[]
+                {
+                    BlueFrontTileIds[0],
+                    BlueFrontTileIds[1],
+                    BlueFrontTileIds[2],
+                    BlueFrontTileIds[3]
+                },
+                RedFrontTileIds[1],
+                new Vector3Int(-1, 3, -2),
+                new Vector3Int(-2, 4, -2),
+                Guid.Parse("a1bb0000-0000-0000-0000-000000000001"),
+                "a1bc0000",
+                "a1bf0000",
+                0,
+                58.5f);
+            AddBarcapRotations(
+                plans,
+                Alliance.Bluefor,
+                aircraftTypes[TestModule.F16AircraftTypeId],
+                airDoctrineByAlliance[Alliance.Bluefor],
+                new[]
+                {
+                    BlueRearFighterSquadronIds[1],
+                    BlueRearFighterSquadronIds[3]
+                },
+                "southern",
+                new[]
+                {
+                    BlueFrontTileIds[3],
+                    BlueFrontTileIds[4],
+                    BlueFrontTileIds[5],
+                    BlueFrontTileIds[6]
+                },
+                RedFrontTileIds[5],
+                new Vector3Int(-1, 6, -5),
+                new Vector3Int(-2, 7, -5),
+                Guid.Parse("a1bb0000-0000-0000-0000-000000000002"),
+                "a1bc0000",
+                "a1bf0000",
+                100,
+                58.5f);
+            AddBarcapRotations(
+                plans,
+                Alliance.Redfor,
+                aircraftTypes[TestModule.Mig29AircraftTypeId],
+                airDoctrineByAlliance[Alliance.Redfor],
+                new[]
+                {
+                    RedRearFighterSquadronIds[0],
+                    RedRearFighterSquadronIds[2]
+                },
+                "northern",
+                new[]
+                {
+                    RedFrontTileIds[0],
+                    RedFrontTileIds[1],
+                    RedFrontTileIds[2],
+                    RedFrontTileIds[3]
+                },
+                BlueFrontTileIds[1],
+                new Vector3Int(2, 0, -2),
+                new Vector3Int(3, -1, -2),
+                Guid.Parse("b2bb0000-0000-0000-0000-000000000001"),
+                "b2bc0000",
+                "b2bf0000",
+                0,
+                42.9f);
+            AddBarcapRotations(
+                plans,
+                Alliance.Redfor,
+                aircraftTypes[TestModule.Mig29AircraftTypeId],
+                airDoctrineByAlliance[Alliance.Redfor],
+                new[]
+                {
+                    RedRearFighterSquadronIds[1],
+                    RedRearFighterSquadronIds[3]
+                },
+                "southern",
+                new[]
+                {
+                    RedFrontTileIds[3],
+                    RedFrontTileIds[4],
+                    RedFrontTileIds[5],
+                    RedFrontTileIds[6]
+                },
+                BlueFrontTileIds[5],
+                new Vector3Int(2, 4, -6),
+                new Vector3Int(3, 3, -6),
+                Guid.Parse("b2bb0000-0000-0000-0000-000000000002"),
+                "b2bc0000",
+                "b2bf0000",
+                100,
+                42.9f);
+            ValidateScriptedAirPlans(plans);
+            return plans;
+        }
+
+        private static void ValidateScriptedAirPlans(
+            IReadOnlyList<AirPackagePlan> plans)
+        {
+            var horizonEnd = CampaignStartTime.AddHours(
+                CampaignTemplate.ScriptedAirPlanHorizonHours);
+            var planIds = new HashSet<Guid>();
+            var flightPlanIds = new HashSet<Guid>();
+            foreach (var plan in plans)
+            {
+                if (plan.AvailableAt < CampaignStartTime
+                    || plan.EffectStart < plan.AvailableAt
+                    || plan.EffectEnd <= plan.EffectStart
+                    || plan.EffectEnd > horizonEnd)
+                {
+                    throw new InvalidOperationException(
+                        $"Air plan {plan.PlanId} falls outside the scripted "
+                        + $"{CampaignTemplate.ScriptedAirPlanHorizonHours}-hour "
+                        + "horizon.");
+                }
+
+                if (!planIds.Add(plan.PlanId))
+                {
+                    throw new InvalidOperationException(
+                        $"Duplicate scripted air plan ID {plan.PlanId}.");
+                }
+
+                foreach (var flight in plan.Flights)
+                {
+                    if (!flightPlanIds.Add(flight.FlightPlanId))
+                    {
+                        throw new InvalidOperationException(
+                            $"Duplicate scripted flight plan ID "
+                            + $"{flight.FlightPlanId}.");
+                    }
+                }
+            }
+
+            ValidateBarcapCoverageContinuity(plans);
+        }
+
+        private static void ValidateBarcapCoverageContinuity(
+            IReadOnlyList<AirPackagePlan> plans)
+        {
+            var requiredOverlap = TimeSpan.FromMinutes(
+                BarcapHandoffOverlapMinutes);
+            foreach (var barrierPlans in plans
+                         .Where(plan => plan.OperationType
+                                        == AirOperationType.Barcap
+                                        && plan.BarcapBarrier != null)
+                         .GroupBy(plan => new
+                         {
+                             plan.Alliance,
+                             plan.BarcapBarrier.BarrierId
+                         }))
+            {
+                var ordered = barrierPlans
+                    .OrderBy(plan => plan.EffectStart)
+                    .ToList();
+                for (var index = 1; index < ordered.Count; index++)
+                {
+                    var previous = ordered[index - 1];
+                    var current = ordered[index];
+                    if (current.EffectStart
+                        <= previous.EffectEnd - requiredOverlap)
+                        continue;
+
+                    throw new InvalidOperationException(
+                        $"Scripted BARCAP barrier {barrierPlans.Key.BarrierId} "
+                        + $"for {barrierPlans.Key.Alliance} lacks the required "
+                        + $"{BarcapHandoffOverlapMinutes}-minute handoff overlap "
+                        + $"between {previous.PlanId} and {current.PlanId}.");
+                }
+            }
+        }
+
+        private static void AddBarcapRotations(
+            ICollection<AirPackagePlan> plans,
+            Alliance alliance,
+            AircraftTypeDefinition aircraftType,
+            AllianceAirDoctrine doctrine,
+            IReadOnlyList<Guid> squadronIds,
+            string segmentName,
+            IReadOnlyList<Vector3Int> barrierTiles,
+            Vector3Int threatReferenceTile,
+            Vector3Int stationStartTile,
+            Vector3Int stationEndTile,
+            Guid barrierId,
+            string planIdPrefix,
+            string flightIdPrefix,
+            int sequenceOffset,
+            float preferredLaunchRangeKm)
+        {
+            var firstEffectStart = CampaignStartTime.AddHours(
+                InitialBarcapPreparationHours);
+            var planHorizonEnd = CampaignStartTime.AddHours(
+                CampaignTemplate.ScriptedAirPlanHorizonHours);
+            var usableFuelDuration = TimeSpan.FromHours(
+                aircraftType.EnduranceHours
+                * Math.Max(0f, 1f - doctrine.JokerFuelFraction));
+            var plannedStationDuration = usableFuelDuration
+                                         - TimeSpan.FromMinutes(
+                                             BarcapTransitFuelAllowanceMinutes
+                                             + BarcapCombatFuelAllowanceMinutes);
+            var handoffOverlap = TimeSpan.FromMinutes(
+                BarcapHandoffOverlapMinutes);
+            var rotationCadence = plannedStationDuration - handoffOverlap;
+            if (rotationCadence <= TimeSpan.Zero)
+            {
+                throw new InvalidOperationException(
+                    $"{aircraftType.Name} does not have enough usable fuel "
+                    + $"to sustain the scripted {alliance} {segmentName} "
+                    + "BARCAP with its required allowances and overlap.");
+            }
+
+            var rotation = 0;
+            for (var effectStart = firstEffectStart;
+                 effectStart < planHorizonEnd;
+                 effectStart += rotationCadence)
+            {
+                var effectEnd = effectStart + plannedStationDuration;
+                if (effectEnd > planHorizonEnd)
+                    effectEnd = planHorizonEnd;
+                var sequence = sequenceOffset + rotation + 1;
+                var squadronId = squadronIds[rotation % squadronIds.Count];
+                var availableAt = rotation == 0
+                    ? CampaignStartTime
+                    : effectStart - TimeSpan.FromMinutes(
+                        BarcapPlanMaterializationLeadMinutes);
+                plans.Add(CreateBarcapPlan(
+                    CreateSequencedAirPlanId(planIdPrefix, sequence),
+                    CreateSequencedAirPlanId(flightIdPrefix, sequence),
+                    barrierId,
+                    alliance,
+                    squadronId,
+                    segmentName,
+                    barrierTiles,
+                    threatReferenceTile,
+                    stationStartTile,
+                    stationEndTile,
+                    preferredLaunchRangeKm,
+                    availableAt,
+                    effectStart,
+                    effectEnd,
+                    rotation + 1));
+                rotation++;
+            }
+        }
+
+        private static AirPackagePlan CreateBarcapPlan(
+            Guid planId,
+            Guid flightId,
+            Guid barrierId,
+            Alliance alliance,
+            Guid squadronId,
+            string segmentName,
+            IReadOnlyList<Vector3Int> barrierTiles,
+            Vector3Int threatReferenceTile,
+            Vector3Int stationStartTile,
+            Vector3Int stationEndTile,
+            float preferredLaunchRangeKm,
+            DateTime availableAt,
+            DateTime effectStart,
+            DateTime effectEnd,
+            int rotation)
+        {
+            var assignedTiles = new List<Vector3Int>(barrierTiles);
+            var stationStart = PositionAtAltitude(
+                stationStartTile,
+                BarcapAltitudeFeet);
+            var stationEnd = PositionAtAltitude(
+                stationEndTile,
+                BarcapAltitudeFeet);
+            var stationCenter = (stationStart + stationEnd) * 0.5f;
+            var stationTrackHalfLengthKm = HorizontalDistanceKm(
+                stationStart,
+                stationEnd) * 0.5f;
+            var barrier = new BarcapBarrierPlan
+            {
+                BarrierId = barrierId,
+                BarrierTileIds = assignedTiles,
+                ThreatReferenceTileId = threatReferenceTile,
+                RepresentativeThreatSpeedKnots = 600f,
+                EstimatedAircraftDemand = 2
+            };
+            return new AirPackagePlan
+            {
+                PlanId = planId,
+                Alliance = alliance,
+                OperationType = AirOperationType.Barcap,
+                AvailableAt = availableAt,
+                EffectStart = effectStart,
+                EffectEnd = effectEnd,
+                OperationArea = new AirMissionArea(
+                    assignedTiles[assignedTiles.Count / 2],
+                    BarcapResponseRadiusKm),
+                BarcapBarrier = barrier,
+                Rationale = $"24-hour scripted {alliance} {segmentName} "
+                            + $"BARCAP rotation {rotation}.",
+                Flights = new List<AirFlightPlan>
+                {
+                    new AirFlightPlan
+                    {
+                        FlightPlanId = flightId,
+                        SquadronId = squadronId,
+                        TaskType = AirFlightTaskType.Barcap,
+                        AircraftCount = BarcapAircraftPerFlight,
+                        IsRequired = true,
+                        MissionWaypointsFeet = new List<Vector3>
+                        {
+                            stationStart,
+                            stationEnd
+                        },
+                        BarcapCoverage = new BarcapStationCoverage
+                        {
+                            BarrierId = barrierId,
+                            CoveredBarrierTileIds = assignedTiles,
+                            ThreatReferenceTileId = threatReferenceTile,
+                            StationCenterFeet = stationCenter,
+                            StationHeadingDegrees = HeadingDegrees(
+                                stationStart,
+                                stationEnd),
+                            StationTrackHalfLengthKm =
+                                stationTrackHalfLengthKm,
+                            PlannedResponseRadiusKm = BarcapResponseRadiusKm,
+                            PlannedPreferredLaunchRangeKm =
+                                preferredLaunchRangeKm,
+                            RepresentativeThreatSpeedKnots = 600f,
+                            PlannedAircraftCount = BarcapAircraftPerFlight,
+                            PreferredAircraftCount = BarcapAircraftPerFlight
+                        }
+                    }
                 }
             };
+        }
+
+        private static Guid CreateSequencedAirPlanId(
+            string prefix,
+            int sequence)
+        {
+            return Guid.Parse($"{prefix}-0000-0000-0000-{sequence:D12}");
+        }
+
+        private static float HorizontalDistanceKm(Vector3 first, Vector3 second)
+        {
+            return Vector2.Distance(
+                       new Vector2(first.x, first.z),
+                       new Vector2(second.x, second.z))
+                   / CampaignMapCoordinates.FeetPerKilometer;
+        }
+
+        private static float HeadingDegrees(Vector3 first, Vector3 second)
+        {
+            return Mathf.Repeat(
+                Mathf.Atan2(second.x - first.x, second.z - first.z)
+                * Mathf.Rad2Deg,
+                360f);
+        }
+
+        private static Vector3 PositionAtAltitude(
+            Vector3Int tileId,
+            float altitudeFeet)
+        {
+            var position = CampaignMapCoordinates.TileCenterFeet(tileId);
+            position.y = altitudeFeet;
+            return position;
         }
 
         private static List<SupplyCapitalStartingCondition> CreateSupplyCapitals()

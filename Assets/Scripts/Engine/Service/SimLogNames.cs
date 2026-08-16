@@ -42,9 +42,9 @@ namespace Engine.Service
             return $"PKG-{ShortId(packageId)}";
         }
 
-        public static string RequestLabel(Guid missionRequestId)
+        public static string PlanLabel(Guid planId)
         {
-            return $"REQ-{ShortId(missionRequestId)}";
+            return $"PLAN-{ShortId(planId)}";
         }
 
         public static string SiteLabel(Guid siteId)

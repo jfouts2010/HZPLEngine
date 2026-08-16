@@ -37,18 +37,17 @@ translation layers without rewriting the campaign simulation itself.
 
 ## Current capabilities
 
-- Autonomous campaigns with AI-controlled factions
+- Campaign simulation with AI-controlled ground factions and scripted air plans
 - Configurable campaign time with five-second tactical checkpoints
-- Alliance-level air planning and mission prioritization
-- Barrier combat air patrols, offensive counter-air sweeps, airborne C2, and
-  aerial refueling
+- Deterministic authored air-package plans for focused mission development
+- Barrier combat air patrols, offensive counter-air sweeps, airborne C2,
+  aerial refueling, strike, fighter escort, and SEAD escort task types
 - Package construction, aircraft reservation, loadout planning, routing, and
   flight lifecycle management
 - Chronological beyond-visual-range air combat with persistent delayed ordnance
   effects
 - Integrated air-defense networks with radar tracking, engagement assignment,
   remote cueing, and SAM execution
-- Tile-based air-interference assessment
 - Operational ground tasking, movement, combat, retreat, and territory capture
 - Supply networks, hubs, capitals, and infrastructure-aware strategic value
 - An interactive campaign workbench for inspecting tiles, units, flights,
@@ -98,14 +97,14 @@ No third-party flight simulator is required for the current Standalone Module.
 | Advance while paused | **Next +5s** or **Next +5m**, depending on the selected increment |
 | Inspect the campaign | Use the **Tile**, **Ground**, **Air**, **Last Turn**, and **Diagnostics** tabs |
 | Export a DCS AI observation mission | While paused in the DCS Prototype Module, open **Air** and select **Export current air picture (.miz)** |
-| Toggle map information | Use the overlay palette for units, combat, movement, routes, BARCAP and territory boundaries, SAM coverage, ordnance, railways, and air interference |
+| Toggle map information | Use the overlay palette for units, combat, movement, routes, BARCAP and territory boundaries, SAM coverage, ordnance, and railways |
 | Pan the map | <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>, arrow keys, middle-mouse drag, or right-mouse drag |
 | Zoom the map | Mouse wheel while the pointer is over the map |
 | Restore the interface | **Reset Layout** |
 
 ## Inspecting air operations
 
-The Air workbench exposes each alliance's current mission requests, packages,
+The Air workbench exposes authored package plans, current packages,
 flights, aircraft availability, airspace picture, and recent ordnance activity.
 Selecting a flight opens its tasking, route, execution state, combat decision,
 loadout, and event history.

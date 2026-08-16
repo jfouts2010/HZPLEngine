@@ -344,8 +344,8 @@ namespace Engine.Models
                 return route;
             }
             if (activePass != null
-                && flight.MissionType
-                == AirMissionRequestType.BarrierCombatAirPatrol)
+                && flight.TaskType
+                == AirFlightTaskType.Barcap)
             {
                 var hasTarget = frame.Flights.TryGetValue(
                     activePass.TargetFlightId,
@@ -493,7 +493,7 @@ namespace Engine.Models
                     $"Continuing committed {state.Maneuver} maneuver.");
             }
 
-            if (flight.MissionType == AirMissionRequestType.OffensiveCounterAirSweep
+            if (flight.TaskType == AirFlightTaskType.OcaSweep
                 && state.TargetFlightId != Guid.Empty
                 && state.Intent == AirCombatIntent.EngageTarget
                 && frame.Flights.TryGetValue(state.TargetFlightId, out var retainedTarget)
@@ -640,8 +640,8 @@ namespace Engine.Models
             }
             var weapon = shot.Weapon;
 
-            if (flight.MissionType
-                    == AirMissionRequestType.BarrierCombatAirPatrol
+            if (flight.TaskType
+                    == AirFlightTaskType.Barcap
                 && frame.TryGetCurrentTrack(
                     source.Alliance,
                     target.Flight.FlightId,
@@ -1142,8 +1142,8 @@ namespace Engine.Models
         {
             var assignments = new Dictionary<Guid, Guid>();
             var defenders = frame.Flights.Values
-                .Where(view => view.Flight.MissionType
-                               == AirMissionRequestType.BarrierCombatAirPatrol
+                .Where(view => view.Flight.TaskType
+                               == AirFlightTaskType.Barcap
                                && view.Flight.LifecycleState == AirTaskingLifecycleState.Active
                                && view.Flight.ExecutionPhase == FlightExecutionPhase.Executing
                                && !view.Flight.MissionAchieved
@@ -1277,8 +1277,8 @@ namespace Engine.Models
             IReadOnlyDictionary<Guid, OrdnanceTypeDefinition> ordnanceTypes,
             AllianceAirDoctrine doctrine)
         {
-            if (source.Flight.MissionType
-                == AirMissionRequestType.BarrierCombatAirPatrol)
+            if (source.Flight.TaskType
+                == AirFlightTaskType.Barcap)
             {
                 var selfDefenseTarget = frame.Flights.Values
                     .Where(candidate => AreHostile(source.Alliance, candidate.Alliance)
@@ -1492,8 +1492,8 @@ namespace Engine.Models
                     out _))
                 return false;
 
-            var isSpatialBarcap = source.Flight.MissionType
-                                  == AirMissionRequestType.BarrierCombatAirPatrol
+            var isSpatialBarcap = source.Flight.TaskType
+                                  == AirFlightTaskType.Barcap
                                   && source.Flight.ActiveBarcapCoverage
                                   is BarcapStationCoverage;
             if (isSpatialBarcap
@@ -1550,7 +1550,7 @@ namespace Engine.Models
                 || frame.Time >= source.Flight.EffectEnd)
                 return false;
 
-            if (source.Flight.MissionType == AirMissionRequestType.BarrierCombatAirPatrol)
+            if (source.Flight.TaskType == AirFlightTaskType.Barcap)
             {
                 return source.Flight.ExecutionPhase == FlightExecutionPhase.Executing
                        && frame.BarcapTargetByFlightId != null
@@ -1567,7 +1567,7 @@ namespace Engine.Models
                            out _);
             }
 
-            if (source.Flight.MissionType == AirMissionRequestType.OffensiveCounterAirSweep)
+            if (source.Flight.TaskType == AirFlightTaskType.OcaSweep)
             {
                 return source.Flight.ExecutionPhase == FlightExecutionPhase.Executing
                        && IsOcaProactiveTargetAuthorized(
@@ -1969,8 +1969,8 @@ namespace Engine.Models
             if (source?.Flight == null
                 || frame?.Flights == null
                 || (!source.Flight.IsFighterEscort
-                    && source.Flight.MissionType
-                    != AirMissionRequestType.BarrierCombatAirPatrol))
+                    && source.Flight.TaskType
+                    != AirFlightTaskType.Barcap))
                 return Guid.Empty;
 
             if (source.Flight.IsFighterEscort)
@@ -2800,8 +2800,8 @@ namespace Engine.Models
                     out var track))
                 return false;
 
-            if (source.Flight.MissionType
-                == AirMissionRequestType.BarrierCombatAirPatrol)
+            if (source.Flight.TaskType
+                == AirFlightTaskType.Barcap)
             {
                 if (!TryResolvePotentialAirThreatCapability(
                         track,
@@ -2868,8 +2868,8 @@ namespace Engine.Models
             AirCombatCommand command)
         {
             var coverage = source.Flight.ActiveBarcapCoverage;
-            if (source.Flight.MissionType
-                    != AirMissionRequestType.BarrierCombatAirPatrol
+            if (source.Flight.TaskType
+                    != AirFlightTaskType.Barcap
                 || command == null
                 || coverage?.CoveredBarrierTileIds == null
                 || coverage.CoveredBarrierTileIds.Count < 1
@@ -3013,8 +3013,8 @@ namespace Engine.Models
             {
                 command.RequestsSurfaceThreatRecovery = true;
                 command.RequestsBarcapStationRelocation =
-                    source.Flight.MissionType
-                    == AirMissionRequestType.BarrierCombatAirPatrol
+                    source.Flight.TaskType
+                    == AirFlightTaskType.Barcap
                     && command.Intent == AirCombatIntent.FollowMission
                     && command.Maneuver == AirCombatManeuver.FollowRoute;
                 command.RequestsWvrEngagement = false;
@@ -3112,8 +3112,8 @@ namespace Engine.Models
 
             command.RequestsSurfaceThreatRecovery = true;
             command.RequestsBarcapStationRelocation =
-                source.Flight.MissionType
-                == AirMissionRequestType.BarrierCombatAirPatrol
+                source.Flight.TaskType
+                == AirFlightTaskType.Barcap
                 && command.Intent == AirCombatIntent.FollowMission
                 && command.Maneuver == AirCombatManeuver.FollowRoute;
             command.RequestsWvrEngagement = false;
@@ -3359,8 +3359,8 @@ namespace Engine.Models
                     out blockingSiteId))
                 return false;
 
-            if (source.Flight.MissionType
-                != AirMissionRequestType.BarrierCombatAirPatrol)
+            if (source.Flight.TaskType
+                != AirFlightTaskType.Barcap)
             {
                 return IsEligibleTarget(
                     source,
@@ -3370,8 +3370,8 @@ namespace Engine.Models
                     doctrine);
             }
 
-            var isSpatialBarcap = source.Flight.MissionType
-                                  == AirMissionRequestType.BarrierCombatAirPatrol
+            var isSpatialBarcap = source.Flight.TaskType
+                                  == AirFlightTaskType.Barcap
                                   && source.Flight.ActiveBarcapCoverage
                                   is BarcapStationCoverage;
             if (!isSpatialBarcap
@@ -3634,10 +3634,10 @@ namespace Engine.Models
         {
             return flight != null
                    && (flight.IsFighterEscort
-                       || flight.MissionType
-                       == AirMissionRequestType.BarrierCombatAirPatrol
-                       || flight.MissionType
-                       == AirMissionRequestType.OffensiveCounterAirSweep);
+                       || flight.TaskType
+                       == AirFlightTaskType.Barcap
+                       || flight.TaskType
+                       == AirFlightTaskType.OcaSweep);
         }
 
         private static bool IsInsideMissionArea(
@@ -3755,8 +3755,8 @@ namespace Engine.Models
                 return false;
             }
 
-            if (source.Flight.MissionType
-                == AirMissionRequestType.BarrierCombatAirPatrol)
+            if (source.Flight.TaskType
+                == AirFlightTaskType.Barcap)
             {
                 reason =
                     "Continuing into WVR to stop an authorized threat to the BARCAP barrier.";
@@ -3770,8 +3770,8 @@ namespace Engine.Models
                 return true;
             }
 
-            if (source.Flight.MissionType
-                != AirMissionRequestType.OffensiveCounterAirSweep)
+            if (source.Flight.TaskType
+                != AirFlightTaskType.OcaSweep)
             {
                 reason =
                     "The assigned mission does not authorize a discretionary WVR merge; "

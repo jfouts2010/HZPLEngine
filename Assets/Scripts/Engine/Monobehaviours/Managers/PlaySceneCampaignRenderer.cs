@@ -26,7 +26,6 @@ namespace Engine.Monobehaviours.Managers
         [SerializeField] private GameManager gameManager;
         [SerializeField] private Grid grid;
         [SerializeField] private Tilemap tilemap;
-        [SerializeField] private Tilemap airControlTilemap;
         [SerializeField] private Camera sceneCamera;
         [SerializeField] private UIDocument uiDocument;
         [SerializeField] private PanelSettings panelSettings;
@@ -44,7 +43,6 @@ namespace Engine.Monobehaviours.Managers
         private readonly Dictionary<string, Sprite> combatBubbleSpritesByScore = new Dictionary<string, Sprite>();
         private readonly Dictionary<AirPlatformClass, AirMarkerSprites> airMarkerSpritesByClass =
             new Dictionary<AirPlatformClass, AirMarkerSprites>();
-        private UnityEngine.Tilemaps.Tile airControlRenderTile;
         private Sprite movementArrowHeadSprite;
         private Material movementArrowMaterial;
 
@@ -83,10 +81,6 @@ namespace Engine.Monobehaviours.Managers
         private static readonly Color RailwayLineColor = new Color(0.38f, 0.32f, 0.24f);
         private static readonly Color SupplyHubMarkerColor = new Color(0.88f, 0.58f, 0.10f);
         private static readonly Color SupplyHubMarkerBorderColor = new Color(0.98f, 0.92f, 0.78f);
-        private const float MaximumAirControlOverlayAlpha = 0.75f;
-        private static readonly Color BlueAirControlColor = new Color(0.12f, 0.38f, 0.95f, 1f);
-        private static readonly Color ContestedAirControlColor = new Color(0.58f, 0.20f, 0.72f, 1f);
-        private static readonly Color RedAirControlColor = new Color(0.92f, 0.16f, 0.18f, 1f);
         private static readonly Vector3Int[] TerritoryBorderNeighborOffsets =
         {
             new Vector3Int(1, -1, 0),
@@ -135,12 +129,12 @@ namespace Engine.Monobehaviours.Managers
         private VisualElement mapInfoContent;
         private ScrollView airOpsContent;
         private Label airOpsSummary;
-        private Label airRequestCount;
+        private Label airPlanCount;
         private Label airPackageCount;
         private Label airAirborneCount;
         private Button exportDcsAiButton;
         private Label exportDcsStatus;
-        private Button airRequestsButton;
+        private Button airPlansButton;
         private Button airPackagesButton;
         private Button airFlightsButton;
         private Button airPassesButton;
@@ -149,7 +143,7 @@ namespace Engine.Monobehaviours.Managers
         private Button airBlueFlightsButton;
         private Button airRedFlightsButton;
         private Label airInspectionStatus;
-        private VisualElement airRequestsList;
+        private VisualElement airPlansList;
         private VisualElement airPackagesList;
         private VisualElement airFlightsList;
         private VisualElement airPassesList;
@@ -190,7 +184,6 @@ namespace Engine.Monobehaviours.Managers
         private Toggle overlaySamToggle;
         private Toggle overlayOrdnanceToggle;
         private Toggle overlayRailToggle;
-        private Toggle overlayAirControlToggle;
         private Button perspectiveObserverButton;
         private Button perspectiveBlueButton;
         private Button perspectiveRedButton;
@@ -234,7 +227,7 @@ namespace Engine.Monobehaviours.Managers
 
         private enum AirOperationsView
         {
-            Requests,
+            Plans,
             Packages,
             Flights,
             OrdnancePasses
@@ -351,7 +344,6 @@ namespace Engine.Monobehaviours.Managers
 
         private void RefreshAirAfterTacticalStep()
         {
-            RefreshAirControlOverlay();
             RefreshAirOverlaysForSelection();
             RefreshSamCoverageOverlay();
             RefreshOrdnanceOverlay();
@@ -368,7 +360,6 @@ namespace Engine.Monobehaviours.Managers
             var previousSelectedCell = preserveSelection ? selectedCell : null;
 
             tilemap.ClearAllTiles();
-            airControlTilemap?.ClearAllTiles();
             tilesByCell.Clear();
             hexCentersByCell.Clear();
             tilesById.Clear();
@@ -404,7 +395,6 @@ namespace Engine.Monobehaviours.Managers
                         Quaternion.identity,
                         new Vector3(1f, HexHeight, 1f)));
                 tilemap.SetColor(cell, Color.white);
-                ConfigureAirControlTile(cell, hexCenter);
                 CreateTileLabel(campaignTile, hexCenter);
             }
 
@@ -419,7 +409,6 @@ namespace Engine.Monobehaviours.Managers
             CreateAirInspection();
             RefreshSamCoverageOverlay();
             RefreshOrdnanceOverlay();
-            RefreshAirControlOverlay();
             SetAirRouteVisibility(overlayRoutesToggle == null || overlayRoutesToggle.value);
 
             tilemap.RefreshAllTiles();
@@ -459,15 +448,6 @@ namespace Engine.Monobehaviours.Managers
                 tilemapObject.transform.SetParent(grid.transform, false);
                 tilemap = tilemapObject.AddComponent<Tilemap>();
                 tilemapObject.AddComponent<TilemapRenderer>();
-            }
-
-            if (airControlTilemap == null)
-            {
-                var overlayObject = new GameObject("Campaign Air Interference");
-                overlayObject.transform.SetParent(grid.transform, false);
-                airControlTilemap = overlayObject.AddComponent<Tilemap>();
-                var overlayRenderer = overlayObject.AddComponent<TilemapRenderer>();
-                overlayRenderer.sortingOrder = 5;
             }
 
             if (labelRoot == null)
@@ -605,12 +585,12 @@ namespace Engine.Monobehaviours.Managers
             mapInfoContent = root.Q<VisualElement>("map-info-content");
             airOpsContent = root.Q<ScrollView>("air-ops-content");
             airOpsSummary = root.Q<Label>("air-ops-summary");
-            airRequestCount = root.Q<Label>("air-request-count");
+            airPlanCount = root.Q<Label>("air-plan-count");
             airPackageCount = root.Q<Label>("air-package-count");
             airAirborneCount = root.Q<Label>("air-airborne-count");
             exportDcsAiButton = root.Q<Button>("export-dcs-ai-button");
             exportDcsStatus = root.Q<Label>("export-dcs-status");
-            airRequestsButton = root.Q<Button>("air-requests-button");
+            airPlansButton = root.Q<Button>("air-plans-button");
             airPackagesButton = root.Q<Button>("air-packages-button");
             airFlightsButton = root.Q<Button>("air-flights-button");
             airPassesButton = root.Q<Button>("air-passes-button");
@@ -619,7 +599,7 @@ namespace Engine.Monobehaviours.Managers
             airBlueFlightsButton = root.Q<Button>("air-blue-flights-button");
             airRedFlightsButton = root.Q<Button>("air-red-flights-button");
             airInspectionStatus = root.Q<Label>("air-inspection-status");
-            airRequestsList = root.Q<VisualElement>("air-requests-list");
+            airPlansList = root.Q<VisualElement>("air-plans-list");
             airPackagesList = root.Q<VisualElement>("air-packages-list");
             airFlightsList = root.Q<VisualElement>("air-flights-list");
             airPassesList = root.Q<VisualElement>("air-passes-list");
@@ -660,7 +640,6 @@ namespace Engine.Monobehaviours.Managers
             overlaySamToggle = root.Q<Toggle>("overlay-sam-toggle");
             overlayOrdnanceToggle = root.Q<Toggle>("overlay-ordnance-toggle");
             overlayRailToggle = root.Q<Toggle>("overlay-rail-toggle");
-            overlayAirControlToggle = root.Q<Toggle>("overlay-air-control-toggle");
             perspectiveObserverButton = root.Q<Button>("perspective-observer-button");
             perspectiveBlueButton = root.Q<Button>("perspective-blue-button");
             perspectiveRedButton = root.Q<Button>("perspective-red-button");
@@ -684,12 +663,12 @@ namespace Engine.Monobehaviours.Managers
             ApplyRuntimeFont(mapTabButton);
             ApplyRuntimeFont(airOpsTabButton);
             ApplyRuntimeFont(airOpsSummary);
-            ApplyRuntimeFont(airRequestCount);
+            ApplyRuntimeFont(airPlanCount);
             ApplyRuntimeFont(airPackageCount);
             ApplyRuntimeFont(airAirborneCount);
             ApplyRuntimeFont(exportDcsAiButton);
             ApplyRuntimeFont(exportDcsStatus);
-            ApplyRuntimeFont(airRequestsButton);
+            ApplyRuntimeFont(airPlansButton);
             ApplyRuntimeFont(airPackagesButton);
             ApplyRuntimeFont(airFlightsButton);
             ApplyRuntimeFont(airPassesButton);
@@ -815,8 +794,8 @@ namespace Engine.Monobehaviours.Managers
             if (togglePanelButton != null)
                 togglePanelButton.clicked += ToggleWorkbenchPanel;
 
-            if (airRequestsButton != null)
-                airRequestsButton.clicked += () => ShowAirOperationsView(AirOperationsView.Requests);
+            if (airPlansButton != null)
+                airPlansButton.clicked += () => ShowAirOperationsView(AirOperationsView.Plans);
             if (airPackagesButton != null)
                 airPackagesButton.clicked += () => ShowAirOperationsView(AirOperationsView.Packages);
             if (airFlightsButton != null)
@@ -1024,13 +1003,6 @@ namespace Engine.Monobehaviours.Managers
                     railwayRoot.gameObject.SetActive(value);
             });
             ConfigureOverlayToggle(overlayOrdnanceToggle, "Ordnance", true, _ => RefreshOrdnanceOverlay());
-            ConfigureOverlayToggle(overlayAirControlToggle, "AirControl", false, value =>
-            {
-                if (airControlTilemap != null)
-                    airControlTilemap.gameObject.SetActive(value);
-                if (value)
-                    RefreshAirControlOverlay();
-            });
         }
 
         private static void ConfigureOverlayToggle(
@@ -1076,21 +1048,6 @@ namespace Engine.Monobehaviours.Managers
             tilemap.RefreshAllTiles();
         }
 
-        private void ConfigureAirControlTile(Vector3Int cell, Vector3 hexCenter)
-        {
-            if (airControlTilemap == null)
-                return;
-
-            airControlTilemap.SetTile(cell, GetAirControlRenderTile());
-            airControlTilemap.SetTileFlags(cell, TileFlags.None);
-            airControlTilemap.SetTransformMatrix(
-                cell,
-                Matrix4x4.TRS(
-                    hexCenter - airControlTilemap.GetCellCenterLocal(cell),
-                    Quaternion.identity,
-                    new Vector3(1f, HexHeight, 1f)));
-        }
-
         private void UpdateTilemapChunkCullingBounds()
         {
             if (tilemap == null || hexCentersByCell.Count == 0)
@@ -1113,7 +1070,6 @@ namespace Engine.Monobehaviours.Managers
             }
 
             ApplyChunkCullingBounds(tilemap, cullingExtension);
-            ApplyChunkCullingBounds(airControlTilemap, cullingExtension);
         }
 
         private static void ApplyChunkCullingBounds(Tilemap targetTilemap, Vector3 cullingExtension)
@@ -1128,128 +1084,6 @@ namespace Engine.Monobehaviours.Managers
             tilemapRenderer.detectChunkCullingBounds =
                 TilemapRenderer.DetectChunkCullingBounds.Manual;
             tilemapRenderer.chunkCullingBounds = cullingExtension;
-        }
-
-        private void RefreshAirControlOverlay()
-        {
-            if (airControlTilemap == null || !airControlTilemap.gameObject.activeSelf)
-                return;
-
-            var blueCommander = gameManager?.GetAllianceAirTaskingCommander(Alliance.Bluefor);
-            var redCommander = gameManager?.GetAllianceAirTaskingCommander(Alliance.Redfor);
-            foreach (var campaignTile in tilesById.Values)
-            {
-                if (TryGetPerspectiveAlliance(out var viewerAlliance))
-                {
-                    var viewerCommander = viewerAlliance == Alliance.Bluefor
-                        ? blueCommander
-                        : redCommander;
-                    var hasViewerEstimate = TryGetAirInterferencePicture(
-                        viewerCommander,
-                        campaignTile.TileId,
-                        out var viewerBalance,
-                        out var viewerInterference);
-                    airControlTilemap.SetColor(
-                        GetCell(campaignTile.TileId),
-                        GetAirInterferenceOverlayColor(
-                            hasViewerEstimate
-                                ? viewerAlliance == Alliance.Bluefor
-                                    ? viewerBalance
-                                    : -viewerBalance
-                                : 0f,
-                            hasViewerEstimate ? viewerInterference : 0f));
-                    continue;
-                }
-
-                var hasBlueEstimate = TryGetAirInterferencePicture(
-                    blueCommander,
-                    campaignTile.TileId,
-                    out var blueBalance,
-                    out var blueInterference);
-                var hasRedEstimate = TryGetAirInterferencePicture(
-                    redCommander,
-                    campaignTile.TileId,
-                    out var redBalance,
-                    out var redInterference);
-                var estimateCount = (hasBlueEstimate ? 1 : 0) + (hasRedEstimate ? 1 : 0);
-                var combinedBlueBalance = estimateCount > 0
-                    ? ((hasBlueEstimate ? blueBalance : 0f)
-                       + (hasRedEstimate ? -redBalance : 0f)) / estimateCount
-                    : 0f;
-                var combinedInterference = estimateCount > 0
-                    ? ((hasBlueEstimate ? blueInterference : 0f)
-                       + (hasRedEstimate ? redInterference : 0f)) / estimateCount
-                    : 0f;
-                airControlTilemap.SetColor(
-                    GetCell(campaignTile.TileId),
-                    GetAirInterferenceOverlayColor(
-                        combinedBlueBalance,
-                        combinedInterference));
-            }
-
-            // SetColor is immediate. RefreshAllTiles would reapply the shared tile's
-            // opaque white default and erase these per-cell translucent tints.
-        }
-
-        private static bool TryGetAirInterferencePicture(
-            AllianceAirTaskingCommander commander,
-            Vector3Int tileId,
-            out float interferenceBalance,
-            out float interferenceStrength)
-        {
-            interferenceBalance = 0f;
-            interferenceStrength = 0f;
-            if (commander == null
-                || !commander.TryGetAirControlAssessment(tileId, out var assessment))
-                return false;
-
-            var friendlyInterference = assessment.FriendlyAirInterference;
-            var hostileInterference = assessment.HostileAirInterference;
-            var totalInterference = friendlyInterference + hostileInterference;
-            interferenceBalance = totalInterference > 0f
-                ? (friendlyInterference - hostileInterference) / totalInterference
-                : 0f;
-            interferenceStrength = Mathf.Max(
-                friendlyInterference,
-                hostileInterference);
-            return true;
-        }
-
-        private static Color GetAirInterferenceOverlayColor(
-            float blueBalance,
-            float interferenceStrength)
-        {
-            var balance = Mathf.Clamp(blueBalance, -1f, 1f);
-            var color = balance >= 0f
-                ? Color.Lerp(ContestedAirControlColor, BlueAirControlColor, balance)
-                : Color.Lerp(ContestedAirControlColor, RedAirControlColor, -balance);
-            color.a = Mathf.Clamp01(interferenceStrength) * MaximumAirControlOverlayAlpha;
-            return color;
-        }
-
-        private UnityEngine.Tilemaps.Tile GetAirControlRenderTile()
-        {
-            if (airControlRenderTile != null)
-                return airControlRenderTile;
-
-            var pixels = Enumerable.Repeat(Color.white, TilePixelSize * TilePixelSize).ToArray();
-            ApplyHexMask(pixels);
-            var texture = new Texture2D(TilePixelSize, TilePixelSize)
-            {
-                filterMode = FilterMode.Point,
-                wrapMode = TextureWrapMode.Clamp
-            };
-            texture.SetPixels(pixels);
-            texture.Apply();
-            var sprite = Sprite.Create(
-                texture,
-                new Rect(0, 0, TilePixelSize, TilePixelSize),
-                new Vector2(0.5f, 0.5f),
-                TilePixelSize);
-            airControlRenderTile = ScriptableObject.CreateInstance<UnityEngine.Tilemaps.Tile>();
-            airControlRenderTile.sprite = sprite;
-            airControlRenderTile.color = Color.white;
-            return airControlRenderTile;
         }
 
         private void ResetWorkbenchLayout()
@@ -1270,8 +1104,7 @@ namespace Engine.Monobehaviours.Managers
                          "TerritoryBoundaries",
                          "SamCoverage",
                          "Ordnance",
-                         "Railways",
-                         "AirControl"
+                         "Railways"
                      })
                 PlayerPrefs.DeleteKey($"HZPL.Workbench.Overlay.{name}");
             if (hudPanel != null)
@@ -1290,7 +1123,6 @@ namespace Engine.Monobehaviours.Managers
             SetOverlayToggleValue(overlaySamToggle, true);
             SetOverlayToggleValue(overlayOrdnanceToggle, true);
             SetOverlayToggleValue(overlayRailToggle, true);
-            SetOverlayToggleValue(overlayAirControlToggle, false);
             if (flightDetailPopup != null)
             {
                 flightDetailPopup.style.left = 670f;
@@ -1944,7 +1776,7 @@ namespace Engine.Monobehaviours.Managers
         private void ShowAirOperationsView(AirOperationsView view)
         {
             airOperationsView = view;
-            SetAirListVisible(airRequestsList, view == AirOperationsView.Requests);
+            SetAirListVisible(airPlansList, view == AirOperationsView.Plans);
             SetAirListVisible(airPackagesList, view == AirOperationsView.Packages);
             SetAirListVisible(airFlightsList, view == AirOperationsView.Flights);
             SetAirListVisible(airPassesList, view == AirOperationsView.OrdnancePasses);
@@ -1952,7 +1784,7 @@ namespace Engine.Monobehaviours.Managers
                 "campaign-air-alliance-filter--hidden",
                 view != AirOperationsView.Flights);
 
-            SetAirTabSelected(airRequestsButton, view == AirOperationsView.Requests);
+            SetAirTabSelected(airPlansButton, view == AirOperationsView.Plans);
             SetAirTabSelected(airPackagesButton, view == AirOperationsView.Packages);
             SetAirTabSelected(airFlightsButton, view == AirOperationsView.Flights);
             SetAirTabSelected(airPassesButton, view == AirOperationsView.OrdnancePasses);
@@ -1961,7 +1793,7 @@ namespace Engine.Monobehaviours.Managers
             {
                 airListTitle.text = view switch
                 {
-                    AirOperationsView.Requests => "CURRENT MISSION REQUESTS",
+                    AirOperationsView.Plans => "AUTHORED AIR PACKAGE PLANS",
                     AirOperationsView.Packages => "CURRENT AIR PACKAGES",
                     AirOperationsView.OrdnancePasses => "LAST TURN ORDNANCE PASSES - SELECT A ROW FOR DETAILS",
                     _ => "CURRENT FLIGHTS — SELECT A ROW FOR DETAILS"
@@ -2040,7 +1872,6 @@ namespace Engine.Monobehaviours.Managers
             RefreshSamCoverageOverlay();
             RefreshOrdnanceOverlay();
             UpdateAirOperationsUi();
-            RefreshAirControlOverlay();
         }
 
         private bool TryGetPerspectiveAlliance(out Alliance alliance)
@@ -2109,11 +1940,12 @@ namespace Engine.Monobehaviours.Managers
             var commanders = allCommanders
                 .Where(commander => visibleAlliances.Contains(commander.Alliance))
                 .ToList();
-            var requests = commanders
-                .SelectMany(commander => commander.MissionRequests)
-                .Where(request => !request.IsTerminal)
-                .OrderBy(request => request.Alliance)
-                .ThenByDescending(request => request.Priority)
+            var plans = (gameManager.CampaignTemplate.AirPackagePlans
+                         ?? new List<AirPackagePlan>())
+                .Where(plan => plan != null
+                               && visibleAlliances.Contains(plan.Alliance))
+                .OrderBy(plan => plan.Alliance)
+                .ThenBy(plan => plan.EffectStart)
                 .ToList();
             var packages = commanders
                 .SelectMany(commander => commander.Packages)
@@ -2141,14 +1973,14 @@ namespace Engine.Monobehaviours.Managers
             var airborneCount = CountPerspectiveVisibleAirborneFlights(flights, allPackages);
 
             airOpsSummary.text =
-                $"Planning cycle {commanders.Select(commander => commander.PlanningCycle).DefaultIfEmpty().Max()}  •  " +
+                $"{plans.Count} authored plans  •  " +
                 $"{visibleFlightCount} visible flights and tracks\n" +
                 (mapPerspective == MapPerspective.Observer
                     ? "Observer view uses authoritative positions, platform types, and routes."
                     : "Friendly flights are exact; hostile aircraft appear only through established IADS tracks.");
             ApplyRuntimeFont(airOpsSummary);
-            if (airRequestCount != null)
-                airRequestCount.text = requests.Count.ToString();
+            if (airPlanCount != null)
+                airPlanCount.text = plans.Count.ToString();
             if (airPackageCount != null)
                 airPackageCount.text = packages.Count.ToString();
             if (airAirborneCount != null)
@@ -2165,8 +1997,8 @@ namespace Engine.Monobehaviours.Managers
                     : "Pause the campaign before exporting a DCS mission.";
             }
 
-            if (airRequestsButton != null)
-                airRequestsButton.text = $"Requests  {requests.Count}";
+            if (airPlansButton != null)
+                airPlansButton.text = $"Plans  {plans.Count}";
             if (airPackagesButton != null)
                 airPackagesButton.text = $"Packages  {packages.Count}";
             if (airFlightsButton != null)
@@ -2180,8 +2012,8 @@ namespace Engine.Monobehaviours.Managers
                 airRedFlightsButton.text =
                     $"Red  {CountPerspectiveVisibleFlights(flights, allPackages, Alliance.Redfor)}";
 
-            RebuildAirRequestsList(requests);
-            RebuildAirPackagesList(packages, commanders);
+            RebuildAirPlansList(plans);
+            RebuildAirPackagesList(packages);
             RebuildAirFlightsList(
                 flights.Where(flight => GetFlightAlliance(flight, allPackages) == airFlightAlliance).ToList(),
                 allPackages);
@@ -2336,13 +2168,11 @@ namespace Engine.Monobehaviours.Managers
                     .Where(squadron => gameManager.GetCountryAlliance(squadron.CountryId) == alliance)
                     .ToList();
                 var allAircraft = squadrons.SelectMany(squadron => squadron.Aircraft).ToList();
-                var coverage = CalculateAirInterferenceCoverage(alliance);
                 var commander = gameManager.GetAllianceAirTaskingCommander(alliance);
-                var openRequests = commander?.MissionRequests.Count(request => !request.IsTerminal) ?? 0;
-                var unmetRequests = commander?.MissionRequests.Count(request =>
-                    !request.IsTerminal
-                    && request.State != AirMissionRequestState.Fulfilled
-                    && request.State != AirMissionRequestState.InProgress) ?? 0;
+                var activePackages = commander?.Packages.Count(package =>
+                    !package.HasPhysicallyEnded) ?? 0;
+                var authoredPlans = gameManager.CampaignTemplate.AirPackagePlans
+                    .Count(plan => plan != null && plan.Alliance == alliance);
                 var panel = new VisualElement();
                 panel.AddToClassList("campaign-air-card");
                 panel.AddToClassList(alliance == Alliance.Bluefor
@@ -2354,53 +2184,9 @@ namespace Engine.Monobehaviours.Managers
                     $"Aircraft {allAircraft.Count}  •  Ready {squadrons.Sum(item => item.ReadyAircraft)}  •  Assigned {squadrons.Sum(item => item.AssignedAircraft)}  •  Damaged {squadrons.Sum(item => item.DamagedAircraft)}  •  Lost {squadrons.Sum(item => item.LostAircraft)}");
                 AddCompactLine(
                     panel,
-                    $"Own airspace interference: friendly only {coverage.FriendlyOnly}/{coverage.TotalLand}  •  hostile only {coverage.HostileOnly}/{coverage.TotalLand}  •  both {coverage.Both}  •  clear {coverage.Clear}");
-                AddCompactLine(panel, $"Requests {openRequests}  •  unmet/deferred {unmetRequests}");
+                    $"Authored plans {authoredPlans}  •  active packages {activePackages}");
                 airOverviewGrid.Add(panel);
             }
-        }
-
-        private (int TotalLand, int FriendlyOnly, int HostileOnly, int Both, int Clear)
-            CalculateAirInterferenceCoverage(Alliance territoryOwner)
-        {
-            var landTiles = gameManager.tileSystem.LandTiles
-                .Where(tile => tile.Controller == territoryOwner)
-                .ToList();
-            var commander = gameManager.GetAllianceAirTaskingCommander(territoryOwner);
-            var friendly = 0;
-            var hostile = 0;
-            var contested = 0;
-            var quiet = 0;
-            foreach (var tile in landTiles)
-            {
-                if (commander == null
-                    || !commander.TryGetAirControlAssessment(
-                        tile.TileId,
-                        out var assessment))
-                {
-                    quiet++;
-                    continue;
-                }
-
-                const float meaningfulInterference = 0.25f;
-                var friendlyInterference = assessment.FriendlyAirInterference;
-                var hostileInterference = assessment.HostileAirInterference;
-                if (friendlyInterference >= meaningfulInterference
-                    && hostileInterference >= meaningfulInterference)
-                    contested++;
-                else if (friendlyInterference >= meaningfulInterference)
-                    friendly++;
-                else if (hostileInterference >= meaningfulInterference)
-                    hostile++;
-                else
-                    quiet++;
-            }
-            return (
-                landTiles.Count,
-                friendly,
-                hostile,
-                contested,
-                quiet);
         }
 
         private void UpdateGroundOperationsUi()
@@ -2488,11 +2274,15 @@ namespace Engine.Monobehaviours.Managers
                 var squadrons = gameManager.squadronSystem.Squadrons
                     .Where(squadron => gameManager.GetCountryAlliance(squadron.CountryId) == alliance)
                     .ToList();
-                var coverage = CalculateAirInterferenceCoverage(alliance);
+                var commander = gameManager.GetAllianceAirTaskingCommander(alliance);
+                var authoredPlans = gameManager.CampaignTemplate.AirPackagePlans
+                    .Count(plan => plan != null && plan.Alliance == alliance);
+                var activePackages = commander?.Packages.Count(package =>
+                    !package.HasPhysicallyEnded) ?? 0;
                 lines.Add($"{alliance}");
                 lines.Add(
                     $"Aircraft {squadrons.Sum(item => item.Aircraft.Count)}  •  Ready {squadrons.Sum(item => item.ReadyAircraft)}  •  Assigned {squadrons.Sum(item => item.AssignedAircraft)}  •  Damaged {squadrons.Sum(item => item.DamagedAircraft)}  •  Lost {squadrons.Sum(item => item.LostAircraft)}");
-                lines.Add($"Air interference on own land: friendly only {coverage.FriendlyOnly}/{coverage.TotalLand}, hostile only {coverage.HostileOnly}/{coverage.TotalLand}, both {coverage.Both}, clear {coverage.Clear}");
+                lines.Add($"Authored plans {authoredPlans}, active packages {activePackages}");
             }
             return lines;
         }
@@ -2643,57 +2433,61 @@ namespace Engine.Monobehaviours.Managers
             parent.Add(label);
         }
 
-        private void RebuildAirRequestsList(IReadOnlyList<AirMissionRequest> requests)
+        private void RebuildAirPlansList(IReadOnlyList<AirPackagePlan> plans)
         {
-            if (airRequestsList == null)
+            if (airPlansList == null)
                 return;
 
-            airRequestsList.Clear();
-            if (requests.Count == 0)
+            airPlansList.Clear();
+            if (plans.Count == 0)
             {
-                airRequestsList.Add(CreateAirEmptyLabel("No current mission requests."));
+                airPlansList.Add(CreateAirEmptyLabel("No authored air package plans."));
                 return;
             }
 
-            foreach (var request in requests)
+            foreach (var plan in plans)
             {
-                var title = $"{GetAllianceLabel(request.Alliance)} {GetMissionLabel(request.RequestType)}  •  {request.State}";
+                var package = gameManager
+                    .GetAllianceAirTaskingCommander(plan.Alliance)?.Packages
+                    .FirstOrDefault(candidate => candidate.PlanId == plan.PlanId);
+                var status = package != null
+                    ? package.LifecycleState.ToString()
+                    : gameManager.CurrentTime < plan.AvailableAt
+                        ? "Scheduled"
+                        : "Pending materialization";
+                var title = $"{GetAllianceLabel(plan.Alliance)} {GetOperationLabel(plan.OperationType)}  •  {status}";
                 var fields = new List<AirCardField>
                 {
-                    new AirCardField("Request ID", ShortId(request.MissionRequestId)),
-                    new AirCardField("Priority", request.Priority.ToString("0.0")),
+                    new AirCardField("Plan ID", ShortId(plan.PlanId)),
                     new AirCardField(
-                        "Mission area",
-                        $"Hex {FormatTile(request.MissionArea.CenterTileId)} / "
-                        + $"{request.MissionArea.RadiusKm:0.#} km radius"),
-                    new AirCardField("Effect window", $"{request.EffectStart:MM-dd HH:mm} – {request.EffectEnd:MM-dd HH:mm}"),
+                        "Operation area",
+                        $"Hex {FormatTile(plan.OperationArea.CenterTileId)} / "
+                        + $"{plan.OperationArea.RadiusKm:0.#} km radius"),
+                    new AirCardField("Effect window", $"{plan.EffectStart:MM-dd HH:mm} – {plan.EffectEnd:MM-dd HH:mm}"),
                     new AirCardField(
-                        "Demand",
-                        $"{request.DesiredAircraftStrength} aircraft" +
-                        (request.DesiredSupportSlots > 0
-                            ? $" / {request.DesiredSupportSlots} support slots"
-                            : string.Empty))
+                        "Composition",
+                        $"{plan.Flights.Count} flights / "
+                        + $"{plan.Flights.Sum(flight => Math.Max(0, flight.AircraftCount))} aircraft")
                 };
-                if (request.DeadPlan != null)
+                if (plan.DeadPlan != null)
                 {
                     fields.Add(new AirCardField(
                         "SAM target",
-                        $"{ShortId(request.DeadPlan.TargetSiteId)} / "
-                        + $"{request.DeadPlan.TargetComponentIds.Count} known components"));
+                        $"{ShortId(plan.DeadPlan.TargetSiteId)} / "
+                        + $"{plan.DeadPlan.TargetComponentIds.Count} known components"));
                 }
-                if (!string.IsNullOrWhiteSpace(request.Rationale))
-                    fields.Add(new AirCardField("Intent", request.Rationale));
-                airRequestsList.Add(CreateAirCard(
-                    request.Alliance,
+                if (!string.IsNullOrWhiteSpace(plan.Rationale))
+                    fields.Add(new AirCardField("Intent", plan.Rationale));
+                airPlansList.Add(CreateAirCard(
+                    plan.Alliance,
                     title,
                     fields,
-                    () => OpenRequestInspector(request.MissionRequestId, request.Alliance)));
+                    () => OpenPlanInspector(plan.PlanId, plan.Alliance)));
             }
         }
 
         private void RebuildAirPackagesList(
-            IReadOnlyList<AirPackage> packages,
-            IReadOnlyList<AllianceAirTaskingCommander> commanders)
+            IReadOnlyList<AirPackage> packages)
         {
             if (airPackagesList == null)
                 return;
@@ -2707,10 +2501,6 @@ namespace Engine.Monobehaviours.Managers
 
             foreach (var package in packages)
             {
-                var request = commanders
-                    .First(commander => commander.Alliance == package.Alliance)
-                    .MissionRequests
-                    .First(candidate => candidate.MissionRequestId == package.MissionRequestId);
                 var aircraftCount = package.Flights
                     .Sum(flight => flight.AircraftIds.Count);
                 var title =
@@ -2719,17 +2509,11 @@ namespace Engine.Monobehaviours.Managers
                 {
                     new AirCardField(
                         "Mission",
-                        GetMissionLabel(request.RequestType)),
+                        GetOperationLabel(package.OperationType)),
                     new AirCardField("Composition", $"{package.Flights.Count} flights / {aircraftCount} aircraft"),
                     new AirCardField("Earliest launch", package.EarliestTakeoffTime.ToString("MM-dd HH:mm")),
-                    (request.RequestType == AirMissionRequestType.OffensiveCounterAirSweep
-                     || request.RequestType
-                     == AirMissionRequestType.DestructionOfEnemyAirDefenses)
-                        ? new AirCardField("Sweep pass", $"{package.EffectStart:MM-dd HH:mm} – {package.EffectEnd:MM-dd HH:mm}")
-                        : request.FulfillmentPattern == AirMissionRequestFulfillmentPattern.Discrete
-                            ? new AirCardField("Effect time", package.EffectStart.ToString("MM-dd HH:mm"))
-                            : new AirCardField("Effect window", $"{package.EffectStart:MM-dd HH:mm} – {package.EffectEnd:MM-dd HH:mm}"),
-                    new AirCardField("Source request", ShortId(package.MissionRequestId))
+                    new AirCardField("Effect window", $"{package.EffectStart:MM-dd HH:mm} – {package.EffectEnd:MM-dd HH:mm}"),
+                    new AirCardField("Source plan", ShortId(package.PlanId))
                 };
                 var rendezvous = package.RendezvousWaypoint;
                 if (rendezvous != null)
@@ -2939,41 +2723,43 @@ namespace Engine.Monobehaviours.Managers
             return card;
         }
 
-        private void OpenRequestInspector(Guid requestId, Alliance alliance)
+        private void OpenPlanInspector(Guid planId, Alliance alliance)
         {
-            var commander = gameManager.GetAllianceAirTaskingCommander(alliance);
-            var request = commander?.MissionRequests
-                .FirstOrDefault(candidate => candidate.MissionRequestId == requestId);
-            if (request == null)
+            var plan = gameManager.CampaignTemplate.AirPackagePlans
+                .FirstOrDefault(candidate => candidate != null
+                                             && candidate.PlanId == planId
+                                             && candidate.Alliance == alliance);
+            if (plan == null)
                 return;
             CreatePinnedInspector(
-                $"Request {ShortId(requestId)}",
+                $"Plan {ShortId(planId)}",
                 () =>
                 {
-                    var current = gameManager.GetAllianceAirTaskingCommander(alliance)?.MissionRequests
-                        .FirstOrDefault(candidate => candidate.MissionRequestId == requestId);
+                    var current = gameManager.CampaignTemplate.AirPackagePlans
+                        .FirstOrDefault(candidate => candidate != null
+                                                     && candidate.PlanId == planId
+                                                     && candidate.Alliance == alliance);
                     if (current == null)
-                        return new[] { "STALE", "Mission request is no longer active." };
+                        return new[] { "STALE", "Air package plan is no longer authored." };
                     var lines = new List<string>
                     {
-                        $"Request ID  {current.MissionRequestId:N}",
+                        $"Plan ID  {current.PlanId:N}",
                         $"Alliance  {current.Alliance}",
-                        $"Type  {GetMissionLabel(current.RequestType)}",
-                        $"State  {current.State}",
-                        $"Priority  {current.Priority:0.0}",
-                        $"Area  {FormatTile(current.MissionArea.CenterTileId)} radius {current.MissionArea.RadiusKm:0.#} km",
+                        $"Operation  {GetOperationLabel(current.OperationType)}",
+                        $"Available  {current.AvailableAt:yyyy-MM-dd HH:mm}",
+                        $"Area  {FormatTile(current.OperationArea.CenterTileId)} radius {current.OperationArea.RadiusKm:0.#} km",
                         $"Effect  {current.EffectStart:yyyy-MM-dd HH:mm} → {current.EffectEnd:yyyy-MM-dd HH:mm}",
-                        $"Demand  {current.DesiredAircraftStrength} aircraft / {current.DesiredSupportSlots} support slots",
+                        $"Composition  {current.Flights.Count} flights / {current.Flights.Sum(flight => Math.Max(0, flight.AircraftCount))} aircraft",
                         $"Rationale  {current.Rationale}"
                     };
-                    lines.AddRange(commander.Diagnostics
-                        .Where(item => item.MissionRequestId == requestId)
+                    lines.AddRange(gameManager.GetAllianceAirTaskingCommander(alliance).Diagnostics
+                        .Where(item => item.PlanId == planId)
                         .OrderByDescending(item => item.RecordedAt)
                         .Take(20)
                         .Select(item => $"{item.RecordedAt:MM-dd HH:mm}  {item.Code}  •  {item.Message}"));
                     return lines;
                 },
-                () => FocusTile(request.MissionArea.CenterTileId));
+                () => FocusTile(plan.OperationArea.CenterTileId));
         }
 
         private void OpenPackageInspector(Guid packageId, Alliance alliance)
@@ -2995,7 +2781,8 @@ namespace Engine.Monobehaviours.Managers
                 $"Package ID  {package.PackageId:N}",
                 $"Alliance  {package.Alliance}",
                 $"Lifecycle  {package.LifecycleState}",
-                $"Request  {package.MissionRequestId:N}",
+                $"Plan  {package.PlanId:N}",
+                $"Operation  {GetOperationLabel(package.OperationType)}",
                 $"Created  {package.CreatedAt:yyyy-MM-dd HH:mm}",
                 $"Effect  {package.EffectStart:yyyy-MM-dd HH:mm} → {package.EffectEnd:yyyy-MM-dd HH:mm}",
                 $"Flights  {package.Flights.Count}",
@@ -3244,9 +3031,9 @@ namespace Engine.Monobehaviours.Managers
                 $"Heading: {flight.HeadingDegrees:0}°",
                 $"Planned takeoff: {flight.PlannedTakeoffTime:yyyy-MM-dd HH:mm}",
                 flight.HasSustainedEffect
-                || flight.MissionType == AirMissionRequestType.OffensiveCounterAirSweep
-                || flight.MissionType
-                == AirMissionRequestType.DestructionOfEnemyAirDefenses
+                || flight.TaskType == AirFlightTaskType.OcaSweep
+                || flight.TaskType
+                == AirFlightTaskType.DeadAttack
                     ? $"Effect window: {flight.EffectStart:yyyy-MM-dd HH:mm} – {flight.EffectEnd:yyyy-MM-dd HH:mm}"
                     : $"Effect time: {flight.EffectStart:yyyy-MM-dd HH:mm}",
                 $"Mission area: Hex {FormatTile(flight.MissionArea.CenterTileId)}");
@@ -4056,16 +3843,33 @@ namespace Engine.Monobehaviours.Managers
             };
         }
 
-        private static string GetMissionLabel(AirMissionRequestType mission)
+        private static string GetMissionLabel(AirFlightTaskType mission)
         {
             return mission switch
             {
-                AirMissionRequestType.BarrierCombatAirPatrol => "BARCAP",
-                AirMissionRequestType.OffensiveCounterAirSweep => "OCA Sweep",
-                AirMissionRequestType.DestructionOfEnemyAirDefenses => "DEAD",
-                AirMissionRequestType.ProvideAirborneC2 => "Airborne C2",
-                AirMissionRequestType.ProvideAerialRefueling => "Aerial Refueling",
+                AirFlightTaskType.Barcap => "BARCAP",
+                AirFlightTaskType.OcaSweep => "OCA Sweep",
+                AirFlightTaskType.DeadAttack => "DEAD",
+                AirFlightTaskType.AirborneC2 => "Airborne C2",
+                AirFlightTaskType.AerialRefueling => "Aerial Refueling",
+                AirFlightTaskType.FighterEscort => "Fighter Escort",
+                AirFlightTaskType.SeadEscort => "SEAD Escort",
+                AirFlightTaskType.Strike => "Strike",
                 _ => mission.ToString()
+            };
+        }
+
+        private static string GetOperationLabel(AirOperationType operation)
+        {
+            return operation switch
+            {
+                AirOperationType.Barcap => "BARCAP",
+                AirOperationType.OcaSweep => "OCA Sweep",
+                AirOperationType.AirborneC2 => "Airborne C2",
+                AirOperationType.AerialRefueling => "Aerial Refueling",
+                AirOperationType.Dead => "DEAD",
+                AirOperationType.Strike => "Strike",
+                _ => operation.ToString()
             };
         }
 
@@ -5170,18 +4974,12 @@ namespace Engine.Monobehaviours.Managers
                 var commander = gameManager.GetAllianceAirTaskingCommander(alliance);
                 if (commander == null)
                     continue;
-                var liveRequestIds = commander.Packages
-                    .Where(package => !package.IsTerminal)
-                    .Select(package => package.MissionRequestId)
-                    .ToHashSet();
-                var barriers = commander.MissionRequests
-                    .Where(request =>
-                        (request.PlanningCycle == commander.PlanningCycle
-                         || liveRequestIds.Contains(request.MissionRequestId))
-                        && request.RequestType ==
-                            AirMissionRequestType.BarrierCombatAirPatrol
-                        && request.BarcapBarrier?.BarrierTileIds?.Count > 0)
-                    .Select(request => request.BarcapBarrier)
+                var barriers = commander.Packages
+                    .Where(package => !package.IsTerminal
+                                      && package.OperationType
+                                      == AirOperationType.Barcap
+                                      && package.BarcapBarrier?.BarrierTileIds?.Count > 0)
+                    .Select(package => package.BarcapBarrier)
                     .GroupBy(barrier => barrier.BarrierId)
                     .Select(group => group.First())
                     .ToList();
@@ -5189,8 +4987,8 @@ namespace Engine.Monobehaviours.Managers
                     .Where(package => !package.IsTerminal)
                     .SelectMany(package => package.Flights)
                     .Where(flight =>
-                        flight.MissionType ==
-                            AirMissionRequestType.BarrierCombatAirPatrol
+                        flight.TaskType ==
+                            AirFlightTaskType.Barcap
                         && !flight.IsTerminal
                         && flight.ExecutionPhase != FlightExecutionPhase.Returning
                         && flight.ExecutionPhase != FlightExecutionPhase.Landing
@@ -5223,7 +5021,7 @@ namespace Engine.Monobehaviours.Managers
                 return;
 
             var color = GetAirMissionIntentColor(
-                AirMissionRequestType.BarrierCombatAirPatrol,
+                AirFlightTaskType.Barcap,
                 alliance);
             if (points.Count == 1)
             {
@@ -5326,13 +5124,13 @@ namespace Engine.Monobehaviours.Managers
             if (!TryGetFlightMissionArea(flight, out var area))
                 return;
 
-            var color = GetAirMissionIntentColor(flight.MissionType, alliance);
+            var color = GetAirMissionIntentColor(flight.TaskType, alliance);
             color.a = 0.78f;
             var center = GetMissionAreaMapCenter(area);
             var radius = GetMissionAreaMapRadius(area);
             var label = flight.IsFighterEscort
                 ? "ESCORT"
-                : GetAirIntentLabel(flight.MissionType);
+                : GetAirIntentLabel(flight.TaskType);
 
             CreateAirIntentCircle(
                 $"Air Intent Area {ShortId(flight.FlightId)}",
@@ -5356,25 +5154,25 @@ namespace Engine.Monobehaviours.Managers
                 return;
             }
 
-            switch (flight.MissionType)
+            switch (flight.TaskType)
             {
-                case AirMissionRequestType.OffensiveCounterAirSweep:
+                case AirFlightTaskType.OcaSweep:
                     CreateAirSweepPattern(flight, center, radius, color);
                     break;
 
-                case AirMissionRequestType.BarrierCombatAirPatrol:
+                case AirFlightTaskType.Barcap:
                     CreateAirPatrolPattern(flight, center, radius, color);
                     break;
 
-                case AirMissionRequestType.DestructionOfEnemyAirDefenses:
+                case AirFlightTaskType.DeadAttack:
                     CreateAirSweepPattern(flight, center, radius, color);
                     break;
 
-                case AirMissionRequestType.ProvideAirborneC2:
+                case AirFlightTaskType.AirborneC2:
                     CreateAirSupportOrbitPattern(flight, center, radius, color, "C2");
                     break;
 
-                case AirMissionRequestType.ProvideAerialRefueling:
+                case AirFlightTaskType.AerialRefueling:
                     CreateAirSupportOrbitPattern(flight, center, radius, color, "TANKER");
                     break;
             }
@@ -5858,42 +5656,38 @@ namespace Engine.Monobehaviours.Managers
             return color;
         }
 
-        private static Color GetAirMissionIntentColor(AirMissionRequestType mission, Alliance alliance)
+        private static Color GetAirMissionIntentColor(AirFlightTaskType mission, Alliance alliance)
         {
             return mission switch
             {
-                AirMissionRequestType.OffensiveCounterAirSweep => new Color(1f, 0.48f, 0.18f),
-                AirMissionRequestType.DestructionOfEnemyAirDefenses => new Color(1f, 0.22f, 0.12f),
-                AirMissionRequestType.BarrierCombatAirPatrol => Color.Lerp(
+                AirFlightTaskType.OcaSweep => new Color(1f, 0.48f, 0.18f),
+                AirFlightTaskType.DeadAttack => new Color(1f, 0.22f, 0.12f),
+                AirFlightTaskType.Barcap => Color.Lerp(
                     GetAirAllianceColor(alliance),
                     new Color(0.20f, 1f, 0.72f),
                     0.35f),
-                AirMissionRequestType.ProvideAirborneC2 => new Color(0.42f, 0.86f, 1f),
-                AirMissionRequestType.ProvideAerialRefueling => new Color(0.38f, 1f, 0.46f),
+                AirFlightTaskType.AirborneC2 => new Color(0.42f, 0.86f, 1f),
+                AirFlightTaskType.AerialRefueling => new Color(0.38f, 1f, 0.46f),
                 _ => GetAirAllianceColor(alliance)
             };
         }
 
-        private static string GetAirIntentLabel(AirMissionRequestType mission)
+        private static string GetAirIntentLabel(AirFlightTaskType mission)
         {
             return mission switch
             {
-                AirMissionRequestType.OffensiveCounterAirSweep => "SWEEP",
-                AirMissionRequestType.DestructionOfEnemyAirDefenses => "DEAD",
-                AirMissionRequestType.BarrierCombatAirPatrol => "BARCAP",
-                AirMissionRequestType.ProvideAirborneC2 => "C2",
-                AirMissionRequestType.ProvideAerialRefueling => "TANKER",
+                AirFlightTaskType.OcaSweep => "SWEEP",
+                AirFlightTaskType.DeadAttack => "DEAD",
+                AirFlightTaskType.Barcap => "BARCAP",
+                AirFlightTaskType.AirborneC2 => "C2",
+                AirFlightTaskType.AerialRefueling => "TANKER",
                 _ => "AIR"
             };
         }
 
         private static string GetFlightMissionLabel(AirFlight flight)
         {
-            return flight != null && flight.IsFighterEscort
-                ? $"{GetMissionLabel(flight.MissionType)} Fighter Escort"
-                : flight == null
-                    ? "Unknown"
-                    : GetMissionLabel(flight.MissionType);
+            return flight == null ? "Unknown" : GetMissionLabel(flight.TaskType);
         }
 
         private void RefreshSamCoverageOverlay()

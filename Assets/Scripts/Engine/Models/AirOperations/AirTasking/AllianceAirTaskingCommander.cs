@@ -7,197 +7,37 @@ using UnityEngine.Serialization;
 
 namespace Models.Gameplay.Campaign
 {
+    /// <summary>
+    /// Owns committed packages for one alliance. It does not decide which
+    /// operations are needed or compose packages from strategic demand.
+    /// </summary>
     [Serializable]
     public sealed class AllianceAirTaskingCommander
     {
         public const int MaximumDiagnosticEntries = 256;
-        public const int MaximumHistoryEntries = 256;
-        public const int MaximumSupportDemandSamples = 256;
 
         public Alliance Alliance;
         public AllianceAirDoctrine Doctrine = AllianceAirDoctrine.CreateDefault();
-        public int PlanningCycle;
 
-        [SerializeField, FormerlySerializedAs("MissionRequests")]
-        private List<AirMissionRequest> missionRequests =
-            new List<AirMissionRequest>();
         [SerializeField, FormerlySerializedAs("Packages")]
         private List<AirPackage> packages = new List<AirPackage>();
-        [SerializeField, FormerlySerializedAs("SupportDemandHistory")]
-        private List<SupportDemandSample> supportDemandHistory =
-            new List<SupportDemandSample>();
         [SerializeField, FormerlySerializedAs("Diagnostics")]
         private List<AirTaskingDiagnostic> diagnostics =
             new List<AirTaskingDiagnostic>();
-        [SerializeField, FormerlySerializedAs("History")]
-        private List<AirTaskingHistoryEntry> history =
-            new List<AirTaskingHistoryEntry>();
-        [SerializeField]
-        private List<AirControlTileAssessment> airControlAssessments =
-            new List<AirControlTileAssessment>();
 
-        [NonSerialized]
-        private Dictionary<Vector3Int, AirControlTileAssessment>
-            airControlAssessmentsByTileId;
-
-        public IReadOnlyList<AirMissionRequest> MissionRequests => missionRequests;
         public IReadOnlyList<AirPackage> Packages => packages;
-        public IReadOnlyList<SupportDemandSample> SupportDemandHistory => supportDemandHistory;
         public IReadOnlyList<AirTaskingDiagnostic> Diagnostics => diagnostics;
-        public IReadOnlyList<AirTaskingHistoryEntry> History => history;
-        public IReadOnlyList<AirControlTileAssessment> AirControlAssessments =>
-            airControlAssessments;
 
         public AllianceAirTaskingCommander()
         {
         }
 
-        public AllianceAirTaskingCommander(Alliance alliance, AllianceAirDoctrine doctrine)
+        public AllianceAirTaskingCommander(
+            Alliance alliance,
+            AllianceAirDoctrine doctrine)
         {
             Alliance = alliance;
-            Doctrine = doctrine.Clone();
-        }
-
-        public void InitializeAirControlAssessments(
-            IEnumerable<Vector3Int> tileIds)
-        {
-            EnsureAirControlAssessmentIndex();
-            var desiredTileIds = new HashSet<Vector3Int>(tileIds ?? Array.Empty<Vector3Int>());
-            airControlAssessments.RemoveAll(assessment =>
-                assessment == null || !desiredTileIds.Contains(assessment.TileId));
-            airControlAssessmentsByTileId = null;
-            EnsureAirControlAssessmentIndex();
-
-            foreach (var tileId in desiredTileIds
-                         .OrderBy(tile => tile.x)
-                         .ThenBy(tile => tile.y)
-                         .ThenBy(tile => tile.z))
-            {
-                GetOrCreateAirControlAssessment(tileId);
-            }
-        }
-
-        public bool TryGetAirControlAssessment(
-            Vector3Int tileId,
-            out AirControlTileAssessment assessment)
-        {
-            EnsureAirControlAssessmentIndex();
-            return airControlAssessmentsByTileId.TryGetValue(tileId, out assessment);
-        }
-
-        public float GetAirActivity(Vector3Int tileId)
-        {
-            return TryGetAirControlAssessment(tileId, out var assessment)
-                ? Mathf.Clamp01(assessment.AirActivity)
-                : 0f;
-        }
-
-        internal AirControlTileAssessment GetOrCreateAirControlAssessment(
-            Vector3Int tileId)
-        {
-            EnsureAirControlAssessmentIndex();
-            if (airControlAssessmentsByTileId.TryGetValue(tileId, out var assessment))
-                return assessment;
-
-            assessment = new AirControlTileAssessment(tileId);
-            airControlAssessments.Add(assessment);
-            airControlAssessmentsByTileId[tileId] = assessment;
-            return assessment;
-        }
-
-        private void EnsureAirControlAssessmentIndex()
-        {
-            if (airControlAssessments == null)
-                airControlAssessments = new List<AirControlTileAssessment>();
-            if (airControlAssessmentsByTileId != null)
-                return;
-
-            airControlAssessments = airControlAssessments
-                .Where(assessment => assessment != null)
-                .GroupBy(assessment => assessment.TileId)
-                .Select(group => group.First())
-                .OrderBy(assessment => assessment.TileId.x)
-                .ThenBy(assessment => assessment.TileId.y)
-                .ThenBy(assessment => assessment.TileId.z)
-                .ToList();
-            airControlAssessmentsByTileId = airControlAssessments
-                .ToDictionary(assessment => assessment.TileId);
-        }
-
-        public void BeginPlanningCycle(DateTime currentTime)
-        {
-            PlanningCycle++;
-
-            var retainedRequests = new List<AirMissionRequest>();
-            foreach (var request in missionRequests)
-            {
-                var linkedPackages = packages
-                    .Where(package => package.MissionRequestId == request.MissionRequestId)
-                    .ToList();
-                if (linkedPackages.Any(package => !package.HasPhysicallyEnded))
-                {
-                    retainedRequests.Add(request);
-                    continue;
-                }
-
-                if (linkedPackages.Count > 0)
-                {
-                    AddHistory(new AirTaskingHistoryEntry
-                    {
-                        RecordedAt = currentTime,
-                        MissionRequestId = request.MissionRequestId,
-                        RequestType = request.RequestType,
-                        RequestState = request.State,
-                        RequestSnapshot = request,
-                        PackageSnapshots = linkedPackages,
-                        Summary = "Mission request and terminal packages archived at global replanning."
-                    });
-                    continue;
-                }
-
-                request.State = AirMissionRequestState.Purged;
-                AddDiagnostic(new AirTaskingDiagnostic
-                {
-                    RecordedAt = currentTime,
-                    MissionRequestId = request.MissionRequestId,
-                    Code = "request-purged",
-                    Message = "Unfulfilled request purged during global reprioritization."
-                });
-            }
-
-            missionRequests = retainedRequests;
-            var retainedRequestIds = retainedRequests
-                .Select(request => request.MissionRequestId)
-                .ToHashSet();
-            packages = packages
-                .Where(package => !package.HasPhysicallyEnded
-                                  || retainedRequestIds.Contains(package.MissionRequestId))
-                .ToList();
-        }
-
-        public void AddMissionRequests(
-            IEnumerable<AirMissionRequest> requests,
-            DateTime currentTime)
-        {
-            foreach (var request in requests)
-            {
-                if (request.Alliance != Alliance
-                    || request.PlanningCycle != PlanningCycle)
-                    continue;
-
-                missionRequests.Add(request);
-                AddDiagnostic(new AirTaskingDiagnostic
-                {
-                    RecordedAt = currentTime,
-                    MissionRequestId = request.MissionRequestId,
-                    Code = "request-generated",
-                    Message = request.Rationale,
-                    Values = new Dictionary<string, float>(request.PriorityComponents)
-                    {
-                        { "priority", request.Priority }
-                    }
-                });
-            }
+            Doctrine = (doctrine ?? AllianceAirDoctrine.CreateDefault()).Clone();
         }
 
         public bool TryCommitPackage(
@@ -206,100 +46,47 @@ namespace Models.Gameplay.Campaign
             DateTime currentTime,
             out string reason)
         {
-            reason = ValidatePackageProposal(package, currentTime);
+            reason = ValidatePackage(package, currentTime);
             if (!string.IsNullOrEmpty(reason))
                 return false;
-
-            var request = GetRequest(package.MissionRequestId);
-            if (!TryPlanSupportReservations(package, out var supportReservations, out reason))
+            if (!TryPlanSupportReservations(
+                    package,
+                    out var supportReservations,
+                    out reason))
                 return false;
-
             if (!aircraftReservations.TryReserve(package, out reason))
                 return false;
 
-            var previousRequestState = request.State;
             var previousDiagnosticCount = diagnostics.Count;
-            var previousSupportDemandCount = supportDemandHistory.Count;
             try
             {
                 foreach (var reservation in supportReservations)
-                    reservation.Flight.SupportReservations.Add(reservation.Reservation);
-
+                    reservation.Flight.SupportReservations.Add(
+                        reservation.Reservation);
                 packages.Add(package);
-                request.State = request.IsSupportRequest
-                                || request.RequestType
-                                == AirMissionRequestType.BarrierCombatAirPatrol
-                    ? AirMissionRequestState.PartiallyFulfilled
-                    : AirMissionRequestState.InProgress;
-
-                var tankerSlots = supportReservations
-                    .Where(entry =>
-                        entry.Flight.MissionType == AirMissionRequestType.ProvideAerialRefueling)
-                    .Select(entry => Math.Max(0, entry.Reservation.SlotCount))
-                    .DefaultIfEmpty(0)
-                    .Max();
-                if (tankerSlots > 0)
-                {
-                    AddSupportDemand(new SupportDemandSample
-                    {
-                        RecordedAt = currentTime,
-                        SupportType = AirMissionRequestType.ProvideAerialRefueling,
-                        MissionArea = new AirMissionArea(
-                            request.MissionArea.CenterTileId,
-                            request.MissionArea.RadiusKm),
-                        RequestedSlots = tankerSlots
-                    });
-                }
-
-                var diagnosticValues = new Dictionary<string, float>
-                {
-                    { "flightCount", package.Flights.Count },
-                    { "aircraftCount", package.Flights.Sum(flight => flight.AircraftIds.Count) },
-                    {
-                        "plannedTakeoffLeadMinutes",
-                        (float)Math.Max(
-                            0d,
-                            (package.EarliestTakeoffTime - currentTime).TotalMinutes)
-                    }
-                };
-                var barcapCoverage = package.Flights
-                    .Where(flight => !flight.IsFighterEscort)
-                    .Select(flight => flight.PlannedBarcapCoverage)
-                    .FirstOrDefault(coverage => coverage != null);
-                var diagnosticMessage = "Package committed.";
-                if (barcapCoverage != null)
-                {
-                    diagnosticValues["barcapStationXFeet"] =
-                        barcapCoverage.StationCenterFeet.x;
-                    diagnosticValues["barcapStationAltitudeFeet"] =
-                        barcapCoverage.StationCenterFeet.y;
-                    diagnosticValues["barcapStationZFeet"] =
-                        barcapCoverage.StationCenterFeet.z;
-                    diagnosticValues["barcapStationHeadingDegrees"] =
-                        barcapCoverage.StationHeadingDegrees;
-                    diagnosticValues["barcapCoveredTileCount"] =
-                        barcapCoverage.CoveredBarrierTileIds?.Count ?? 0;
-                    diagnosticValues["barcapTrackHalfLengthKm"] =
-                        barcapCoverage.StationTrackHalfLengthKm;
-                    diagnosticValues["barcapInterceptSlackKm"] =
-                        barcapCoverage.PlannedMinimumInterceptSlackKm;
-                    diagnosticValues["plannedKnownSamSiteCount"] =
-                        barcapCoverage.PlannedKnownSamSiteIds?.Count ?? 0;
-                    diagnosticMessage = "BARCAP package committed at station "
-                                        + $"({barcapCoverage.StationCenterFeet.x:0},"
-                                        + $"{barcapCoverage.StationCenterFeet.z:0})ft with "
-                                        + $"{barcapCoverage.CoveredBarrierTileIds?.Count ?? 0} "
-                                        + "covered barrier tile(s).";
-                }
-
                 AddDiagnostic(new AirTaskingDiagnostic
                 {
                     RecordedAt = currentTime,
-                    MissionRequestId = request.MissionRequestId,
+                    PlanId = package.PlanId,
                     PackageId = package.PackageId,
                     Code = "package-committed",
-                    Message = diagnosticMessage,
-                    Values = diagnosticValues
+                    Message = "Explicit package plan committed.",
+                    Values = new Dictionary<string, float>
+                    {
+                        { "flightCount", package.Flights.Count },
+                        {
+                            "aircraftCount",
+                            package.Flights.Sum(flight =>
+                                flight.AircraftIds.Count)
+                        },
+                        {
+                            "plannedTakeoffLeadMinutes",
+                            (float)Math.Max(
+                                0d,
+                                (package.EarliestTakeoffTime - currentTime)
+                                .TotalMinutes)
+                        }
+                    }
                 });
                 reason = "Package committed.";
                 return true;
@@ -307,11 +94,15 @@ namespace Models.Gameplay.Campaign
             catch
             {
                 foreach (var reservation in supportReservations)
-                    reservation.Flight.SupportReservations.Remove(reservation.Reservation);
+                    reservation.Flight.SupportReservations.Remove(
+                        reservation.Reservation);
                 packages.Remove(package);
-                request.State = previousRequestState;
-                RemoveEntriesAddedAfter(diagnostics, previousDiagnosticCount);
-                RemoveEntriesAddedAfter(supportDemandHistory, previousSupportDemandCount);
+                if (diagnostics.Count > previousDiagnosticCount)
+                {
+                    diagnostics.RemoveRange(
+                        previousDiagnosticCount,
+                        diagnostics.Count - previousDiagnosticCount);
+                }
                 aircraftReservations.ReleaseUnlaunched(package);
                 throw;
             }
@@ -325,26 +116,24 @@ namespace Models.Gameplay.Campaign
         {
             var package = GetPackage(packageId);
             if (package == null
-                || package.Flights
-                .All(flight => flight.IsTerminal))
+                || package.Flights.All(flight => flight.IsTerminal))
                 return false;
 
-            var aborted = package.Flights
-                .Any(flight => flight.LifecycleState == AirTaskingLifecycleState.Aborted);
+            var aborted = package.Flights.Any(flight =>
+                flight.LifecycleState == AirTaskingLifecycleState.Aborted);
             foreach (var supportFlight in packages
                          .SelectMany(candidate => candidate.Flights))
             {
-                supportFlight.SupportReservations.RemoveAll(
-                    reservation => reservation.ConsumingPackageId == package.PackageId);
+                supportFlight.SupportReservations.RemoveAll(reservation =>
+                    reservation.ConsumingPackageId == package.PackageId);
             }
-            foreach (var cancelledProvider in package.Flights)
-                cancelledProvider.SupportReservations.Clear();
+            foreach (var provider in package.Flights)
+                provider.SupportReservations.Clear();
 
             foreach (var flight in package.Flights)
             {
                 if (flight.IsTerminal)
                     continue;
-
                 var cancellation = flight.Cancel(currentTime, reason);
                 if (cancellation == FlightCancellationResult.Aborted)
                     aborted = true;
@@ -352,23 +141,13 @@ namespace Models.Gameplay.Campaign
                     aircraftReservations.ReleaseFlight(flight);
             }
 
-            var request = GetRequest(package.MissionRequestId);
-            if (request == null)
-            {
-                throw new InvalidOperationException(
-                    $"Package {package.PackageId} references missing mission request "
-                    + $"{package.MissionRequestId}.");
-            }
-            if (!aborted)
-                request.State = AirMissionRequestState.Actionable;
-
             AddDiagnostic(new AirTaskingDiagnostic
             {
                 RecordedAt = currentTime,
-                MissionRequestId = package.MissionRequestId,
+                PlanId = package.PlanId,
                 PackageId = package.PackageId,
                 Code = aborted ? "package-aborted" : "package-cancelled",
-                Message = reason
+                Message = reason ?? string.Empty
             });
             return true;
         }
@@ -378,8 +157,8 @@ namespace Models.Gameplay.Campaign
             DateTime currentTime)
         {
             foreach (var package in packages
-                         .Where(candidate => candidate.Flights
-                                             .Any(flight => !flight.IsTerminal))
+                         .Where(candidate => candidate.Flights.Any(flight =>
+                             !flight.IsTerminal))
                          .ToList())
             {
                 var requiredFlights = package.Flights
@@ -414,11 +193,10 @@ namespace Models.Gameplay.Campaign
                     .SelectMany(candidate => candidate.Flights)
                     .Where(flight => supportingIds.Contains(flight.FlightId))
                     .ToList();
-                var requiredSlots = package.Flights.Sum(
-                    flight => flight.AircraftIds.Count);
+                var requiredSlots = package.Flights.Sum(flight =>
+                    flight.AircraftIds.Count);
                 if (supportingFlights.Select(flight => flight.FlightId)
-                        .Distinct()
-                        .Count() == supportingIds.Count
+                        .Distinct().Count() == supportingIds.Count
                     && AirSupportCoveragePlanner.HasContinuousReservedCoverage(
                         supportingFlights,
                         package.PackageId,
@@ -435,204 +213,84 @@ namespace Models.Gameplay.Campaign
             }
         }
 
-        public void MarkRequestFulfilled(Guid requestId, DateTime currentTime, string reason)
-        {
-            SetRequestState(
-                requestId,
-                AirMissionRequestState.Fulfilled,
-                currentTime,
-                "request-covered",
-                reason);
-        }
-
-        public void MarkRequestInProgress(Guid requestId, DateTime currentTime, string reason)
-        {
-            SetRequestState(
-                requestId,
-                AirMissionRequestState.InProgress,
-                currentTime,
-                "request-in-progress",
-                reason);
-        }
-
-        public void ReopenFulfilledRequest(
-            Guid requestId,
-            DateTime currentTime,
-            string reason)
-        {
-            var request = GetRequest(requestId);
-            if (request == null)
-                throw new InvalidOperationException(
-                    $"Mission request {requestId} does not exist.");
-            if (request.State != AirMissionRequestState.Fulfilled)
-                return;
-
-            request.State = AirMissionRequestState.Actionable;
-            AddDiagnostic(new AirTaskingDiagnostic
-            {
-                RecordedAt = currentTime,
-                MissionRequestId = requestId,
-                Code = "request-coverage-reopened",
-                Message = reason
-            });
-        }
-
-        public void RecordRequestDeferred(Guid requestId, DateTime currentTime, string reason)
-        {
-            AddDiagnostic(new AirTaskingDiagnostic
-            {
-                RecordedAt = currentTime,
-                MissionRequestId = requestId,
-                Code = "request-deferred",
-                Message = reason
-            });
-        }
-
         public void AddDiagnostic(AirTaskingDiagnostic diagnostic)
         {
+            if (diagnostic == null)
+                return;
             diagnostics.Add(diagnostic);
-            TrimOldest(diagnostics, MaximumDiagnosticEntries);
-        }
-
-        public void AddHistory(AirTaskingHistoryEntry historyEntry)
-        {
-            history.Add(historyEntry);
-            TrimOldest(history, MaximumHistoryEntries);
-        }
-
-        public void AddSupportDemand(SupportDemandSample demandSample)
-        {
-            supportDemandHistory.Add(demandSample);
-            TrimOldest(supportDemandHistory, MaximumSupportDemandSamples);
-        }
-
-        public AirMissionRequest GetRequest(Guid requestId)
-        {
-            return missionRequests.FirstOrDefault(
-                request => request.MissionRequestId == requestId);
+            if (diagnostics.Count > MaximumDiagnosticEntries)
+            {
+                diagnostics.RemoveRange(
+                    0,
+                    diagnostics.Count - MaximumDiagnosticEntries);
+            }
         }
 
         public AirPackage GetPackage(Guid packageId)
         {
-            return packages.FirstOrDefault(package => package.PackageId == packageId);
+            return packages.FirstOrDefault(package =>
+                package.PackageId == packageId);
         }
 
-        private string ValidatePackageProposal(AirPackage package, DateTime currentTime)
+        private string ValidatePackage(AirPackage package, DateTime currentTime)
         {
-            if (package.PackageId == Guid.Empty || packages.Any(candidate =>
+            if (package == null)
+                return "A package is required.";
+            if (package.PackageId == Guid.Empty
+                || packages.Any(candidate =>
                     candidate.PackageId == package.PackageId))
-                return "The package proposal has an invalid or duplicate identifier.";
+                return "The package has an invalid or duplicate identifier.";
+            if (package.PlanId == Guid.Empty)
+                return "The package has no source plan identifier.";
             if (package.Alliance != Alliance)
-                return "The package proposal belongs to another alliance.";
+                return "The package belongs to another alliance.";
+            if (package.Flights == null || package.Flights.Count == 0)
+                return "The package must contain at least one flight.";
+            if (package.Flights.Any(flight => flight == null))
+                return "The package contains a null flight.";
 
-            var request = GetRequest(package.MissionRequestId);
-            if (request == null
-                || request.IsTerminal
-                || request.PlanningCycle != PlanningCycle
-                || request.EffectEnd <= currentTime)
-                return "The package proposal does not target a current actionable request.";
-            if (package.EffectStart < request.EffectStart
-                || package.EffectEnd > request.EffectEnd
-                || package.EffectEnd < package.EffectStart
-                || request.FulfillmentPattern == AirMissionRequestFulfillmentPattern.Sustained
-                && package.EffectEnd == package.EffectStart)
-                return "The package proposal has an invalid effect window.";
-
-            var flights = package.Flights;
-            if (flights.Count == 0)
-                return "The package proposal must contain valid flights.";
-            foreach (var flight in flights)
+            foreach (var flight in package.Flights)
             {
-                if (!flight.TryValidateRoute(out _))
-                    return "A proposed flight has an invalid materialized route.";
-                var satisfiesMissionGeometry =
-                    SatisfiesMissionGeometry(request, flight);
-                if (flight.PlannedTakeoffTime < package.CreatedAt + AirPackage.PreparationDelay
-                    || flight.EffectStart < request.EffectStart
-                    || flight.EffectEnd > request.EffectEnd
-                    || flight.EffectEnd < flight.EffectStart
-                    || !satisfiesMissionGeometry)
-                {
-                    return "A proposed flight route does not satisfy its request.";
-                }
+                if (!flight.TryValidateRoute(out var routeReason))
+                    return routeReason;
+                if (flight.PlannedTakeoffTime
+                    < package.CreatedAt + AirPackage.PreparationDelay)
+                    return "A flight does not satisfy the package preparation delay.";
+                if (flight.EffectEnd < flight.EffectStart)
+                    return "A flight has an invalid effect window.";
             }
-            if (flights.Any(flight =>
+
+            if (package.EffectEnd < package.EffectStart
+                || package.EarliestTakeoffTime < currentTime)
+                return "The package has invalid timing.";
+            if (package.Flights.Any(flight =>
                     flight.FlightId == Guid.Empty
                     || flight.SquadronId == Guid.Empty
-                    || flight.MissionType != request.RequestType
                     || flight.AircraftIds.Count == 0))
-                return "A proposed flight is incomplete.";
-            var packageFlightIds = flights
-                .Select(flight => flight.FlightId)
+                return "The package contains an incomplete flight.";
+            if (package.Flights.Select(flight => flight.FlightId)
+                    .Distinct().Count() != package.Flights.Count)
+                return "The package contains duplicate flight identifiers.";
+
+            var flightIds = package.Flights.Select(flight => flight.FlightId)
                 .ToHashSet();
-            if (flights.Where(flight => flight.IsFighterEscort).Any(escort =>
+            if (package.Flights.Where(flight => flight.IsEscort).Any(escort =>
                     escort.ProtectedFlightIds.Count == 0
                     || escort.ProtectedFlightIds.Any(id =>
-                        id == escort.FlightId
-                        || !packageFlightIds.Contains(id))
-                    || escort.AuthorizedSurfaceThreatSiteId != Guid.Empty))
-                return "A proposed fighter escort has an invalid protection assignment.";
-            if (flights.Select(flight => flight.FlightId).Distinct().Count() != flights.Count)
-                return "The package proposal contains duplicate flight identifiers.";
+                        id == escort.FlightId || !flightIds.Contains(id))))
+                return "The package contains an invalid escort assignment.";
 
-            var aircraftIds = flights.SelectMany(flight => flight.AircraftIds).ToList();
+            var aircraftIds = package.Flights
+                .SelectMany(flight => flight.AircraftIds).ToList();
             if (aircraftIds.Any(id => id == Guid.Empty)
                 || aircraftIds.Distinct().Count() != aircraftIds.Count)
-                return "The package proposal contains invalid or duplicate aircraft.";
-            var supportingFlightIds = package.SupportingFlightIds;
-            if (supportingFlightIds.Any(id => id == Guid.Empty)
-                || supportingFlightIds.Distinct().Count() != supportingFlightIds.Count)
-                return "The package proposal contains invalid or duplicate support flights.";
-            var effectAircraftCount = flights
-                .Where(flight => !flight.IsFighterEscort)
-                .Sum(flight => flight.AircraftIds.Count);
-            if (!request.IsSupportRequest
-                && effectAircraftCount < (request.RequestType
-                    == AirMissionRequestType.BarrierCombatAirPatrol
-                        ? 1
-                        : Math.Max(1, request.DesiredAircraftStrength)))
-                return "The package proposal cannot deliver the requested combat effect.";
+                return "The package contains invalid or duplicate aircraft.";
+            if (package.SupportingFlightIds.Any(id => id == Guid.Empty)
+                || package.SupportingFlightIds.Distinct().Count()
+                != package.SupportingFlightIds.Count)
+                return "The package contains invalid support-flight references.";
 
             return string.Empty;
-        }
-
-        internal static bool SatisfiesMissionGeometry(
-            AirMissionRequest request,
-            AirFlight flight)
-        {
-            if (request == null || flight == null)
-                return false;
-            if (flight.IsFighterEscort)
-                return true;
-
-            var spatialBarcap = request.RequestType
-                                == AirMissionRequestType.BarrierCombatAirPatrol
-                                && request.BarcapBarrier?.BarrierTileIds?.Count > 0;
-            return spatialBarcap
-                ? HasValidSpatialBarcapCoverage(request, flight)
-                : request.MissionArea.Contains(
-                    flight.MissionArea.CenterTileId);
-        }
-
-        private static bool HasValidSpatialBarcapCoverage(
-            AirMissionRequest request,
-            AirFlight flight)
-        {
-            var barrier = request.BarcapBarrier;
-            var coverage = flight.PlannedBarcapCoverage;
-            if (barrier?.BarrierTileIds == null
-                || coverage?.CoveredBarrierTileIds == null
-                || coverage.BarrierId != barrier.BarrierId
-                || coverage.ThreatReferenceTileId
-                != barrier.ThreatReferenceTileId
-                || coverage.CoveredBarrierTileIds.Count == 0)
-            {
-                return false;
-            }
-
-            var barrierTiles = barrier.BarrierTileIds.ToHashSet();
-            return coverage.CoveredBarrierTileIds
-                .All(barrierTiles.Contains);
         }
 
         private bool TryPlanSupportReservations(
@@ -645,7 +303,8 @@ namespace Models.Gameplay.Campaign
             if (package.SupportingFlightIds.Count == 0)
                 return true;
 
-            var requiredSlots = package.Flights.Sum(flight => flight.AircraftIds.Count);
+            var requiredSlots = package.Flights.Sum(flight =>
+                flight.AircraftIds.Count);
             var supportingIds = package.SupportingFlightIds.ToHashSet();
             var supportingFlights = packages
                 .Where(candidate => !candidate.IsTerminal)
@@ -657,32 +316,29 @@ namespace Models.Gameplay.Campaign
                 .ToList();
             if (supportingFlights.Count != supportingIds.Count)
             {
-                reason = "A required support flight is no longer available.";
+                reason = "A named support flight is unavailable.";
                 return false;
             }
-
             if (supportingFlights.Any(flight =>
-                    flight.MissionType
-                    != AirMissionRequestType.ProvideAerialRefueling
+                    flight.TaskType != AirFlightTaskType.AerialRefueling
                     || package.Flights.Any(receiver =>
                         !flight.MissionArea.Contains(
                             receiver.MissionArea.CenterTileId))))
             {
-                reason = "A required tanker does not cover the receiving package.";
+                reason = "A named tanker does not cover the receiving package.";
                 return false;
             }
 
-            var reservations =
-                AirSupportCoveragePlanner.PlanContinuousCoverage(
-                    supportingFlights,
-                    package.PackageId,
-                    requiredSlots,
-                    package.EffectStart,
-                    package.SupportWindowEnd,
-                    out var coveredUntil);
+            var reservations = AirSupportCoveragePlanner.PlanContinuousCoverage(
+                supportingFlights,
+                package.PackageId,
+                requiredSlots,
+                package.EffectStart,
+                package.SupportWindowEnd,
+                out var coveredUntil);
             if (coveredUntil < package.SupportWindowEnd)
             {
-                reason = "Required support capacity is no longer available.";
+                reason = "Named tanker capacity does not cover the package window.";
                 return false;
             }
 
@@ -693,44 +349,6 @@ namespace Models.Gameplay.Campaign
                     flightsById[reservation.SupportingFlightId],
                     reservation)));
             return true;
-        }
-
-        private void SetRequestState(
-            Guid requestId,
-            AirMissionRequestState state,
-            DateTime currentTime,
-            string code,
-            string reason)
-        {
-            var request = GetRequest(requestId);
-            if (request == null)
-                throw new InvalidOperationException(
-                    $"Mission request {requestId} does not exist.");
-            if (request.IsTerminal)
-                return;
-
-            request.State = state;
-            AddDiagnostic(new AirTaskingDiagnostic
-            {
-                RecordedAt = currentTime,
-                MissionRequestId = requestId,
-                Code = code,
-                Message = reason
-            });
-        }
-
-        private static void TrimOldest<T>(List<T> entries, int maximumEntries)
-        {
-            if (entries.Count <= maximumEntries)
-                return;
-
-            entries.RemoveRange(0, entries.Count - maximumEntries);
-        }
-
-        private static void RemoveEntriesAddedAfter<T>(List<T> entries, int previousCount)
-        {
-            if (entries.Count > previousCount)
-                entries.RemoveRange(previousCount, entries.Count - previousCount);
         }
 
         private sealed class PlannedSupportReservation

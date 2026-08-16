@@ -313,7 +313,7 @@ namespace Models.Module
                 .Select(waypoint => ToDcs(waypoint.Position))
                 .ToList();
             var origin = points[0];
-            var name = $"HZPL Route {flight.MissionType} {ShortId(flight.FlightId)}";
+            var name = $"HZPL Route {flight.TaskType} {ShortId(flight.FlightId)}";
             var color = flight.Alliance == Alliance.Redfor
                 ? "0xff4040ff"
                 : "0x00aaffff";
@@ -503,13 +503,13 @@ namespace Models.Module
             var origin = ToDcs(flight.Position);
             var speed = Math.Max(80d,
                 flight.SpeedKnots * KnotsToMetersPerSecond);
-            var name = $"HZPL-{flight.MissionType}-{ShortId(flight.FlightId)}";
+            var name = $"HZPL-{flight.TaskType}-{ShortId(flight.FlightId)}";
             builder.AppendLine($"                            [{groupIndex}] =");
             builder.AppendLine("                            {");
             builder.AppendLine("                                [\"modulation\"] = 0,");
             builder.AppendLine("                                [\"tasks\"] = {},");
             builder.AppendLine("                                [\"radioSet\"] = false,");
-            builder.AppendLine($"                                [\"task\"] = \"{DcsTask(flight.MissionType)}\",");
+            builder.AppendLine($"                                [\"task\"] = \"{DcsTask(flight.TaskType)}\",");
             builder.AppendLine("                                [\"uncontrolled\"] = false,");
             AppendAirRoute(builder, flight, speed);
             builder.AppendLine($"                                [\"groupId\"] = {groupId},");
@@ -573,12 +573,12 @@ namespace Models.Module
                 builder.AppendLine($"                                            [\"action\"] = \"{(isLanding ? "Landing" : "Turning Point")}\",");
                 builder.AppendLine("                                            [\"alt_type\"] = \"BARO\",");
                 builder.AppendLine($"                                            [\"speed\"] = {Number(speed)},");
-                var addOrbit = IsSustained(flight.MissionType)
+                var addOrbit = IsSustained(flight.TaskType)
                                && !orbitAssigned
                                && (flight.ExecutionPhase == FlightExecutionPhase.Executing
                                    && index == 0
                                    || waypoint.Action == AirWaypointAction.StationEntry);
-                AppendWaypointTasks(builder, flight.MissionType,
+                AppendWaypointTasks(builder, flight.TaskType,
                     index == 0, addOrbit, point, speed);
                 orbitAssigned |= addOrbit;
                 builder.AppendLine($"                                            [\"type\"] = \"{(isLanding ? "Land" : "Turning Point")}\",");
@@ -636,7 +636,7 @@ namespace Models.Module
 
         private static void AppendWaypointTasks(
             StringBuilder builder,
-            AirMissionRequestType missionType,
+            AirFlightTaskType missionType,
             bool firstPoint,
             bool addOrbit,
             DcsPoint point,
@@ -652,21 +652,31 @@ namespace Models.Module
             var taskIndex = 1;
             if (firstPoint)
             {
-                if (missionType == AirMissionRequestType.BarrierCombatAirPatrol
-                    || missionType == AirMissionRequestType.OffensiveCounterAirSweep)
+                if (missionType == AirFlightTaskType.Barcap
+                    || missionType == AirFlightTaskType.OcaSweep
+                    || missionType == AirFlightTaskType.FighterEscort)
                 {
                     AppendEngageTask(builder, taskIndex++, "Air", "CAP");
                 }
                 else if (missionType
-                         == AirMissionRequestType.DestructionOfEnemyAirDefenses)
+                         == AirFlightTaskType.DeadAttack
+                         || missionType == AirFlightTaskType.SeadEscort)
                 {
                     AppendEngageTask(builder, taskIndex++, "Air Defence", "SEAD");
                 }
-                else if (missionType == AirMissionRequestType.ProvideAirborneC2)
+                else if (missionType == AirFlightTaskType.Strike)
+                {
+                    AppendEngageTask(
+                        builder,
+                        taskIndex++,
+                        "Ground Units",
+                        "Ground Attack");
+                }
+                else if (missionType == AirFlightTaskType.AirborneC2)
                 {
                     AppendEnrouteTask(builder, taskIndex++, "AWACS");
                 }
-                else if (missionType == AirMissionRequestType.ProvideAerialRefueling)
+                else if (missionType == AirFlightTaskType.AerialRefueling)
                 {
                     AppendEnrouteTask(builder, taskIndex++, "Tanker");
                 }
@@ -781,12 +791,12 @@ namespace Models.Module
 
             var callsignId = 1;
             var callsignName = "Enfield";
-            if (flight.MissionType == AirMissionRequestType.ProvideAirborneC2)
+            if (flight.TaskType == AirFlightTaskType.AirborneC2)
             {
                 callsignName = "Overlord";
             }
-            else if (flight.MissionType
-                     == AirMissionRequestType.ProvideAerialRefueling)
+            else if (flight.TaskType
+                     == AirFlightTaskType.AerialRefueling)
             {
                 callsignName = "Texaco";
             }
@@ -826,7 +836,7 @@ namespace Models.Module
             builder.AppendLine("                                            },");
             builder.AppendLine($"                                            [\"fuel\"] = {Number(stores.Fuel)},");
             builder.AppendLine($"                                            [\"flare\"] = {stores.Flares},");
-            if (!IsSupportAircraft(flight.MissionType))
+            if (!IsSupportAircraft(flight.TaskType))
                 builder.AppendLine("                                            [\"ammo_type\"] = 1,");
             builder.AppendLine($"                                            [\"chaff\"] = {stores.Chaff},");
             builder.AppendLine("                                            [\"gun\"] = 100,");
@@ -834,11 +844,11 @@ namespace Models.Module
         }
 
         private static bool IsSupportAircraft(
-            AirMissionRequestType missionType)
+            AirFlightTaskType missionType)
         {
-            return missionType == AirMissionRequestType.ProvideAirborneC2
+            return missionType == AirFlightTaskType.AirborneC2
                    || missionType
-                   == AirMissionRequestType.ProvideAerialRefueling;
+                   == AirFlightTaskType.AerialRefueling;
         }
 
         private static Dictionary<int, string> ResolvePylons(
@@ -1225,24 +1235,29 @@ namespace Models.Module
                 position.AltitudeFeet / FeetPerMeter);
         }
 
-        private static string DcsTask(AirMissionRequestType missionType)
+        private static string DcsTask(AirFlightTaskType missionType)
         {
             return missionType switch
             {
-                AirMissionRequestType.BarrierCombatAirPatrol => "CAP",
-                AirMissionRequestType.OffensiveCounterAirSweep => "CAP",
-                AirMissionRequestType.ProvideAirborneC2 => "AWACS",
-                AirMissionRequestType.ProvideAerialRefueling => "Refueling",
-                AirMissionRequestType.DestructionOfEnemyAirDefenses => "SEAD",
+                AirFlightTaskType.Barcap => "CAP",
+                AirFlightTaskType.OcaSweep => "CAP",
+                AirFlightTaskType.AirborneC2 => "AWACS",
+                AirFlightTaskType.AerialRefueling => "Refueling",
+                AirFlightTaskType.DeadAttack => "SEAD",
+                AirFlightTaskType.FighterEscort => "Escort",
+                AirFlightTaskType.SeadEscort => "SEAD",
+                AirFlightTaskType.Strike => "Ground Attack",
                 _ => "Nothing"
             };
         }
 
-        private static bool IsSustained(AirMissionRequestType missionType)
+        private static bool IsSustained(AirFlightTaskType missionType)
         {
-            return missionType == AirMissionRequestType.BarrierCombatAirPatrol
-                   || missionType == AirMissionRequestType.ProvideAirborneC2
-                   || missionType == AirMissionRequestType.ProvideAerialRefueling;
+            return missionType == AirFlightTaskType.Barcap
+                   || missionType == AirFlightTaskType.AirborneC2
+                   || missionType == AirFlightTaskType.AerialRefueling
+                   || missionType == AirFlightTaskType.FighterEscort
+                   || missionType == AirFlightTaskType.SeadEscort;
         }
 
         private static string WarehouseCoalition(Alliance alliance)

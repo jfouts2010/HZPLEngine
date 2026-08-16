@@ -60,8 +60,8 @@ namespace Engine.Service
                 || !receiverType.CanReceiveAerialRefueling
                 || tankerType.SupportCapability
                 != AirSupportCapability.AerialRefueling
-                || tanker.MissionType
-                != AirMissionRequestType.ProvideAerialRefueling
+                || tanker.TaskType
+                != AirFlightTaskType.AerialRefueling
                 || receiver.LifecycleState != AirTaskingLifecycleState.Active
                 || receiver.ExecutionPhase != FlightExecutionPhase.Executing
                 || tanker.LifecycleState != AirTaskingLifecycleState.Active

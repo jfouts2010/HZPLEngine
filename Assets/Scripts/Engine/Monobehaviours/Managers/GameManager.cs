@@ -435,7 +435,6 @@ namespace Engine.Monobehaviours.Managers
             _IADSSystem.TacticalTurn(
                 (float)(CurrentTime - previousTime).TotalSeconds,
                 CurrentTime);
-            _airTaskingSystem.AdvanceAirControl(CurrentTime);
             _ordnanceEmploymentSystem.RefreshTacticalState(CurrentTime);
             if (notifyTacticalStep)
                 AirTacticalStepCompleted?.Invoke();
@@ -478,7 +477,7 @@ namespace Engine.Monobehaviours.Managers
             _supplySystem.GameTurn(elapsedHours);
             if (crossedOperationalCadenceBoundary)
                 RefreshAllianceIntelligence();
-            _airTaskingSystem.GameTurn(crossedOperationalCadenceBoundary);
+            _airTaskingSystem.GameTurn();
             divisionSystem.ApplyCombatSupplyPenalties(
                 elapsedHours,
                 _groundCombatSystem.IsDivisionEngagedInCombat,
