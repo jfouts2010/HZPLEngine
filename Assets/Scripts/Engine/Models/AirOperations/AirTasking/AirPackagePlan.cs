@@ -22,6 +22,7 @@ namespace Models.Gameplay.Campaign
         public Vector3 RendezvousPositionFeet;
         public BarcapBarrierPlan BarcapBarrier;
         public DeadMissionPlan DeadPlan;
+        public StrikeMissionPlan StrikePlan;
         public string Rationale = string.Empty;
         public List<AirFlightPlan> Flights = new List<AirFlightPlan>();
     }
@@ -37,6 +38,7 @@ namespace Models.Gameplay.Campaign
         public Guid FlightPlanId;
         public Guid SquadronId;
         public AirFlightTaskType TaskType;
+        public StrikeAssignment StrikeAssignment;
         public int AircraftCount = 1;
         public bool IsRequired = true;
         public Guid RecoveryAirportBuildingId;

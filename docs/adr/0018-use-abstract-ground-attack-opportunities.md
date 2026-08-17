@@ -8,7 +8,7 @@ Accepted
 
 Campaign tiles contain formations, positioned building anchors, air-defense sites, aircraft, and infrastructure, but the campaign does not store exact positions for their constituent tanks, trucks, infantry, runway aim points, or SAM components. The former air-to-ground executor modeled every pass as one store against one component. That could not represent multiple guided weapons in one pass, one area weapon affecting several nearby recipients, or repeated aim points against one broad target without introducing tactical-scale entities and geometry.
 
-Future CAS, interdiction, strike, and offensive counter-air missions need the same employment machinery, but those mission planners do not yet exist.
+CAS and interdiction still need mission behavior. OCA airport strike now needs the same employment machinery without introducing a second resolver for runway aim points or parked-aircraft groups.
 
 ## Decision
 
@@ -18,7 +18,7 @@ Formation composition is authored through weighted ground-target profiles on bat
 
 After an opportunity is known, the flight selects one carried ordnance type and a useful quantity. Target category, toughness, effectiveness, guidance compatibility, inventory, opportunity size, and authored weapon coverage constrain the choice. Point weapons assign one primary recipient per store. Area-capable weapons receive bounded, non-overlapping recipient groups; secondary effects use an authored multiplier and must independently satisfy effectiveness and toughness rules. Every primary delivery and secondary effect has a separate deterministic outcome and diagnostic record.
 
-DEAD is the first active consumer. It rolls from authorized surviving components and may assign several exposed components in one pass while retaining existing fire-control-first priority, emitter requirements, mission-area limits, release-envelope checks, and delayed effect resolution. The generic executor can already resolve division, building, grounded-aircraft, and tile-infrastructure references, but no placeholder CAS, strike, or airport-attack mission types are added before they have planners and lifecycle rules.
+DEAD is the first active consumer. It rolls from authorized surviving components and may assign several exposed components in one pass while retaining existing fire-control-first priority, emitter requirements, mission-area limits, release-envelope checks, and delayed effect resolution. OCA airport strike is the second consumer: it creates deterministic direct-release runway slots, rolls transient parked-aircraft groups that may receive compatible area effects, and exposes only explicitly authorized airbase buildings. The generic executor also resolves division and tile-infrastructure references, but no placeholder CAS or interdiction mission is added before it has lifecycle rules.
 
 ## Consequences
 

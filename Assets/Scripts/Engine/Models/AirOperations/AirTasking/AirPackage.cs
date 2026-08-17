@@ -19,6 +19,7 @@ namespace Models.Gameplay.Campaign
         public DateTime CreatedAt;
         public BarcapBarrierPlan BarcapBarrier;
         public DeadMissionPlan DeadPlan;
+        public StrikeMissionPlan StrikePlan;
         private List<AirFlight> flights = new List<AirFlight>();
         private List<Guid> supportingFlightIds = new List<Guid>();
         public string Rationale = string.Empty;

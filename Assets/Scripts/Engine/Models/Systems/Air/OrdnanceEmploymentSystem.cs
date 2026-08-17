@@ -335,6 +335,7 @@ namespace Engine.Models
                                        ?? new List<
                                            GroundAttackOpportunityTarget>())
                 .Where(target => target?.Target != null
+                                 && target.CanReceiveSecondaryEffect
                                  && TryResolveGroundTarget(
                                      target,
                                      out var resolved)
@@ -398,34 +399,69 @@ namespace Engine.Models
             return targetComponentId != Guid.Empty
                    && (ActivePasses.Any(pass =>
                            pass.TargetKind
-                           != OrdnanceEmploymentTargetKind.AirFlight
-                           && (pass.TargetComponentId == targetComponentId
-                               || pass.GroundPrimaryTargets?.Any(target =>
-                                   target?.Target?.Kind
-                                   == GroundAttackTargetKind
-                                       .AirDefenseComponent
-                                   && target.Target.EntityId
-                                   == targetComponentId) == true
-                               || pass.GroundOpportunityTargets?.Any(target =>
-                                   target?.Target?.Kind
-                                   == GroundAttackTargetKind
-                                       .AirDefenseComponent
-                                   && target.Target.EntityId
-                                   == targetComponentId) == true))
+                           == OrdnanceEmploymentTargetKind.AirDefenseComponent
+                           && pass.TargetComponentId == targetComponentId)
                        || PendingEffects.Any(effect =>
                            effect.TargetKind
-                           != OrdnanceEmploymentTargetKind.AirFlight
-                           && (effect.TargetComponentId == targetComponentId
-                               || effect.GroundPrimaryTarget?.Target?.Kind
-                               == GroundAttackTargetKind.AirDefenseComponent
-                               && effect.GroundPrimaryTarget.Target.EntityId
-                               == targetComponentId
-                               || effect.GroundOpportunityTargets?.Any(target =>
-                                   target?.Target?.Kind
-                                   == GroundAttackTargetKind
-                                       .AirDefenseComponent
-                                   && target.Target.EntityId
-                                   == targetComponentId) == true)));
+                           == OrdnanceEmploymentTargetKind.AirDefenseComponent
+                           && effect.TargetComponentId == targetComponentId)
+                       || HasActiveOrPendingGroundEffect(
+                           new GroundAttackTargetReference
+                           {
+                               Kind = GroundAttackTargetKind
+                                   .AirDefenseComponent,
+                               EntityId = targetComponentId
+                           },
+                           matchParent: false));
+        }
+
+        public bool HasActiveOrPendingGroundEffect(
+            GroundAttackTargetReference target,
+            bool matchParent = true)
+        {
+            if (target == null || target.Kind == GroundAttackTargetKind.None)
+                return false;
+
+            return ActivePasses.Any(pass =>
+                       pass.TargetKind != OrdnanceEmploymentTargetKind.AirFlight
+                       && (pass.GroundPrimaryTargets?.Any(candidate =>
+                               MatchesGroundReference(
+                                   candidate?.Target,
+                                   target,
+                                   matchParent)) == true
+                           || pass.GroundOpportunityTargets?.Any(candidate =>
+                               MatchesGroundReference(
+                                   candidate?.Target,
+                                   target,
+                                   matchParent)) == true))
+                   || PendingEffects.Any(effect =>
+                       effect.TargetKind != OrdnanceEmploymentTargetKind.AirFlight
+                       && (MatchesGroundReference(
+                               effect.GroundPrimaryTarget?.Target,
+                               target,
+                               matchParent)
+                           || effect.GroundOpportunityTargets?.Any(candidate =>
+                               MatchesGroundReference(
+                                   candidate?.Target,
+                                   target,
+                                   matchParent)) == true));
+        }
+
+        public int CountActiveOrPendingPrimaryGroundEffects(
+            GroundAttackTargetReference target)
+        {
+            if (target == null || target.Kind == GroundAttackTargetKind.None)
+                return 0;
+
+            return ActivePasses.Sum(pass =>
+                       pass.TargetKind == OrdnanceEmploymentTargetKind.AirFlight
+                           ? 0
+                           : pass.GroundPrimaryTargets?.Count(candidate =>
+                               candidate?.Target?.Matches(target) == true) ?? 0)
+                   + PendingEffects.Count(effect =>
+                       effect.TargetKind != OrdnanceEmploymentTargetKind.AirFlight
+                       && effect.GroundPrimaryTarget?.Target?.Matches(target)
+                       == true);
         }
 
         internal void CancelAirToAirPasses(
@@ -1357,7 +1393,8 @@ namespace Engine.Models
 
             var secondaryPool = (opportunityTargets
                                  ?? Array.Empty<GroundAttackOpportunityTarget>())
-                .Where(target => target?.Target != null)
+                .Where(target => target?.Target != null
+                                 && target.CanReceiveSecondaryEffect)
                 .Select(target => target.Clone())
                 .ToList();
             foreach (var primary in primaryTargets)
@@ -2081,7 +2118,21 @@ namespace Engine.Models
             }
 
             foreach (var application in applications)
-                ApplyGroundHit(application);
+                ApplyGroundHit(application, resolveAt);
+            if (applications.Any(application =>
+                    application.Target?.Target?.Kind
+                    == GroundAttackTargetKind.AirportRunway
+                    || application.Target?.Target?.Kind
+                    == GroundAttackTargetKind.GroundedAircraft))
+            {
+                airTaskingSystem.RevalidateAirportOperations(resolveAt);
+            }
+            if (applications.Any(application =>
+                    application.Target?.Target?.Kind
+                    == GroundAttackTargetKind.GroundedAircraft))
+            {
+                airTaskingSystem.RevalidatePackageIntegrity(resolveAt);
+            }
         }
 
         private List<GroundAttackOpportunityTarget> SelectSecondaryTargets(
@@ -2116,7 +2167,8 @@ namespace Engine.Models
             }
 
             return candidates
-                .Where(candidate =>
+                .Where(candidate => candidate.Target.CanReceiveSecondaryEffect
+                    &&
                     TryResolveGroundTarget(
                         candidate.Target,
                         out var resolved)
@@ -2142,6 +2194,7 @@ namespace Engine.Models
             return first != null
                    && second != null
                    && first.Target?.Matches(second.Target) == true
+                   && first.DamageSlotIndex == second.DamageSlotIndex
                    && first.TargetCategory == second.TargetCategory
                    && first.TargetToughness == second.TargetToughness
                    && string.Equals(
@@ -3150,6 +3203,30 @@ namespace Engine.Models
                     };
                     return true;
 
+                case GroundAttackTargetKind.AirportRunway:
+                    if (!gameManager.buildingSystem.TryGetBuilding(
+                            reference.EntityId,
+                            out var runwayBuilding)
+                        || runwayBuilding is not Airport runwayAirport
+                        || !runwayAirport.TryGetRunwayChannel(
+                            reference.SubtargetIndex,
+                            out var runwayChannel)
+                        || runwayChannel.IsSaturated
+                        || !gameManager.tileSystem.TryGetLand(
+                            runwayAirport.TileId,
+                            out var runwayTile))
+                        return false;
+                    resolved = new ResolvedGroundTarget
+                    {
+                        Alliance = runwayTile.Controller,
+                        TileId = runwayAirport.TileId,
+                        PositionFeet = runwayAirport.PositionFeet,
+                        Building = runwayAirport,
+                        Airport = runwayAirport,
+                        RunwayChannel = runwayChannel
+                    };
+                    return true;
+
                 case GroundAttackTargetKind.TileInfrastructure:
                     if (!gameManager.tileSystem.TryGetLand(
                             reference.TileId,
@@ -3171,7 +3248,9 @@ namespace Engine.Models
             }
         }
 
-        private void ApplyGroundHit(GroundHitApplication application)
+        private void ApplyGroundHit(
+            GroundHitApplication application,
+            DateTime occurredAt)
         {
             if (application?.Target?.Target == null
                 || application.Ordnance == null
@@ -3208,9 +3287,32 @@ namespace Engine.Models
                     break;
 
                 case GroundAttackTargetKind.GroundedAircraft:
-                    gameManager.squadronSystem.ApplyGroundAttackDamage(
-                        reference.EntityId,
-                        destroyed: true);
+                    if (gameManager.squadronSystem.TryGetAircraft(
+                            reference.EntityId,
+                            out _,
+                            out var groundedAircraft))
+                    {
+                        var assignedFlightId = groundedAircraft.AssignedFlightId;
+                        gameManager.squadronSystem.ApplyGroundAttackDamage(
+                            reference.EntityId,
+                            destroyed: true);
+                        ReconcileDestroyedGroundedAircraft(
+                            reference.EntityId,
+                            assignedFlightId,
+                            occurredAt);
+                    }
+                    break;
+
+                case GroundAttackTargetKind.AirportRunway:
+                    if (gameManager.buildingSystem.TryGetBuilding(
+                            reference.EntityId,
+                            out var runwayBuilding)
+                        && runwayBuilding is Airport airport)
+                    {
+                        airport.ApplyRunwayDamage(
+                            reference.SubtargetIndex,
+                            1);
+                    }
                     break;
 
                 case GroundAttackTargetKind.TileInfrastructure:
@@ -3219,6 +3321,51 @@ namespace Engine.Models
                         1);
                     break;
             }
+        }
+
+        private void ReconcileDestroyedGroundedAircraft(
+            Guid aircraftId,
+            Guid assignedFlightId,
+            DateTime occurredAt)
+        {
+            if (aircraftId == Guid.Empty || assignedFlightId == Guid.Empty)
+                return;
+
+            var flight = airTaskingSystem.GetPackages()
+                .SelectMany(package => package.Flights)
+                .FirstOrDefault(candidate =>
+                    candidate.FlightId == assignedFlightId
+                    && !candidate.IsAirborne);
+            if (flight == null)
+                return;
+
+            flight.AircraftIds.Remove(aircraftId);
+            flight.PlannedAircraftLoadouts.RemoveAll(loadout =>
+                loadout != null && loadout.AircraftId == aircraftId);
+            if (flight.AircraftIds.Count == 0)
+            {
+                flight.Fail(
+                    occurredAt,
+                    "All assigned aircraft were destroyed on the ground before takeoff.");
+            }
+        }
+
+        private static bool MatchesGroundReference(
+            GroundAttackTargetReference candidate,
+            GroundAttackTargetReference target,
+            bool matchParent)
+        {
+            if (candidate == null || target == null)
+                return false;
+            if (candidate.Kind != target.Kind
+                || candidate.EntityId != target.EntityId)
+                return false;
+            if (!matchParent)
+                return true;
+            if (candidate.TileId != target.TileId
+                || candidate.SubtargetIndex != target.SubtargetIndex)
+                return false;
+            return candidate.ParentEntityId == target.ParentEntityId;
         }
 
         private static int StableIndex(Guid id, int sequence, int count)
@@ -3284,6 +3431,8 @@ namespace Engine.Models
             public AirDefenseComponentDefinition ComponentDefinition;
             public Division Division;
             public Building Building;
+            public Airport Airport;
+            public AirportRunwayChannel RunwayChannel;
             public CampaignAircraft Aircraft;
             public RuntimeLandTile LandTile;
         }

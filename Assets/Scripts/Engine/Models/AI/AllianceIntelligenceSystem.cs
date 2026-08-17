@@ -110,6 +110,23 @@ namespace Engine.Models
     }
 
     [Serializable]
+    public sealed class ObservedRunwayChannel
+    {
+        public int ChannelIndex;
+        public int DamageLevel;
+
+        public void Normalize()
+        {
+            ChannelIndex = Math.Max(0, ChannelIndex);
+            DamageLevel = Math.Max(
+                0,
+                Math.Min(
+                    AirportRunwayChannel.MaximumDamageLevel,
+                    DamageLevel));
+        }
+    }
+
+    [Serializable]
     public sealed class ObservedEnemyAirportSnapshot
     {
         public Guid AirportBuildingId;
@@ -121,6 +138,10 @@ namespace Engine.Models
         public int BuildLevel;
         public int FunctionalLevel;
         public int TargetToughness;
+        public int OperationalRunwayChannelCount;
+        [SerializeReference]
+        public List<ObservedRunwayChannel> RunwayChannels =
+            new List<ObservedRunwayChannel>();
         [SerializeReference]
         public List<ObservedAircraftGroup> AircraftGroups =
             new List<ObservedAircraftGroup>();
@@ -131,6 +152,12 @@ namespace Engine.Models
             BuildLevel = Math.Max(0, BuildLevel);
             FunctionalLevel = Math.Max(0, Math.Min(BuildLevel, FunctionalLevel));
             TargetToughness = Math.Max(1, TargetToughness);
+            OperationalRunwayChannelCount = Math.Max(
+                0,
+                OperationalRunwayChannelCount);
+            RunwayChannels ??= new List<ObservedRunwayChannel>();
+            foreach (var channel in RunwayChannels)
+                channel?.Normalize();
             AircraftGroups ??= new List<ObservedAircraftGroup>();
             foreach (var group in AircraftGroups)
                 group?.Normalize();
@@ -513,6 +540,16 @@ namespace Engine.Models
                     BuildLevel = airport.Level.BuildLevel,
                     FunctionalLevel = airport.FunctionalLevel,
                     TargetToughness = airport.TargetToughness,
+                    OperationalRunwayChannelCount =
+                        airport.OperationalRunwayChannelCount,
+                    RunwayChannels = airport.RunwayChannels
+                        .OrderBy(channel => channel.ChannelIndex)
+                        .Select(channel => new ObservedRunwayChannel
+                        {
+                            ChannelIndex = channel.ChannelIndex,
+                            DamageLevel = channel.DamageLevel
+                        })
+                        .ToList(),
                     AircraftGroups = GetObservedAircraft(
                         gameManager,
                         observerAlliance,
@@ -562,10 +599,10 @@ namespace Engine.Models
         private static ObservedAirportCondition GetObservedCondition(
             Airport airport)
         {
-            if (airport.FunctionalLevel <= 0)
+            if (!airport.IsRunwaySystemOperational)
                 return ObservedAirportCondition.NonFunctional;
 
-            return airport.Level.Damage > 0
+            return airport.RunwayDamage > 0
                 ? ObservedAirportCondition.Damaged
                 : ObservedAirportCondition.Intact;
         }

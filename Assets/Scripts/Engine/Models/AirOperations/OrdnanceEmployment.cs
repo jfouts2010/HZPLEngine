@@ -44,7 +44,8 @@ namespace Models.Gameplay.Campaign
         Division = 2,
         Building = 3,
         GroundedAircraft = 4,
-        TileInfrastructure = 5
+        TileInfrastructure = 5,
+        AirportRunway = 6
     }
 
     public enum GroundAttackOpportunityQuality
@@ -62,6 +63,7 @@ namespace Models.Gameplay.Campaign
         public Guid EntityId;
         public Guid ParentEntityId;
         public Vector3Int TileId;
+        public int SubtargetIndex = -1;
 
         public bool Matches(GroundAttackTargetReference other)
         {
@@ -69,7 +71,8 @@ namespace Models.Gameplay.Campaign
                    && Kind == other.Kind
                    && EntityId == other.EntityId
                    && ParentEntityId == other.ParentEntityId
-                   && TileId == other.TileId;
+                   && TileId == other.TileId
+                   && SubtargetIndex == other.SubtargetIndex;
         }
 
         public GroundAttackTargetReference Clone()
@@ -79,7 +82,8 @@ namespace Models.Gameplay.Campaign
                 Kind = Kind,
                 EntityId = EntityId,
                 ParentEntityId = ParentEntityId,
-                TileId = TileId
+                TileId = TileId,
+                SubtargetIndex = SubtargetIndex
             };
         }
     }
@@ -93,6 +97,8 @@ namespace Models.Gameplay.Campaign
         public int TargetToughness = 1;
         public float MissionPriority = 1f;
         public bool CanBePrimaryTarget = true;
+        public bool CanReceiveSecondaryEffect = true;
+        public int DamageSlotIndex = -1;
         public string Description = string.Empty;
 
         public GroundAttackOpportunityTarget Clone()
@@ -104,6 +110,8 @@ namespace Models.Gameplay.Campaign
                 TargetToughness = TargetToughness,
                 MissionPriority = MissionPriority,
                 CanBePrimaryTarget = CanBePrimaryTarget,
+                CanReceiveSecondaryEffect = CanReceiveSecondaryEffect,
+                DamageSlotIndex = DamageSlotIndex,
                 Description = Description
             };
         }

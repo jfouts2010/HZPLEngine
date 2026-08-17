@@ -139,6 +139,16 @@ namespace Engine.Models
                 RevalidateAirportOperations(commander, occurredAt);
         }
 
+        internal void RevalidatePackageIntegrity(DateTime occurredAt)
+        {
+            foreach (var commander in GetCommanders())
+            {
+                commander.ValidatePackageIntegrity(
+                    aircraftReservations,
+                    occurredAt);
+            }
+        }
+
         private void MaterializeDuePlans()
         {
             var plans = gameManager.CampaignTemplate?.AirPackagePlans

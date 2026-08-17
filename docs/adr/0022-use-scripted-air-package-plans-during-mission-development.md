@@ -10,7 +10,7 @@ The autonomous air planner combined mission-request generation, priority scoring
 
 ## Decision
 
-Campaign templates author explicit `AirPackagePlan` records. A plan chooses its alliance, operation type, effect window and area, named squadron and aircraft strength for every flight, flight task, escort relationships, route geometry, recovery airport, optional loadout, and operation-specific BARCAP or DEAD data. The package builder validates and materializes those decisions; it does not infer demand, targets, composition, or routes.
+Campaign templates author explicit `AirPackagePlan` records. A plan chooses its alliance, operation type, effect window and area, named squadron and aircraft strength for every flight, flight task, escort relationships, route geometry, recovery airport, optional loadout, and operation-specific BARCAP, DEAD, or OCA airport-strike data. The package builder validates and materializes those decisions; it does not infer demand, targets, composition, or routes.
 
 The air-tasking system attempts each due plan once in stable order, applies airport-capacity and aircraft-reservation rules, and commits the resulting package to the existing execution pipeline. Failures are recorded against the stable plan identity and are not automatically replanned. `AirOperationType` describes the package-level purpose, while `AirFlightTaskType` describes each flight's job, allowing fighter and SEAD escorts to accompany a primary flight without pretending to be separate operational demands.
 

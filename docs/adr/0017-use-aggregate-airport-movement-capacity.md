@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted; runway-damage representation superseded by ADR 0023
 
 ## Context
 
@@ -12,7 +12,7 @@ The campaign needs runway damage to constrain air operations without introducing
 
 ## Decision
 
-An airport's inherited building level represents the integrity of its aggregate runway system in v1. Build levels 1–5 provide one nominal capacity channel and build levels 6–10 provide two. Effective channels equal nominal channels multiplied by the current integrity fraction and rounded up. Functional level zero closes the airport.
+An airport's build level determines one nominal capacity channel at levels 1–5 and two at levels 6–10. ADR 0023 replaces this ADR's original integrity-fraction damage rule: each channel is now independently operational or closed according to its abstract runway damage.
 
 Airport throughput uses fixed fifteen-minute movement windows independent of simulation tick length. Each effective channel provides one capacity slot per window, representing up to four aircraft in one takeoff or landing movement. Larger flight movements consume consecutive windows. Departures and planned recoveries share capacity.
 
@@ -24,4 +24,4 @@ When damage reduces capacity, airborne packages and their recoveries are retaine
 
 Airport damage now has an immediate, deterministic operational effect while flight routes remain the source of truth for timing. Cancellation and recovery-route replacement cannot leave stale reservation state. The same rules define planning eligibility, launch eligibility, recovery selection, diagnostics, and airport UI status.
 
-Capacity channels are campaign abstractions rather than physical runways. Exact runway geometry, surface condition, wind, taxi flow, parking, emergency sequencing, craters, repair crews, and aircraft-specific field requirements remain deferred until an implemented consumer needs them.
+Capacity channels are campaign abstractions rather than physical runways. Exact runway geometry, surface condition, wind, taxi flow, parking, emergency sequencing, crater locations, repair crews, and aircraft-specific field requirements remain deferred until an implemented consumer needs them.

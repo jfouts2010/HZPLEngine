@@ -61,6 +61,7 @@ namespace Engine.Service
                 CreatedAt = currentTime,
                 BarcapBarrier = plan.BarcapBarrier?.Clone(),
                 DeadPlan = plan.DeadPlan?.Clone(),
+                StrikePlan = plan.StrikePlan?.Clone(),
                 Rationale = plan.Rationale ?? string.Empty
             };
             var selectedAircraftIds = new HashSet<Guid>();
@@ -166,6 +167,57 @@ namespace Engine.Service
                 && (plan.DeadPlan == null
                     || plan.DeadPlan.TargetSiteId == Guid.Empty))
                 return "A DEAD package plan requires an explicit target site.";
+            if (plan.OperationType == AirOperationType.Strike)
+            {
+                if (plan.StrikePlan == null
+                    || plan.StrikePlan.TargetAirportBuildingId == Guid.Empty)
+                    return "A Strike package plan requires an explicit target airport.";
+                if (plan.StrikePlan.Purpose != StrikePurpose.OffensiveCounterAir)
+                    return "The current Strike implementation requires an offensive-counter-air purpose.";
+                if (plan.StrikePlan.DesiredRunwayDamagePerChannel < 1
+                    || plan.StrikePlan.DesiredRunwayDamagePerChannel
+                    > AirportRunwayChannel.MaximumDamageLevel)
+                    return $"A Strike package plan requires runway damage from 1 to {AirportRunwayChannel.MaximumDamageLevel}.";
+                if (!gameManager.buildingSystem.TryGetBuilding(
+                        plan.StrikePlan.TargetAirportBuildingId,
+                        out var targetBuilding)
+                    || targetBuilding is not Airport targetAirport
+                    || !gameManager.tileSystem.TryGetLand(
+                        targetAirport.TileId,
+                        out var targetTile)
+                    || targetTile.Controller == Alliance.Neutral
+                    || targetTile.Controller == plan.Alliance)
+                    return "A Strike package plan requires a currently hostile target airport.";
+                if (!plan.OperationArea.Contains(targetAirport.TileId))
+                    return "The target airport must lie inside the Strike operation area.";
+                if (plan.Flights.Any(flight =>
+                        flight.TaskType == AirFlightTaskType.Strike
+                        && flight.StrikeAssignment == StrikeAssignment.None))
+                    return "Every Strike flight requires an explicit strike assignment.";
+                if (plan.Flights.Any(flight =>
+                        flight.TaskType == AirFlightTaskType.Strike
+                        && flight.StrikeAssignment
+                        == StrikeAssignment.RunwayDenial)
+                    && targetAirport.NominalRunwayChannelCount == 0)
+                    return "A runway-denial Strike flight requires an airport with at least one runway channel.";
+                if (plan.Flights.Any(flight =>
+                        flight.TaskType == AirFlightTaskType.Strike
+                        && flight.StrikeAssignment
+                        == StrikeAssignment.AirbaseFacilities)
+                    && !(plan.StrikePlan.AuthorizedFacilityTargetIds
+                         ?? new List<Guid>()).Any(id => id != Guid.Empty))
+                    return "An airbase-facilities Strike flight requires explicitly authorized facility targets.";
+                if ((plan.StrikePlan.AuthorizedFacilityTargetIds
+                     ?? new List<Guid>())
+                    .Where(id => id != Guid.Empty)
+                    .Distinct()
+                    .Any(id => !gameManager.buildingSystem.TryGetBuilding(
+                                   id,
+                                   out var facility)
+                               || facility.BuildingId == targetAirport.BuildingId
+                               || facility.TileId != targetAirport.TileId))
+                    return "Every authorized airbase facility must be a building in the target airport's tile.";
+            }
 
             return string.Empty;
         }
@@ -222,6 +274,7 @@ namespace Engine.Service
                 FlightId = flightPlan.FlightPlanId,
                 SquadronId = squadron.SquadronId,
                 TaskType = flightPlan.TaskType,
+                StrikeAssignment = flightPlan.StrikeAssignment,
                 AuthorizedSurfaceThreatSiteId =
                     flightPlan.TaskType == AirFlightTaskType.DeadAttack
                     || flightPlan.TaskType == AirFlightTaskType.SeadEscort
@@ -583,6 +636,7 @@ namespace Engine.Service
                     return;
                 }
                 case AirFlightTaskType.DeadAttack:
+                case AirFlightTaskType.Strike:
                 {
                     route.Add(NewWaypoint(
                         points[0],
@@ -688,6 +742,7 @@ namespace Engine.Service
                     return count >= 2;
                 case AirFlightTaskType.OcaSweep:
                 case AirFlightTaskType.DeadAttack:
+                case AirFlightTaskType.Strike:
                     return count >= 3;
                 default:
                     return count >= 1;

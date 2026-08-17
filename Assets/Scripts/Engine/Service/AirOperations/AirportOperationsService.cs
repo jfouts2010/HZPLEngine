@@ -14,36 +14,12 @@ namespace Engine.Service
 
         public static int GetNominalCapacityChannels(Airport airport)
         {
-            var buildLevel = airport?.MaximumRunwayIntegrity ?? 0;
-            if (buildLevel <= 0)
-                return 0;
-
-            return buildLevel >= DualChannelBuildLevel ? 2 : 1;
-        }
-
-        public static float GetIntegrityFraction(Airport airport)
-        {
-            var maximum = airport?.MaximumRunwayIntegrity ?? 0;
-            if (maximum <= 0)
-                return 0f;
-
-            return Math.Min(
-                1f,
-                Math.Max(0f, airport.RunwayIntegrity / (float)maximum));
+            return airport?.NominalRunwayChannelCount ?? 0;
         }
 
         public static int GetEffectiveCapacityChannels(Airport airport)
         {
-            if (airport == null || airport.RunwayIntegrity <= 0)
-                return 0;
-
-            var nominal = GetNominalCapacityChannels(airport);
-            return Math.Min(
-                nominal,
-                Math.Max(
-                    1,
-                    (int)Math.Ceiling(
-                        nominal * GetIntegrityFraction(airport))));
+            return airport?.OperationalRunwayChannelCount ?? 0;
         }
 
         public static bool IsOperational(Airport airport)
@@ -76,8 +52,9 @@ namespace Engine.Service
 
     public readonly struct AirportOperationsSnapshot
     {
-        public readonly int MaximumRunwayIntegrity;
-        public readonly int RunwayIntegrity;
+        public readonly int MaximumRunwayDamage;
+        public readonly int RunwayDamage;
+        public readonly IReadOnlyList<int> RunwayDamageByChannel;
         public readonly int NominalCapacityChannels;
         public readonly int EffectiveCapacityChannels;
         public readonly int AircraftMovementCapacity;
@@ -93,16 +70,19 @@ namespace Engine.Service
             && ReservedChannelSlots >= EffectiveCapacityChannels;
 
         public AirportOperationsSnapshot(
-            int maximumRunwayIntegrity,
-            int runwayIntegrity,
+            int maximumRunwayDamage,
+            int runwayDamage,
+            IReadOnlyList<int> runwayDamageByChannel,
             int nominalCapacityChannels,
             int effectiveCapacityChannels,
             int aircraftMovementCapacity,
             DateTime windowStart,
             int reservedChannelSlots)
         {
-            MaximumRunwayIntegrity = Math.Max(0, maximumRunwayIntegrity);
-            RunwayIntegrity = Math.Max(0, runwayIntegrity);
+            MaximumRunwayDamage = Math.Max(0, maximumRunwayDamage);
+            RunwayDamage = Math.Max(0, runwayDamage);
+            RunwayDamageByChannel = runwayDamageByChannel
+                                     ?? Array.Empty<int>();
             NominalCapacityChannels = Math.Max(0, nominalCapacityChannels);
             EffectiveCapacityChannels = Math.Max(0, effectiveCapacityChannels);
             AircraftMovementCapacity = Math.Max(0, aircraftMovementCapacity);
@@ -170,8 +150,12 @@ namespace Engine.Service
                 new ScheduleKey(airportId, windowStart),
                 out var reservedSlots);
             return new AirportOperationsSnapshot(
-                airport.MaximumRunwayIntegrity,
-                airport.RunwayIntegrity,
+                airport.MaximumRunwayDamage,
+                airport.RunwayDamage,
+                airport.RunwayChannels
+                    .OrderBy(channel => channel.ChannelIndex)
+                    .Select(channel => channel.DamageLevel)
+                    .ToList(),
                 AirportOperationsRules.GetNominalCapacityChannels(airport),
                 AirportOperationsRules.GetEffectiveCapacityChannels(airport),
                 AirportOperationsRules.GetAircraftMovementCapacity(airport),

@@ -7,6 +7,7 @@ namespace Models.Module
         Building = 3,
         Aircraft = 4,
         Radar = 5,
-        Ship = 6
+        Ship = 6,
+        Runway = 7
     }
 }

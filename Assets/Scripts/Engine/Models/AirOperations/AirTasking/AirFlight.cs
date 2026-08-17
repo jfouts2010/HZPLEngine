@@ -131,6 +131,7 @@ namespace Models.Gameplay.Campaign
         public Guid FlightId = Guid.NewGuid();
         public Guid SquadronId;
         public AirFlightTaskType TaskType;
+        public StrikeAssignment StrikeAssignment;
         private AirEscortCoverageMode escortCoverageMode =
             AirEscortCoverageMode.ForwardScreen;
         public Guid AuthorizedSurfaceThreatSiteId;
@@ -199,6 +200,10 @@ namespace Models.Gameplay.Campaign
             && escortCoverageMode == AirEscortCoverageMode.CloseCover;
         public bool IsDeadAttackFlight =>
             TaskType == AirFlightTaskType.DeadAttack;
+        public bool IsStrikeFlight =>
+            TaskType == AirFlightTaskType.Strike;
+        public bool IsGroundAttackFlight =>
+            IsDeadAttackFlight || IsStrikeFlight;
         public bool AuthorizedSurfaceThreatPenetrationGranted =>
             authorizedSurfaceThreatPenetrationGranted;
         public DateTime NextGroundAttackOpportunityAt =>
@@ -519,7 +524,7 @@ namespace Models.Gameplay.Campaign
                         return FlightWaypointTransition.Advanced;
                     }
 
-                    if (!IsDeadAttackFlight && !IsEscort)
+                    if (!IsGroundAttackFlight && !IsEscort)
                     {
                         missionAchieved = true;
                     }
@@ -529,14 +534,14 @@ namespace Models.Gameplay.Campaign
 
                 case AirWaypointAction.MissionAction:
                     executionPhase = FlightExecutionPhase.Executing;
-                    var isDeadStandoff = IsDeadAttackFlight;
-                    if (!isDeadStandoff)
+                    var isGroundAttackStandoff = IsGroundAttackFlight;
+                    if (!isGroundAttackStandoff)
                         missionAchieved = true;
                     RecordEvent(
                         waypoint,
                         occurredAt,
-                        isDeadStandoff
-                            ? "Flight reached its DEAD standoff attack position."
+                        isGroundAttackStandoff
+                            ? "Flight reached its ground-attack standoff position."
                             : "Flight completed its mission action.");
                     currentWaypointIndex++;
                     return FlightWaypointTransition.Advanced;
@@ -576,7 +581,7 @@ namespace Models.Gameplay.Campaign
             DateTime occurredAt,
             string reason)
         {
-            if (!IsDeadAttackFlight
+            if (!IsGroundAttackFlight
                 || !IsAirborne
                 || missionAchieved == achieved)
                 return;
@@ -668,16 +673,55 @@ namespace Models.Gameplay.Campaign
                 || executionPhase == FlightExecutionPhase.Landing)
                 return false;
 
-            missionAchieved = achieved;
             var returnIndex = route.FindIndex(
                 Math.Max(0, currentWaypointIndex),
                 waypoint => waypoint.Action == AirWaypointAction.ReturnToBase);
             if (returnIndex < 0)
+            {
+                Fail(
+                    occurredAt,
+                    "DEAD flight could not begin recovery because its route has no remaining return waypoint.");
                 return false;
+            }
 
+            missionAchieved = achieved;
             currentWaypointIndex = returnIndex;
             isWaitingAtRendezvous = false;
             authorizedSurfaceThreatPenetrationGranted = false;
+            executionPhase = FlightExecutionPhase.Returning;
+            RecordEvent(
+                CurrentWaypoint,
+                occurredAt,
+                reason,
+                AirWaypointAction.ReturnToBase);
+            return true;
+        }
+
+        public bool EndStrikeAttackAndBeginRecovery(
+            DateTime occurredAt,
+            bool achieved,
+            string reason)
+        {
+            if (!IsStrikeFlight
+                || !IsAirborne
+                || executionPhase == FlightExecutionPhase.Returning
+                || executionPhase == FlightExecutionPhase.Landing)
+                return false;
+
+            var returnIndex = route.FindIndex(
+                Math.Max(0, currentWaypointIndex),
+                waypoint => waypoint.Action == AirWaypointAction.ReturnToBase);
+            if (returnIndex < 0)
+            {
+                Fail(
+                    occurredAt,
+                    "Strike flight could not begin recovery because its route has no remaining return waypoint.");
+                return false;
+            }
+
+            missionAchieved = achieved;
+            currentWaypointIndex = returnIndex;
+            isWaitingAtRendezvous = false;
             executionPhase = FlightExecutionPhase.Returning;
             RecordEvent(
                 CurrentWaypoint,

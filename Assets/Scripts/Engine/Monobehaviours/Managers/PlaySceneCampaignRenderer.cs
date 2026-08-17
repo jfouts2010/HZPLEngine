@@ -1339,7 +1339,9 @@ namespace Engine.Monobehaviours.Managers
                             gameManager.GetAirportOperationsSnapshot(
                                 airport.BuildingId);
                         lines.Add(
-                            $"Runway integrity  {operations.RunwayIntegrity}/{operations.MaximumRunwayIntegrity}");
+                            $"Runway damage  {operations.RunwayDamage}/{operations.MaximumRunwayDamage}");
+                        lines.Add(
+                            $"Channel damage  [{string.Join(", ", operations.RunwayDamageByChannel ?? Array.Empty<int>())}]");
                         lines.Add(
                             $"Runway capacity  {operations.EffectiveCapacityChannels}/{operations.NominalCapacityChannels} channels");
                         lines.Add(
@@ -2475,6 +2477,13 @@ namespace Engine.Monobehaviours.Managers
                         "SAM target",
                         $"{ShortId(plan.DeadPlan.TargetSiteId)} / "
                         + $"{plan.DeadPlan.TargetComponentIds.Count} known components"));
+                }
+                if (plan.StrikePlan != null)
+                {
+                    fields.Add(new AirCardField(
+                        "OCA target",
+                        $"Airport {ShortId(plan.StrikePlan.TargetAirportBuildingId)} / "
+                        + $"runway damage {plan.StrikePlan.DesiredRunwayDamagePerChannel}"));
                 }
                 if (!string.IsNullOrWhiteSpace(plan.Rationale))
                     fields.Add(new AirCardField("Intent", plan.Rationale));
@@ -4306,6 +4315,8 @@ namespace Engine.Monobehaviours.Managers
                     $"building {ShortId(target.EntityId)}",
                 GroundAttackTargetKind.GroundedAircraft =>
                     $"grounded aircraft {ShortId(target.EntityId)}",
+                GroundAttackTargetKind.AirportRunway =>
+                    $"airport {ShortId(target.EntityId)} / runway {target.SubtargetIndex + 1}",
                 GroundAttackTargetKind.TileInfrastructure =>
                     $"infrastructure at {target.TileId.x},{target.TileId.z}",
                 _ => "ground target"
@@ -5687,7 +5698,18 @@ namespace Engine.Monobehaviours.Managers
 
         private static string GetFlightMissionLabel(AirFlight flight)
         {
-            return flight == null ? "Unknown" : GetMissionLabel(flight.TaskType);
+            if (flight == null)
+                return "Unknown";
+            if (flight.TaskType != AirFlightTaskType.Strike
+                || flight.StrikeAssignment == StrikeAssignment.None)
+                return GetMissionLabel(flight.TaskType);
+            return flight.StrikeAssignment switch
+            {
+                StrikeAssignment.RunwayDenial => "Strike / Runways",
+                StrikeAssignment.AircraftOnGround => "Strike / Aircraft",
+                StrikeAssignment.AirbaseFacilities => "Strike / Facilities",
+                _ => GetMissionLabel(flight.TaskType)
+            };
         }
 
         private void RefreshSamCoverageOverlay()

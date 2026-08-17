@@ -222,6 +222,292 @@ namespace Engine.Service
             return opportunity;
         }
 
+        public GroundAttackOpportunity CreateAirportRunwayOpportunity(
+            Guid sourceFlightId,
+            int opportunitySequence,
+            Airport airport,
+            int desiredDamagePerChannel,
+            DateTime currentTime,
+            Func<GroundAttackTargetReference, int> countPendingEffects)
+        {
+            var opportunity = new GroundAttackOpportunity
+            {
+                GeneratedAt = currentTime,
+                TargetTileId = airport?.TileId ?? default,
+                Description = "No useful runway damage remained for this attack window."
+            };
+            if (airport == null || sourceFlightId == Guid.Empty)
+                return opportunity;
+
+            airport.EnsureRunwayChannels();
+            var desired = Math.Max(
+                1,
+                Math.Min(
+                    AirportRunwayChannel.MaximumDamageLevel,
+                    desiredDamagePerChannel));
+            var pendingByChannel = airport.RunwayChannels.ToDictionary(
+                channel => channel.ChannelIndex,
+                channel =>
+                {
+                    var reference = CreateRunwayReference(
+                        airport,
+                        channel.ChannelIndex);
+                    return Math.Max(
+                        0,
+                        countPendingEffects?.Invoke(reference) ?? 0);
+                });
+
+            // Interleave channels at every depth. All still-open channels get a
+            // denial attempt before any runway receives deeper damage.
+            for (var depth = 1; depth <= desired; depth++)
+            {
+                foreach (var channel in airport.RunwayChannels
+                             .OrderBy(item => item.ChannelIndex))
+                {
+                    var projectedDamage = Math.Min(
+                        AirportRunwayChannel.MaximumDamageLevel,
+                        channel.DamageLevel
+                        + pendingByChannel[channel.ChannelIndex]);
+                    if (projectedDamage >= depth)
+                        continue;
+
+                    opportunity.Targets.Add(new GroundAttackOpportunityTarget
+                    {
+                        Target = CreateRunwayReference(
+                            airport,
+                            channel.ChannelIndex),
+                        TargetCategory = OrdnanceTargetCategory.Runway,
+                        TargetToughness = airport.TargetToughness,
+                        MissionPriority = depth == 1
+                            ? 100f
+                            : Math.Max(10f, 80f - depth * 10f),
+                        CanReceiveSecondaryEffect = false,
+                        DamageSlotIndex = depth - 1,
+                        Description = depth == 1
+                            ? $"runway channel {channel.ChannelIndex + 1} denial aim point"
+                            : $"runway channel {channel.ChannelIndex + 1} damage aim point {depth}"
+                    });
+                }
+            }
+
+            opportunity.MaximumReleases = opportunity.Targets.Count;
+            opportunity.Quality = GetQuality(opportunity.Targets.Count);
+            if (opportunity.HasTargets)
+            {
+                opportunity.Description =
+                    $"{opportunity.Targets.Count} useful runway aim points were available across "
+                    + $"{airport.NominalRunwayChannelCount} runway channels.";
+            }
+            return opportunity;
+        }
+
+        public GroundAttackOpportunity RollParkedAircraftOpportunity(
+            Guid sourceFlightId,
+            int opportunitySequence,
+            Airport airport,
+            IEnumerable<CampaignAircraft> groundedAircraft,
+            DateTime currentTime,
+            Func<GroundAttackTargetReference, bool> isAlreadyCovered)
+        {
+            var opportunity = new GroundAttackOpportunity
+            {
+                GeneratedAt = currentTime,
+                TargetTileId = airport?.TileId ?? default,
+                Description = "No useful parked-aircraft group was exposed during this attack window."
+            };
+            if (airport == null || sourceFlightId == Guid.Empty)
+                return opportunity;
+
+            var candidates = (groundedAircraft
+                              ?? Enumerable.Empty<CampaignAircraft>())
+                .Where(aircraft => aircraft != null
+                                   && aircraft.Status
+                                   != CampaignAircraftStatus.Lost)
+                .GroupBy(aircraft => aircraft.AircraftId)
+                .Select(group => group.First())
+                .Select(aircraft => new
+                {
+                    Aircraft = aircraft,
+                    Target = new GroundAttackTargetReference
+                    {
+                        Kind = GroundAttackTargetKind.GroundedAircraft,
+                        EntityId = aircraft.AircraftId,
+                        TileId = airport.TileId
+                    }
+                })
+                .Where(candidate => isAlreadyCovered == null
+                                    || !isAlreadyCovered(candidate.Target))
+                .ToList();
+            if (candidates.Count == 0
+                || StableRoll(
+                    sourceFlightId,
+                    airport.BuildingId,
+                    opportunitySequence,
+                    20) < 0.1d)
+                return opportunity;
+
+            var sizeRoll = StableRoll(
+                sourceFlightId,
+                airport.BuildingId,
+                opportunitySequence,
+                21);
+            var desiredCount = sizeRoll < 0.5d
+                ? 1
+                : sizeRoll < 0.8d
+                    ? 2
+                    : sizeRoll < 0.95d
+                        ? 3
+                        : 4;
+            var selected = candidates
+                .OrderBy(candidate => StableRoll(
+                    sourceFlightId,
+                    candidate.Aircraft.AircraftId,
+                    opportunitySequence,
+                    22))
+                .ThenBy(candidate => candidate.Aircraft.AircraftId)
+                .Take(Math.Min(desiredCount, candidates.Count))
+                .Select(candidate => new GroundAttackOpportunityTarget
+                {
+                    Target = candidate.Target,
+                    TargetCategory = OrdnanceTargetCategory.Aircraft,
+                    TargetToughness = 1,
+                    MissionPriority = candidate.Aircraft.Status
+                                      == CampaignAircraftStatus.Assigned
+                        ? 110f
+                        : candidate.Aircraft.Status
+                          == CampaignAircraftStatus.Ready
+                            ? 100f
+                            : 50f,
+                    CanReceiveSecondaryEffect = true,
+                    Description = candidate.Aircraft.Status
+                                  == CampaignAircraftStatus.Assigned
+                        ? "committed aircraft awaiting takeoff"
+                        : candidate.Aircraft.Status
+                          == CampaignAircraftStatus.Ready
+                            ? "ready aircraft parked at the airbase"
+                            : "damaged aircraft parked at the airbase"
+                })
+                .ToList();
+
+            opportunity.Targets.AddRange(selected);
+            opportunity.MaximumReleases = selected.Count;
+            opportunity.Quality = GetQuality(selected.Count);
+            opportunity.Description = selected.Count == 1
+                ? "A single parked aircraft was exposed."
+                : $"{selected.Count} aircraft were exposed together on an airbase ramp.";
+            return opportunity;
+        }
+
+        public GroundAttackOpportunity RollAuthorizedFacilityOpportunity(
+            Guid sourceFlightId,
+            int opportunitySequence,
+            Airport airport,
+            IEnumerable<Building> facilities,
+            DateTime currentTime,
+            Func<GroundAttackTargetReference, bool> isAlreadyCovered)
+        {
+            var opportunity = new GroundAttackOpportunity
+            {
+                GeneratedAt = currentTime,
+                TargetTileId = airport?.TileId ?? default,
+                Description = "No authorized airbase facility was exposed during this attack window."
+            };
+            if (airport == null || sourceFlightId == Guid.Empty)
+                return opportunity;
+
+            var candidates = (facilities ?? Enumerable.Empty<Building>())
+                .Where(building => building != null
+                                   && building.TileId == airport.TileId
+                                   && building.FunctionalLevel > 0)
+                .Select(building => new
+                {
+                    Building = building,
+                    Target = new GroundAttackTargetReference
+                    {
+                        Kind = GroundAttackTargetKind.Building,
+                        EntityId = building.BuildingId,
+                        TileId = building.TileId
+                    }
+                })
+                .Where(candidate => isAlreadyCovered == null
+                                    || !isAlreadyCovered(candidate.Target))
+                .ToList();
+            if (candidates.Count == 0
+                || StableRoll(
+                    sourceFlightId,
+                    airport.BuildingId,
+                    opportunitySequence,
+                    30) < 0.1d)
+                return opportunity;
+
+            var sizeRoll = StableRoll(
+                sourceFlightId,
+                airport.BuildingId,
+                opportunitySequence,
+                31);
+            var desiredCount = sizeRoll < 0.5d
+                ? 1
+                : sizeRoll < 0.8d
+                    ? 2
+                    : sizeRoll < 0.95d
+                        ? 3
+                        : 4;
+            candidates = candidates
+                .OrderBy(candidate => StableRoll(
+                    sourceFlightId,
+                    candidate.Building.BuildingId,
+                    opportunitySequence,
+                    32))
+                .ThenBy(candidate => candidate.Building.BuildingId)
+                .Take(Math.Min(desiredCount, candidates.Count))
+                .ToList();
+            foreach (var candidate in candidates)
+            {
+                opportunity.Targets.Add(new GroundAttackOpportunityTarget
+                {
+                    Target = candidate.Target,
+                    TargetCategory = OrdnanceTargetCategory.Building,
+                    TargetToughness = candidate.Building.TargetToughness,
+                    MissionPriority = 100f,
+                    CanReceiveSecondaryEffect = false,
+                    Description = $"authorized {candidate.Building.Type} facility"
+                });
+            }
+            opportunity.MaximumReleases = opportunity.Targets.Count;
+            opportunity.Quality = GetQuality(opportunity.Targets.Count);
+            if (opportunity.HasTargets)
+            {
+                opportunity.Description = opportunity.Targets.Count == 1
+                    ? "An authorized airbase facility was exposed."
+                    : $"{opportunity.Targets.Count} authorized airbase facilities were exposed together.";
+            }
+            return opportunity;
+        }
+
+        private static GroundAttackTargetReference CreateRunwayReference(
+            Airport airport,
+            int channelIndex)
+        {
+            return new GroundAttackTargetReference
+            {
+                Kind = GroundAttackTargetKind.AirportRunway,
+                EntityId = airport.BuildingId,
+                TileId = airport.TileId,
+                SubtargetIndex = channelIndex
+            };
+        }
+
+        private static GroundAttackOpportunityQuality GetQuality(int count)
+        {
+            return count <= 0
+                ? GroundAttackOpportunityQuality.None
+                : count == 1
+                    ? GroundAttackOpportunityQuality.Fleeting
+                    : count >= 3
+                        ? GroundAttackOpportunityQuality.Excellent
+                        : GroundAttackOpportunityQuality.Normal;
+        }
+
         private static GroundAttackOpportunityTarget CreateComponentTarget(
             SamSite site,
             UnityEngine.Vector3Int siteTileId,
@@ -383,16 +669,17 @@ namespace Engine.Service
                     .OrderByDescending(target => DirectValue(target, ordnance))
                     .ThenBy(target => target.Target.EntityId)
                     .ToList();
+                var directOnly = eligible
+                    .Where(target => !target.CanReceiveSecondaryEffect
+                                     || !AirToGroundWeaponRules.CanAffect(
+                                         ordnance,
+                                         target.TargetCategory,
+                                         target.TargetToughness,
+                                         ordnance.SecondaryGroundEffectMultiplier))
+                    .ToList();
                 var coverage = ordnance.SecondaryGroundEffectMultiplier > 0f
                     ? ordnance.MaximumGroundTargetsPerWeapon
                     : 1;
-                var directOnly = eligible
-                    .Where(target => !AirToGroundWeaponRules.CanAffect(
-                        ordnance,
-                        target.TargetCategory,
-                        target.TargetToughness,
-                        ordnance.SecondaryGroundEffectMultiplier))
-                    .ToList();
                 var desiredQuantity = Math.Max(
                     directOnly.Count,
                     (int)Math.Ceiling(eligible.Count / (double)coverage));
@@ -402,8 +689,11 @@ namespace Engine.Service
                 if (quantity <= 0)
                     continue;
 
+                var directOnlySet = new HashSet<GroundAttackOpportunityTarget>(
+                    directOnly);
                 var primaryTargets = eligible
-                    .OrderByDescending(target => PrimaryAssignmentValue(
+                    .OrderByDescending(target => directOnlySet.Contains(target))
+                    .ThenByDescending(target => PrimaryAssignmentValue(
                         target,
                         ordnance))
                     .ThenByDescending(target => DirectValue(target, ordnance))
@@ -422,6 +712,7 @@ namespace Engine.Service
                                             * (ordnance.MaximumGroundTargetsPerWeapon - 1);
                     score += eligible
                         .Where(target => !primarySet.Contains(target))
+                        .Where(target => target.CanReceiveSecondaryEffect)
                         .Where(target => AirToGroundWeaponRules.CanAffect(
                             ordnance,
                             target.TargetCategory,
@@ -488,7 +779,8 @@ namespace Engine.Service
             OrdnanceTypeDefinition ordnance)
         {
             var directValue = DirectValue(target, ordnance);
-            if (!AirToGroundWeaponRules.CanAffect(
+            if (!target.CanReceiveSecondaryEffect
+                || !AirToGroundWeaponRules.CanAffect(
                     ordnance,
                     target.TargetCategory,
                     target.TargetToughness,

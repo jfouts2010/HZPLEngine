@@ -559,7 +559,9 @@ namespace Models.Module
                     effectivenessByTargetCategory: new Dictionary<OrdnanceTargetCategory, float>
                     {
                         { OrdnanceTargetCategory.Vehicle, 0.55f },
-                        { OrdnanceTargetCategory.Building, 0.8f }
+                        { OrdnanceTargetCategory.Building, 0.8f },
+                        { OrdnanceTargetCategory.Aircraft, 0.75f },
+                        { OrdnanceTargetCategory.Runway, 0.8f }
                     },
                     employmentCategory: OrdnanceEmploymentCategory.AirToGroundPrecision,
                     guidanceMode: OrdnanceGuidanceMode.Gps,
@@ -577,7 +579,8 @@ namespace Models.Module
                     effectivenessByTargetCategory: new Dictionary<OrdnanceTargetCategory, float>
                     {
                         { OrdnanceTargetCategory.Vehicle, 0.9f },
-                        { OrdnanceTargetCategory.Building, 0.45f }
+                        { OrdnanceTargetCategory.Building, 0.45f },
+                        { OrdnanceTargetCategory.Aircraft, 0.8f }
                     },
                     employmentCategory: OrdnanceEmploymentCategory.AirToGroundPrecision,
                     guidanceMode: OrdnanceGuidanceMode.Imaging,

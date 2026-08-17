@@ -73,7 +73,7 @@ namespace Engine.Service
                     thirdPartyId,
                     alliance,
                     Position(airport.PositionFeet),
-                    airport.FunctionalLevel > 0));
+                    AirportOperationsRules.IsOperational(airport)));
             }
 
             return airports;

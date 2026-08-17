@@ -202,6 +202,7 @@ namespace Engine.Models
                 wvrEngagementSystem.Reconcile(frame, cursor);
                 ResolveDamageRecovery(cursor);
                 ProcessDeadMissions(cursor);
+                ProcessStrikeMissions(cursor);
                 frame = BuildAirCombatFrame(cursor);
 
                 var commands = frame.Flights.Values
@@ -329,6 +330,7 @@ namespace Engine.Models
                     ordnanceEmploymentSystem.TryStartAirToAirPass(proposal, cursor);
                 }
                 ProcessDeadMissions(cursor);
+                ProcessStrikeMissions(cursor);
                 wvrEngagementSystem.ProcessRequests(
                     commands.Where(command =>
                         !command.RequestsSurfaceThreatRecovery),
@@ -1088,15 +1090,18 @@ namespace Engine.Models
                 if (package.Flights.All(flight =>
                         flight.ExecutionPhase
                         == FlightExecutionPhase.AwaitingTakeoff)
-                    && TryGetDeadPreflightInvalidationReason(
-                        package,
-                        out var deadInvalidationReason))
+                    && (TryGetDeadPreflightInvalidationReason(
+                            package,
+                            out var preflightInvalidationReason)
+                        || TryGetStrikePreflightInvalidationReason(
+                            package,
+                            out preflightInvalidationReason)))
                 {
                     airTaskingSystem.CancelPackage(
                         package.Alliance,
                         package.PackageId,
                         currentTime,
-                        deadInvalidationReason);
+                        preflightInvalidationReason);
                     continue;
                 }
 
@@ -1466,6 +1471,548 @@ namespace Engine.Models
                     }
                 }
             }
+        }
+
+        private void ProcessStrikeMissions(DateTime currentTime)
+        {
+            foreach (var package in airTaskingSystem.GetPackages()
+                         .Where(candidate => candidate.LifecycleState
+                                             == AirTaskingLifecycleState.Active)
+                         .OrderBy(candidate => candidate.PackageId))
+            {
+                var strikePlan = package.StrikePlan;
+                if (package.OperationType != AirOperationType.Strike
+                    || strikePlan?.Purpose != StrikePurpose.OffensiveCounterAir)
+                    continue;
+
+                if (!gameManager.buildingSystem.TryGetBuilding(
+                        strikePlan.TargetAirportBuildingId,
+                        out var targetBuilding)
+                    || targetBuilding is not Airport airport)
+                {
+                    foreach (var flight in package.Flights
+                                 .Where(candidate => candidate.IsStrikeFlight
+                                                     && candidate.IsAirborne)
+                                 .OrderBy(candidate => candidate.FlightId))
+                    {
+                        ordnanceEmploymentSystem.CancelAirToGroundPasses(
+                            new[] { flight.FlightId },
+                            currentTime,
+                            "OCA strike preparation aborted because the target airport no longer exists.");
+                        flight.EndStrikeAttackAndBeginRecovery(
+                            currentTime,
+                            flight.MissionAchieved,
+                            "The assigned airport no longer exists; ending the strike sequence.");
+                    }
+                    continue;
+                }
+
+                var targetIsHostile = IsHostileAirport(package.Alliance, airport);
+                var targetInsideFixedArea = package.OperationArea?.Contains(
+                    airport.TileId) == true;
+                var targetIsKnown = gameManager.intelligenceSystem
+                    ?.GetPicture(package.Alliance)
+                    ?.EnemyAirports
+                    ?.Any(report => report != null
+                                    && report.AirportBuildingId
+                                    == airport.BuildingId
+                                    && report.InformationQuality > 0f) == true;
+                foreach (var flight in package.Flights
+                             .Where(candidate => candidate.IsStrikeFlight
+                                                 && candidate.IsAirborne)
+                             .OrderBy(candidate => candidate.FlightId))
+                {
+                    var objectiveAchieved = IsStrikeObjectiveAchieved(
+                        flight.StrikeAssignment,
+                        strikePlan,
+                        airport);
+                    var targetIsValid = targetIsKnown
+                                        && targetIsHostile
+                                        && targetInsideFixedArea;
+                    var isRecovering = flight.ExecutionPhase
+                                           == FlightExecutionPhase.Returning
+                                       || flight.ExecutionPhase
+                                           == FlightExecutionPhase.Landing;
+                    if (targetIsValid
+                        && (!isRecovering
+                            || objectiveAchieved && !flight.MissionAchieved))
+                    {
+                        flight.UpdateMissionOutcome(
+                            objectiveAchieved,
+                            currentTime,
+                            GetStrikeOutcomeReason(
+                                flight.StrikeAssignment,
+                                objectiveAchieved));
+                    }
+                    if (isRecovering)
+                        continue;
+
+                    if (!targetIsValid)
+                    {
+                        ordnanceEmploymentSystem.CancelAirToGroundPasses(
+                            new[] { flight.FlightId },
+                            currentTime,
+                            !targetIsKnown
+                                ? "OCA strike preparation aborted because the airport is no longer known."
+                                : !targetIsHostile
+                                    ? "OCA strike preparation aborted because the airport is no longer hostile."
+                                    : "OCA strike preparation aborted because the airport left the fixed mission area.");
+                        flight.EndStrikeAttackAndBeginRecovery(
+                            currentTime,
+                            flight.MissionAchieved,
+                            !targetIsKnown
+                                ? "The assigned airport is no longer known; ending the strike sequence."
+                                : !targetIsHostile
+                                    ? "The assigned airport is no longer hostile; ending the strike sequence."
+                                    : "The assigned airport is outside the fixed strike area; ending the strike sequence.");
+                        continue;
+                    }
+
+                    if (objectiveAchieved)
+                    {
+                        ordnanceEmploymentSystem.CancelAirToGroundPasses(
+                            new[] { flight.FlightId },
+                            currentTime,
+                            "Strike preparation aborted because the assigned objective is already complete.");
+                        flight.EndStrikeAttackAndBeginRecovery(
+                            currentTime,
+                            true,
+                            "The assigned OCA strike objective is complete; ending the attack sequence.");
+                        continue;
+                    }
+
+                    if (flight.ExecutionPhase != FlightExecutionPhase.Executing)
+                        continue;
+
+                    if (currentTime >= flight.EffectEnd)
+                    {
+                        ordnanceEmploymentSystem.CancelAirToGroundPasses(
+                            new[] { flight.FlightId },
+                            currentTime,
+                            "Strike preparation aborted because the OCA attack window ended.");
+                        flight.EndStrikeAttackAndBeginRecovery(
+                            currentTime,
+                            objectiveAchieved,
+                            objectiveAchieved
+                                ? "The assigned OCA strike objective was achieved."
+                                : HasPendingGroundEffect(flight.FlightId)
+                                    ? "The OCA strike window ended; released effects remain pending during recovery."
+                                    : "The OCA strike window ended before the assigned objective was achieved.");
+                        continue;
+                    }
+                    if (currentTime < flight.EffectStart
+                        || !TryGetFlightContext(
+                            flight,
+                            out var squadron,
+                            out _))
+                        continue;
+
+                    TryStartNextStrikeAttack(
+                        flight,
+                        squadron,
+                        strikePlan,
+                        airport,
+                        currentTime);
+
+                    var unresolvedGroundEffect = HasUnresolvedGroundEffect(
+                        flight.FlightId);
+                    if (!unresolvedGroundEffect
+                        && !HasStrikeMissionUsefulOrdnance(
+                            flight,
+                            squadron,
+                            strikePlan,
+                            airport))
+                    {
+                        objectiveAchieved = IsStrikeObjectiveAchieved(
+                            flight.StrikeAssignment,
+                            strikePlan,
+                            airport);
+                        flight.EndStrikeAttackAndBeginRecovery(
+                            currentTime,
+                            objectiveAchieved,
+                            objectiveAchieved
+                                ? "The assigned OCA strike objective is complete and no useful cleanup ordnance remains."
+                                : "Mission-useful strike ordnance is exhausted before the assigned objective was achieved.");
+                    }
+                }
+            }
+        }
+
+        private void TryStartNextStrikeAttack(
+            AirFlight flight,
+            Squadron squadron,
+            StrikeMissionPlan strikePlan,
+            Airport airport,
+            DateTime currentTime)
+        {
+            if (flight == null
+                || squadron == null
+                || strikePlan == null
+                || airport == null
+                || !flight.CanEvaluateGroundAttackOpportunity(currentTime)
+                || HasUnresolvedGroundEffect(flight.FlightId))
+                return;
+
+            var sequence = flight.ConsumeGroundAttackOpportunity(
+                currentTime,
+                retrySeconds: 60d);
+            GroundAttackOpportunity opportunity;
+            switch (flight.StrikeAssignment)
+            {
+                case StrikeAssignment.RunwayDenial:
+                    opportunity = groundAttackOpportunityService
+                        .CreateAirportRunwayOpportunity(
+                            flight.FlightId,
+                            sequence,
+                            airport,
+                            strikePlan.DesiredRunwayDamagePerChannel,
+                            currentTime,
+                            target => ordnanceEmploymentSystem
+                                .CountActiveOrPendingPrimaryGroundEffects(target));
+                    break;
+
+                case StrikeAssignment.AircraftOnGround:
+                    opportunity = groundAttackOpportunityService
+                        .RollParkedAircraftOpportunity(
+                            flight.FlightId,
+                            sequence,
+                            airport,
+                            GetGroundedAircraftAtAirport(airport.BuildingId),
+                            currentTime,
+                            target => ordnanceEmploymentSystem
+                                .HasActiveOrPendingGroundEffect(target));
+                    break;
+
+                case StrikeAssignment.AirbaseFacilities:
+                    opportunity = groundAttackOpportunityService
+                        .RollAuthorizedFacilityOpportunity(
+                            flight.FlightId,
+                            sequence,
+                            airport,
+                            GetAuthorizedStrikeFacilities(strikePlan, airport),
+                            currentTime,
+                            target => ordnanceEmploymentSystem
+                                .HasActiveOrPendingGroundEffect(target));
+                    break;
+
+                default:
+                    return;
+            }
+            if (!opportunity.HasTargets)
+                return;
+
+            var sourceAircraft = squadron.Aircraft
+                .Where(aircraft => aircraft.AssignedFlightId == flight.FlightId
+                                   && aircraft.Status
+                                   != CampaignAircraftStatus.Lost
+                                   && aircraft.Status
+                                   != CampaignAircraftStatus.Damaged)
+                .ToList();
+            if (!groundAttackDecisionService.TryPlan(
+                    opportunity,
+                    sourceAircraft,
+                    ordnanceTypes,
+                    (target, ordnance) =>
+                        IsSuitableStrikeOpportunityTarget(
+                            flight.StrikeAssignment,
+                            target)
+                        && TryGetStrikeTargetPosition(
+                            target?.Target,
+                            airport,
+                            out var targetPositionFeet)
+                        && IsWithinGroundReleaseRange(
+                            flight,
+                            targetPositionFeet,
+                            ordnance),
+                    out var plan))
+                return;
+
+            ordnanceEmploymentSystem.TryStartGroundAttackPass(
+                flight.FlightId,
+                plan,
+                currentTime);
+        }
+
+        private bool TryGetStrikePreflightInvalidationReason(
+            AirPackage package,
+            out string reason)
+        {
+            reason = string.Empty;
+            var strikePlan = package.StrikePlan;
+            if (package.OperationType != AirOperationType.Strike
+                || strikePlan == null)
+                return false;
+
+            var picture = gameManager.intelligenceSystem
+                ?.GetPicture(package.Alliance);
+            var report = picture
+                ?.EnemyAirports
+                ?.FirstOrDefault(candidate => candidate != null
+                                              && candidate.AirportBuildingId
+                                              == strikePlan.TargetAirportBuildingId
+                                              && candidate.InformationQuality > 0f);
+            if (report == null)
+            {
+                reason = "The assigned airport is no longer known before takeoff.";
+                return true;
+            }
+            if (package.OperationArea?.Contains(report.AirportTileId) != true)
+            {
+                reason =
+                    "The assigned airport no longer matches the fixed OCA strike area before takeoff.";
+                return true;
+            }
+
+            var strikeFlights = package.Flights
+                .Where(flight => flight.IsStrikeFlight)
+                .ToList();
+            if (strikeFlights.Count > 0
+                && strikeFlights.All(flight => IsObservedStrikeObjectiveAchieved(
+                    flight.StrikeAssignment,
+                    strikePlan,
+                    report,
+                    picture)))
+            {
+                reason =
+                    "Current intelligence indicates every assigned OCA strike objective is already complete.";
+                return true;
+            }
+            return false;
+        }
+
+        private static bool IsObservedStrikeObjectiveAchieved(
+            StrikeAssignment assignment,
+            StrikeMissionPlan strikePlan,
+            ObservedEnemyAirportSnapshot report,
+            AllianceIntelligencePicture picture)
+        {
+            switch (assignment)
+            {
+                case StrikeAssignment.RunwayDenial:
+                    var channels = report.RunwayChannels
+                                   ?? new List<ObservedRunwayChannel>();
+                    return channels.Count > 0
+                           && channels.All(channel => channel != null
+                               && channel.DamageLevel
+                               >= strikePlan.DesiredRunwayDamagePerChannel);
+                case StrikeAssignment.AircraftOnGround:
+                    return (report.AircraftGroups
+                            ?? new List<ObservedAircraftGroup>())
+                        .Sum(group => group?.AircraftOnGroundCount ?? 0) == 0;
+                case StrikeAssignment.AirbaseFacilities:
+                    var authorizedIds = (strikePlan.AuthorizedFacilityTargetIds
+                                         ?? new List<Guid>())
+                        .Where(id => id != Guid.Empty)
+                        .ToHashSet();
+                    var buildingReports = picture?.HostileBuildings
+                                          ?? new List<
+                                              BuildingIntelligenceReport>();
+                    return authorizedIds.Count > 0
+                           && authorizedIds.All(id => buildingReports.Any(
+                               building => building != null
+                                           && building.BuildingId == id
+                                           && building.InformationQuality > 0f
+                                           && building.FunctionalLevel <= 0));
+                default:
+                    return false;
+            }
+        }
+
+        private bool IsStrikeObjectiveAchieved(
+            StrikeAssignment assignment,
+            StrikeMissionPlan strikePlan,
+            Airport airport)
+        {
+            switch (assignment)
+            {
+                case StrikeAssignment.RunwayDenial:
+                    airport.EnsureRunwayChannels();
+                    return airport.RunwayChannels.Count > 0
+                           && airport.RunwayChannels.All(channel =>
+                               channel.DamageLevel
+                               >= strikePlan.DesiredRunwayDamagePerChannel);
+                case StrikeAssignment.AircraftOnGround:
+                    return !GetGroundedAircraftAtAirport(airport.BuildingId).Any();
+                case StrikeAssignment.AirbaseFacilities:
+                    return !GetAuthorizedStrikeFacilities(strikePlan, airport).Any();
+                default:
+                    return false;
+            }
+        }
+
+        private IEnumerable<CampaignAircraft> GetGroundedAircraftAtAirport(
+            Guid airportBuildingId)
+        {
+            var airborneAircraftIds = airTaskingSystem.GetAirborneFlights()
+                .SelectMany(flight => flight.AircraftIds)
+                .ToHashSet();
+            return gameManager.squadronSystem.Squadrons
+                .Where(squadron => squadron.AirportBuildingId
+                                   == airportBuildingId)
+                .SelectMany(squadron => squadron.Aircraft)
+                .Where(aircraft => aircraft != null
+                                   && aircraft.Status
+                                   != CampaignAircraftStatus.Lost
+                                   && !airborneAircraftIds.Contains(
+                                       aircraft.AircraftId))
+                .ToList();
+        }
+
+        private IEnumerable<Building> GetAuthorizedStrikeFacilities(
+            StrikeMissionPlan strikePlan,
+            Airport airport)
+        {
+            var authorizedIds = (strikePlan.AuthorizedFacilityTargetIds
+                                 ?? new List<Guid>())
+                .Where(id => id != Guid.Empty)
+                .Distinct()
+                .ToHashSet();
+            return gameManager.buildingSystem.GetBuildingsOnTile(airport.TileId)
+                .Where(building => building != null
+                                   && building.BuildingId != airport.BuildingId
+                                   && authorizedIds.Contains(building.BuildingId)
+                                   && building.FunctionalLevel > 0)
+                .ToList();
+        }
+
+        private bool HasStrikeMissionUsefulOrdnance(
+            AirFlight flight,
+            Squadron squadron,
+            StrikeMissionPlan strikePlan,
+            Airport airport)
+        {
+            var remainingTargets = new List<(OrdnanceTargetCategory Category, int Toughness)>();
+            switch (flight.StrikeAssignment)
+            {
+                case StrikeAssignment.RunwayDenial:
+                    airport.EnsureRunwayChannels();
+                    remainingTargets.AddRange(airport.RunwayChannels
+                        .Where(channel => channel.DamageLevel
+                                          < strikePlan.DesiredRunwayDamagePerChannel)
+                        .Select(_ => (OrdnanceTargetCategory.Runway,
+                                      airport.TargetToughness)));
+                    break;
+                case StrikeAssignment.AircraftOnGround:
+                    if (GetGroundedAircraftAtAirport(airport.BuildingId).Any())
+                    {
+                        remainingTargets.Add((
+                            OrdnanceTargetCategory.Aircraft,
+                            1));
+                    }
+                    break;
+                case StrikeAssignment.AirbaseFacilities:
+                    remainingTargets.AddRange(
+                        GetAuthorizedStrikeFacilities(strikePlan, airport)
+                            .Select(building => (
+                                OrdnanceTargetCategory.Building,
+                                building.TargetToughness)));
+                    break;
+            }
+            if (remainingTargets.Count == 0)
+                return false;
+
+            return squadron.Aircraft
+                .Where(aircraft => aircraft.AssignedFlightId == flight.FlightId
+                                   && aircraft.Status
+                                   != CampaignAircraftStatus.Lost
+                                   && aircraft.Status
+                                   != CampaignAircraftStatus.Damaged)
+                .SelectMany(aircraft => aircraft.Loadout)
+                .Any(item => item.Count > 0
+                             && ordnanceTypes.TryGetValue(
+                                 item.OrdnanceTypeDefinitionId,
+                                 out var ordnance)
+                             && remainingTargets.Any(target =>
+                                 AirToGroundWeaponRules.CanAffect(
+                                     ordnance,
+                                     target.Category,
+                                     target.Toughness)));
+        }
+
+        private static bool IsSuitableStrikeOpportunityTarget(
+            StrikeAssignment assignment,
+            GroundAttackOpportunityTarget target)
+        {
+            return assignment switch
+            {
+                StrikeAssignment.RunwayDenial => target?.Target?.Kind
+                                                  == GroundAttackTargetKind.AirportRunway,
+                StrikeAssignment.AircraftOnGround => target?.Target?.Kind
+                                                     == GroundAttackTargetKind.GroundedAircraft,
+                StrikeAssignment.AirbaseFacilities => target?.Target?.Kind
+                                                      == GroundAttackTargetKind.Building,
+                _ => false
+            };
+        }
+
+        private bool TryGetStrikeTargetPosition(
+            GroundAttackTargetReference target,
+            Airport airport,
+            out Vector3 positionFeet)
+        {
+            positionFeet = airport.PositionFeet;
+            if (target == null)
+                return false;
+            if (target.Kind != GroundAttackTargetKind.Building)
+                return true;
+            if (!gameManager.buildingSystem.TryGetBuilding(
+                    target.EntityId,
+                    out var building))
+                return false;
+            positionFeet = building.PositionFeet;
+            return true;
+        }
+
+        private bool IsHostileAirport(Alliance attackingAlliance, Airport airport)
+        {
+            return airport != null
+                   && gameManager.tileSystem.TryGetLand(
+                       airport.TileId,
+                       out var tile)
+                   && tile.Controller != Alliance.Neutral
+                   && tile.Controller != attackingAlliance;
+        }
+
+        private bool HasUnresolvedGroundEffect(Guid flightId)
+        {
+            return HasActiveGroundPreparation(flightId)
+                   || HasPendingGroundEffect(flightId);
+        }
+
+        private bool HasActiveGroundPreparation(Guid flightId)
+        {
+            return ordnanceEmploymentSystem.ActivePasses.Any(pass =>
+                       pass.SourceFlightId == flightId
+                       && pass.TargetKind
+                       != OrdnanceEmploymentTargetKind.AirFlight);
+        }
+
+        private bool HasPendingGroundEffect(Guid flightId)
+        {
+            return ordnanceEmploymentSystem.PendingEffects.Any(effect =>
+                       effect.SourceFlightId == flightId
+                       && effect.TargetKind
+                       != OrdnanceEmploymentTargetKind.AirFlight);
+        }
+
+        private static string GetStrikeOutcomeReason(
+            StrikeAssignment assignment,
+            bool achieved)
+        {
+            if (achieved)
+            {
+                return assignment switch
+                {
+                    StrikeAssignment.RunwayDenial =>
+                        "The assigned runway damage level was achieved.",
+                    StrikeAssignment.AircraftOnGround =>
+                        "No target aircraft remain on the ground at the assigned airport.",
+                    StrikeAssignment.AirbaseFacilities =>
+                        "All authorized airbase facilities were disabled.",
+                    _ => "The assigned OCA strike objective was achieved."
+                };
+            }
+            return "The assigned OCA strike objective remains incomplete.";
         }
 
         private bool TryGetDeadPreflightInvalidationReason(
@@ -2637,6 +3184,9 @@ namespace Engine.Models
                     return;
 
                 case FlightWaypointTransition.LandingRequired:
+                    if (flight.IsStrikeFlight
+                        && HasPendingGroundEffect(flight.FlightId))
+                        return;
                     CompleteLanding(flight, occurredAt);
                     return;
 
