@@ -21,6 +21,8 @@ namespace Engine.Models
         public bool AllowKnownSamEngagementOverride;
         public IReadOnlyCollection<Guid> KnownSamEngagementOverrideSiteIds =
             Array.Empty<Guid>();
+        public IReadOnlyCollection<Guid> SeadCoveredThreatSiteIds =
+            Array.Empty<Guid>();
     }
 
     internal sealed class AirCombatFrame
@@ -3151,6 +3153,13 @@ namespace Engine.Models
             {
                 threats = threats.Where(threat => threat.SiteId
                     != source.Flight.AuthorizedSurfaceThreatSiteId);
+            }
+
+            if (source.SeadCoveredThreatSiteIds.Count > 0)
+            {
+                var coveredSiteIds = source.SeadCoveredThreatSiteIds.ToHashSet();
+                threats = threats.Where(threat =>
+                    !coveredSiteIds.Contains(threat.SiteId));
             }
 
             if (forEngagement

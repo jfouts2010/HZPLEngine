@@ -18,6 +18,8 @@ namespace Engine.Service
         private readonly GameManager gameManager;
         private readonly IReadOnlyDictionary<Guid, AircraftTypeDefinition>
             aircraftTypes;
+        private readonly IReadOnlyDictionary<Guid, OrdnanceTypeDefinition>
+            ordnanceTypes;
         private readonly AirLoadoutPlanner loadoutPlanner;
 
         public AirPackageBuilder(GameManager gameManager, ModuleDefinition module)
@@ -29,6 +31,8 @@ namespace Engine.Service
 
             aircraftTypes = module.AircraftTypeDefinitions.ToDictionary(
                 definition => definition.AircraftTypeDefinitionId);
+            ordnanceTypes = module.OrdnanceTypeDefinitions.ToDictionary(
+                definition => definition.OrdnanceTypeDefinitionId);
             loadoutPlanner = new AirLoadoutPlanner(
                 module,
                 alliance => gameManager.OrdnanceAllowances.TryGetValue(
@@ -107,6 +111,25 @@ namespace Engine.Service
 
                 flight.ProtectedFlightIds.AddRange(
                     protectedIds.Select(id => flightsByPlanId[id].FlightId));
+
+                if (flight.IsSeadEscort)
+                {
+                    var protectedFlights = protectedIds
+                        .Select(id => flightsByPlanId[id])
+                        .ToList();
+                    if (protectedFlights.All(candidate => candidate.IsEscort))
+                    {
+                        reason = $"SEAD escort flight plan {flightPlan.FlightPlanId} must protect at least one non-escort flight.";
+                        return false;
+                    }
+                    if (protectedFlights.Any(candidate =>
+                            candidate.EffectStart < flight.EffectStart
+                            || candidate.EffectEnd > flight.EffectEnd))
+                    {
+                        reason = $"SEAD escort flight plan {flightPlan.FlightPlanId} does not cover every protected flight's effect window.";
+                        return false;
+                    }
+                }
             }
 
             if (candidate.Flights.All(flight => flight.IsEscort)
@@ -268,6 +291,21 @@ namespace Engine.Service
                     out var loadout,
                     out reason))
                 return false;
+            if (flightPlan.TaskType == AirFlightTaskType.SeadEscort
+                && !loadout.Any(item =>
+                    item != null
+                    && item.Count > 0
+                    && ordnanceTypes.TryGetValue(
+                        item.OrdnanceTypeDefinitionId,
+                        out var ordnance)
+                    && (ordnance.EmploymentCategory
+                        == OrdnanceEmploymentCategory.AntiRadiation
+                        || ordnance.GuidanceMode
+                        == OrdnanceGuidanceMode.AntiRadiation)))
+            {
+                reason = $"SEAD escort flight plan {flightPlan.FlightPlanId} requires anti-radiation ordnance.";
+                return false;
+            }
 
             flight = new AirFlight
             {
@@ -277,7 +315,6 @@ namespace Engine.Service
                 StrikeAssignment = flightPlan.StrikeAssignment,
                 AuthorizedSurfaceThreatSiteId =
                     flightPlan.TaskType == AirFlightTaskType.DeadAttack
-                    || flightPlan.TaskType == AirFlightTaskType.SeadEscort
                         ? packagePlan.DeadPlan?.TargetSiteId ?? Guid.Empty
                         : Guid.Empty,
                 IsRequired = flightPlan.IsRequired

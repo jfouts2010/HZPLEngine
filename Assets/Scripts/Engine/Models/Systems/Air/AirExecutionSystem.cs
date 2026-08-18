@@ -14,6 +14,10 @@ namespace Engine.Models
         private const double MaximumIntegrationStepSeconds = 1d;
         private const double TacticalDecisionStepSeconds = 5d;
         private const float WaypointCaptureFeet = 100f;
+        private const double SeadOpportunityRetrySeconds = 5d;
+        private const float SeadMinimumScreenLeadKm = 15f;
+        private const float SeadMaximumScreenLeadKm = 40f;
+        private const float SeadScreenLateralOffsetKm = 5f;
 
         private readonly GameManager gameManager;
         private readonly AirTaskingSystem airTaskingSystem;
@@ -204,6 +208,8 @@ namespace Engine.Models
                 ProcessDeadMissions(cursor);
                 ProcessStrikeMissions(cursor);
                 frame = BuildAirCombatFrame(cursor);
+                ProcessSeadEscorts(frame, cursor);
+                frame = BuildAirCombatFrame(cursor);
 
                 var commands = frame.Flights.Values
                     .Where(view => view.Flight.IsAirborne
@@ -217,6 +223,7 @@ namespace Engine.Models
                         ordnanceTypes,
                         GetDoctrine(view.Alliance)))
                     .ToList();
+                ApplySeadScreenCommands(commands, frame);
 
                 foreach (var command in commands)
                 {
@@ -574,6 +581,7 @@ namespace Engine.Models
                     }
             };
             ApplyKnownSamEngagementOverrides(frame);
+            ApplySeadCoverage(frame);
             frame.BarcapTargetByFlightId = AirCombatRules.BuildBarcapAssignments(
                 frame,
                 ordnanceTypes,
@@ -643,6 +651,708 @@ namespace Engine.Models
                     coveredSiteIds.Count > 0;
                 source.KnownSamEngagementOverrideSiteIds = coveredSiteIds;
             }
+        }
+
+        private void ApplySeadCoverage(AirCombatFrame frame)
+        {
+            if (frame?.Flights == null)
+                return;
+
+            var coverageByProtectedFlight = frame.Flights.Keys.ToDictionary(
+                flightId => flightId,
+                _ => new HashSet<Guid>());
+            foreach (var provider in frame.Flights.Values
+                         .Where(view => IsAvailableSeadEscort(view))
+                         .OrderBy(view => view.Flight.FlightId))
+            {
+                var protectedFlights = GetProtectedFlightViews(
+                    provider,
+                    frame,
+                    includeReturning: false);
+                if (protectedFlights.Count == 0)
+                    continue;
+
+                var relevantThreats = frame
+                    .GetKnownSamThreats(provider.Alliance)
+                    .Where(threat => threat != null
+                                     && protectedFlights.Any(protectedView =>
+                                         ThreatIntersectsRemainingRoute(
+                                             threat,
+                                             protectedView.Flight)))
+                    .GroupBy(threat => threat.SiteId)
+                    .OrderBy(group => GetSeadSiteThreatPriority(
+                        group.Key,
+                        provider.Alliance,
+                        protectedFlights.Select(view => view.Flight.FlightId),
+                        frame))
+                    .ThenBy(group => group.Min(threat =>
+                        protectedFlights.Min(protectedView =>
+                            Vector3.Distance(
+                                protectedView.Flight.PositionFeet,
+                                threat.CenterFeet))))
+                    .ThenBy(group => group.Key)
+                    .ToList();
+                if (relevantThreats.Count == 0)
+                    continue;
+
+                var alreadyCovered = frame.ActivePasses
+                    .Where(pass => pass.SourceFlightId
+                                   == provider.Flight.FlightId
+                                   && pass.TargetKind
+                                   == OrdnanceEmploymentTargetKind
+                                       .AirDefenseComponent
+                                   && IsWeaponQualityRadarTarget(
+                                       pass.TargetSiteId,
+                                       pass.TargetComponentId)
+                                   && IsAntiRadiationOrdnance(
+                                       pass.OrdnanceTypeDefinitionId))
+                    .Select(pass => pass.TargetSiteId)
+                    .Concat(frame.PendingEffects
+                        .Where(effect => effect.SourceFlightId
+                                         == provider.Flight.FlightId
+                                         && effect.TargetKind
+                                         == OrdnanceEmploymentTargetKind
+                                             .AirDefenseComponent
+                                         && IsWeaponQualityRadarTarget(
+                                             effect.TargetSiteId,
+                                             effect.TargetComponentId)
+                                         && effect.ResolveAt > frame.Time
+                                         && IsAntiRadiationOrdnance(
+                                             effect.OrdnanceTypeDefinitionId))
+                        .Select(effect => effect.TargetSiteId))
+                    .Where(siteId => siteId != Guid.Empty)
+                    .ToHashSet();
+                var inventory = GetAvailableAntiRadiationInventory(
+                    provider,
+                    frame);
+
+                foreach (var threatGroup in relevantThreats)
+                {
+                    var siteId = threatGroup.Key;
+                    if (!gameManager.airDefenseSiteSystem.TryGetSite(
+                            siteId,
+                            out var site)
+                        || !gameManager.airDefenseSiteSystem.TryGetPositionFeet(
+                            site,
+                            out var sitePosition))
+                        continue;
+
+                    var covered = alreadyCovered.Contains(siteId)
+                                  || IsSiteTemporarilySuppressed(
+                                      site,
+                                      frame.Time)
+                                  || TryReserveSeadCoverageWeapon(
+                                      provider,
+                                      site,
+                                      sitePosition,
+                                      inventory);
+                    if (!covered)
+                        continue;
+
+                    foreach (var protectedView in protectedFlights.Where(view =>
+                                 threatGroup.Any(threat =>
+                                     ThreatIntersectsRemainingRoute(
+                                         threat,
+                                         view.Flight))))
+                    {
+                        coverageByProtectedFlight[protectedView.Flight.FlightId]
+                            .Add(siteId);
+                    }
+                }
+            }
+
+            foreach (var view in frame.Flights.Values)
+            {
+                if (coverageByProtectedFlight.TryGetValue(
+                        view.Flight.FlightId,
+                        out var covered))
+                {
+                    view.SeadCoveredThreatSiteIds = covered
+                        .OrderBy(siteId => siteId)
+                        .ToList();
+                }
+                else
+                {
+                    view.SeadCoveredThreatSiteIds = Array.Empty<Guid>();
+                }
+            }
+        }
+
+        private void ProcessSeadEscorts(
+            AirCombatFrame frame,
+            DateTime currentTime)
+        {
+            if (frame?.Flights == null)
+                return;
+
+            foreach (var provider in frame.Flights.Values
+                         .Where(view => IsAvailableSeadEscort(view))
+                         .OrderBy(view => view.Flight.FlightId))
+            {
+                var flight = provider.Flight;
+                if (flight.TacticalState.Intent == AirCombatIntent.Defend
+                    || wvrEngagementSystem.IsFlightEngaged(flight.FlightId)
+                    || !flight.CanEvaluateGroundAttackOpportunity(currentTime))
+                    continue;
+
+                var protectedFlights = GetProtectedFlightViews(
+                    provider,
+                    frame,
+                    includeReturning: false);
+                if (protectedFlights.Count == 0)
+                    continue;
+
+                ConfirmPermanentlyClearedSeadThreats(
+                    provider,
+                    protectedFlights,
+                    frame,
+                    currentTime);
+
+                flight.ConsumeGroundAttackOpportunity(
+                    currentTime,
+                    SeadOpportunityRetrySeconds);
+                var emitter = DetectSeadEmitters(
+                        provider,
+                        protectedFlights,
+                        frame,
+                        currentTime)
+                    .OrderBy(contact => contact.ThreatPriority)
+                    .ThenBy(contact =>
+                        contact.NearestProtectedFlightDistanceFeet)
+                    .ThenBy(contact => contact.SiteId)
+                    .ThenBy(contact => contact.RadarComponentId)
+                    .FirstOrDefault();
+                if (emitter == null
+                    || !gameManager.airDefenseSiteSystem.TryGetSite(
+                        emitter.SiteId,
+                        out var site)
+                    || !gameManager.airDefenseSiteSystem.TryGetTileId(
+                        site,
+                        out var siteTileId))
+                    continue;
+
+                var radar = site.Components
+                    .OfType<RadarAirDefenseComponent>()
+                    .FirstOrDefault(component =>
+                        component.ComponentId == emitter.RadarComponentId);
+                if (radar == null)
+                    continue;
+
+                var opportunity = groundAttackOpportunityService
+                    .CreateSeadEmitterOpportunity(
+                        emitter,
+                        site,
+                        radar,
+                        siteTileId,
+                        currentTime);
+                var sourceAircraft = provider.Squadron.Aircraft
+                    .Where(aircraft => aircraft.AssignedFlightId
+                                       == flight.FlightId
+                                       && aircraft.Status
+                                       != CampaignAircraftStatus.Lost
+                                       && aircraft.Status
+                                       != CampaignAircraftStatus.Damaged)
+                    .ToList();
+                if (!groundAttackDecisionService.TryPlan(
+                        opportunity,
+                        sourceAircraft,
+                        ordnanceTypes,
+                        (_, ordnance) => IsAntiRadiationOrdnance(ordnance),
+                        out var passPlan))
+                    continue;
+
+                ordnanceEmploymentSystem.TryStartGroundAttackPass(
+                    flight.FlightId,
+                    passPlan,
+                    currentTime);
+            }
+        }
+
+        private void ConfirmPermanentlyClearedSeadThreats(
+            AirCombatFlightView provider,
+            IReadOnlyCollection<AirCombatFlightView> protectedFlights,
+            AirCombatFrame frame,
+            DateTime currentTime)
+        {
+            var clearedAny = false;
+            var relevantSiteIds = frame.GetKnownSamThreats(provider.Alliance)
+                .Where(threat => threat != null
+                                 && protectedFlights.Any(view =>
+                                     ThreatIntersectsRemainingRoute(
+                                         threat,
+                                         view.Flight)))
+                .Select(threat => threat.SiteId)
+                .Distinct()
+                .OrderBy(siteId => siteId);
+            foreach (var siteId in relevantSiteIds)
+            {
+                if (!gameManager.airDefenseSiteSystem.TryGetSite(
+                        siteId,
+                        out var site)
+                    || HasPermanentSamShooterChain(site))
+                    continue;
+
+                foreach (var protectedView in protectedFlights)
+                {
+                    clearedAny |= protectedView.Flight
+                        .ConfirmSurfaceThreatCleared(
+                            siteId,
+                            currentTime,
+                            "SEAD confirmed that the site's functional shooter chain was permanently broken.");
+                }
+            }
+            if (clearedAny)
+                knownSamThreatCache.Clear();
+        }
+
+        private IReadOnlyList<DetectedEmitter> DetectSeadEmitters(
+            AirCombatFlightView provider,
+            IReadOnlyCollection<AirCombatFlightView> protectedFlights,
+            AirCombatFrame frame,
+            DateTime currentTime)
+        {
+            var contacts = new List<DetectedEmitter>();
+            var weapons = GetAvailableAntiRadiationInventory(provider, frame)
+                .Where(entry => entry.Value > 0
+                                && ordnanceTypes.ContainsKey(entry.Key))
+                .Select(entry => ordnanceTypes[entry.Key])
+                .ToList();
+            if (weapons.Count == 0)
+                return contacts;
+
+            var threatGroups = frame.GetKnownSamThreats(provider.Alliance)
+                .Where(threat => threat != null
+                                 && protectedFlights.Any(protectedView =>
+                                     ThreatIntersectsRemainingRoute(
+                                         threat,
+                                         protectedView.Flight)))
+                .GroupBy(threat => threat.SiteId)
+                .OrderBy(group => group.Key);
+            foreach (var threatGroup in threatGroups)
+            {
+                if (!gameManager.airDefenseSiteSystem.TryGetSite(
+                        threatGroup.Key,
+                        out var site)
+                    || site.IsDisabled
+                    || site.IsDestroyed
+                    || site.IsSuppressed
+                    || gameManager.airDefenseSiteSystem.GetEffectiveAlliance(site)
+                    == provider.Alliance
+                    || !gameManager.airDefenseSiteSystem.TryGetPositionFeet(
+                        site,
+                        out var sitePosition))
+                    continue;
+
+                var threatenedFlights = protectedFlights
+                    .Where(view => threatGroup.Any(threat =>
+                        ThreatIntersectsRemainingRoute(threat, view.Flight)))
+                    .Select(view => view.Flight.FlightId)
+                    .OrderBy(flightId => flightId)
+                    .ToList();
+                foreach (var radar in site.Components
+                             .OfType<RadarAirDefenseComponent>()
+                             .Where(component => component.IsEmitting
+                                                 && !component.IsDamaged)
+                             .OrderBy(component => component.ComponentId))
+                {
+                    if (ordnanceEmploymentSystem.HasActiveOrPendingEffect(
+                            radar.ComponentId)
+                        || !airDefenseComponentDefinitions.TryGetValue(
+                            radar.SamComponentDefinitionId,
+                            out var componentDefinition)
+                        || weapons.All(ordnance =>
+                            !CanEmploySeadWeapon(
+                                provider,
+                                ordnance,
+                                componentDefinition,
+                                sitePosition)))
+                        continue;
+
+                    contacts.Add(new DetectedEmitter
+                    {
+                        SiteId = site.SiteId,
+                        RadarComponentId = radar.ComponentId,
+                        PositionFeet = sitePosition,
+                        DetectedAt = currentTime,
+                        ThreatPriority = GetSeadEmitterThreatPriority(
+                            site.SiteId,
+                            radar.ComponentId,
+                            componentDefinition,
+                            provider.Alliance,
+                            threatenedFlights,
+                            frame),
+                        NearestProtectedFlightDistanceFeet = protectedFlights
+                            .Min(view => Vector3.Distance(
+                                view.Flight.PositionFeet,
+                                sitePosition)),
+                        ThreatenedFlightIds = threatenedFlights
+                    });
+                }
+            }
+            return contacts;
+        }
+
+        private void ApplySeadScreenCommands(
+            IEnumerable<AirCombatCommand> commands,
+            AirCombatFrame frame)
+        {
+            if (commands == null || frame?.Flights == null)
+                return;
+
+            foreach (var command in commands.OrderBy(item => item.FlightId))
+            {
+                if (!frame.Flights.TryGetValue(command.FlightId, out var provider)
+                    || !IsAvailableSeadEscort(provider)
+                    || command.Intent != AirCombatIntent.FollowMission
+                    || command.Maneuver != AirCombatManeuver.FollowRoute
+                    || command.RequestsSurfaceThreatRecovery
+                    || command.RequestsWvrEngagement
+                    || command.Employment != null
+                    || wvrEngagementSystem.IsFlightEngaged(command.FlightId))
+                    continue;
+
+                var protectedFlights = GetProtectedFlightViews(
+                    provider,
+                    frame,
+                    includeReturning: false);
+                if (protectedFlights.Count == 0)
+                    continue;
+
+                var screenWeaponIds = GetAvailableAntiRadiationInventory(
+                            provider,
+                            frame)
+                        .Where(entry => entry.Value > 0)
+                        .Select(entry => entry.Key)
+                    .Concat(frame.ActivePasses
+                        .Where(pass => pass.SourceFlightId
+                                       == provider.Flight.FlightId
+                                       && IsAntiRadiationOrdnance(
+                                           pass.OrdnanceTypeDefinitionId))
+                        .Select(pass => pass.OrdnanceTypeDefinitionId))
+                    .Concat(frame.PendingEffects
+                        .Where(effect => effect.SourceFlightId
+                                         == provider.Flight.FlightId
+                                         && effect.ResolveAt > frame.Time
+                                         && IsAntiRadiationOrdnance(
+                                             effect.OrdnanceTypeDefinitionId))
+                        .Select(effect => effect.OrdnanceTypeDefinitionId))
+                    .Distinct()
+                    .ToList();
+                var maximumHarmRangeKm = screenWeaponIds
+                    .Where(ordnanceTypes.ContainsKey)
+                    .Select(ordnanceId =>
+                        ordnanceTypes[ordnanceId].MaximumRangeKm)
+                    .DefaultIfEmpty(0f)
+                    .Max();
+                if (maximumHarmRangeKm <= 0f)
+                    continue;
+
+                var protectedCenter = new Vector3(
+                    protectedFlights.Average(view => view.Flight.PositionFeet.x),
+                    protectedFlights.Average(view => view.Flight.PositionFeet.y),
+                    protectedFlights.Average(view => view.Flight.PositionFeet.z));
+                var forward = protectedFlights
+                    .Select(view => AirCombatRules.Direction(
+                        view.Flight.HeadingDegrees))
+                    .Aggregate(Vector3.zero, (sum, direction) => sum + direction);
+                if (forward.sqrMagnitude < 0.01f)
+                {
+                    forward = AirCombatRules.Direction(
+                        protectedFlights.First().Flight.HeadingDegrees);
+                }
+                forward.Normalize();
+                var lateralSign = (provider.Flight.FlightId.ToByteArray()[0]
+                                   & 1) == 0
+                    ? -1f
+                    : 1f;
+                var lateral = new Vector3(-forward.z, 0f, forward.x)
+                              * lateralSign;
+                var leadKm = Mathf.Clamp(
+                    maximumHarmRangeKm * 0.2f,
+                    SeadMinimumScreenLeadKm,
+                    SeadMaximumScreenLeadKm);
+                var aimPoint = protectedCenter
+                               + forward * leadKm
+                               * AirspaceGeometry.FeetPerKilometer
+                               + lateral * SeadScreenLateralOffsetKm
+                               * AirspaceGeometry.FeetPerKilometer;
+                aimPoint.y = Math.Min(
+                    provider.AircraftType.ServiceCeilingFeet,
+                    protectedCenter.y + 5000f);
+
+                var maneuverClearanceFeet = AirspaceGeometry
+                    .ConservativeSamManeuverClearanceFeet(
+                        provider.AircraftType);
+                if (!KnownSamThreatGeometry.IsPathSafe(
+                        new[] { provider.Flight.PositionFeet, aimPoint },
+                        frame.GetKnownSamThreats(provider.Alliance),
+                        maneuverClearanceFeet,
+                        out _))
+                    continue;
+
+                command.Maneuver = AirCombatManeuver.SeadScreen;
+                command.AimPointFeet = aimPoint;
+                command.HasAimPoint = true;
+                command.DesiredSpeedKnots = Math.Max(
+                    1f,
+                    provider.AircraftType.CombatSpeedKnots);
+                command.MinimumManeuverEndAt = frame.Time.AddSeconds(
+                    TacticalDecisionStepSeconds);
+                command.Reason =
+                    $"Maintaining a forward SEAD screen for {protectedFlights.Count} protected flight(s).";
+            }
+        }
+
+        private static bool IsAvailableSeadEscort(AirCombatFlightView view)
+        {
+            return view?.Flight != null
+                   && view.Flight.IsSeadEscort
+                   && view.Flight.LifecycleState
+                   == AirTaskingLifecycleState.Active
+                   && view.Flight.IsAirborne
+                   && !view.Flight.IsWaitingAtRendezvous
+                   && view.Flight.ExecutionPhase
+                   != FlightExecutionPhase.Returning
+                   && view.Flight.ExecutionPhase
+                   != FlightExecutionPhase.Landing
+                   && view.Flight.ExecutionPhase
+                   != FlightExecutionPhase.Ended
+                   && view.LiveAircraft != null
+                   && view.LiveAircraft.Count > 0;
+        }
+
+        private static List<AirCombatFlightView> GetProtectedFlightViews(
+            AirCombatFlightView provider,
+            AirCombatFrame frame,
+            bool includeReturning)
+        {
+            var protectedIds = provider.Flight.ProtectedFlightIds.ToHashSet();
+            return frame.Flights.Values
+                .Where(view => view?.Flight != null
+                               && protectedIds.Contains(view.Flight.FlightId)
+                               && view.Alliance == provider.Alliance
+                               && view.Package?.PackageId
+                               == provider.Package?.PackageId
+                               && view.Flight.IsAirborne
+                               && view.Flight.ExecutionPhase
+                               != FlightExecutionPhase.Landing
+                               && view.Flight.ExecutionPhase
+                               != FlightExecutionPhase.Ended
+                               && (includeReturning
+                                   || view.Flight.ExecutionPhase
+                                   != FlightExecutionPhase.Returning))
+                .OrderBy(view => view.Flight.FlightId)
+                .ToList();
+        }
+
+        private static bool ThreatIntersectsRemainingRoute(
+            KnownSamThreatEnvelope threat,
+            AirFlight flight)
+        {
+            if (threat == null || flight == null || !flight.IsAirborne)
+                return false;
+            if (threat.Contains(flight.PositionFeet))
+                return true;
+
+            var remaining = new List<Vector3> { flight.PositionFeet };
+            remaining.AddRange(flight.Route
+                .Skip(Math.Max(0, flight.CurrentWaypointIndex))
+                .Where(waypoint => waypoint != null)
+                .Select(waypoint => waypoint.PositionFeet));
+            for (var index = 1; index < remaining.Count; index++)
+            {
+                if (threat.IntersectsSegment(
+                        remaining[index - 1],
+                        remaining[index]))
+                    return true;
+            }
+            return false;
+        }
+
+        private Dictionary<Guid, int> GetAvailableAntiRadiationInventory(
+            AirCombatFlightView provider,
+            AirCombatFrame frame)
+        {
+            var inventory = provider.LiveAircraft
+                .SelectMany(aircraft => aircraft.Loadout)
+                .Where(item => item != null
+                               && item.Count > 0
+                               && IsAntiRadiationOrdnance(
+                                   item.OrdnanceTypeDefinitionId))
+                .GroupBy(item => item.OrdnanceTypeDefinitionId)
+                .ToDictionary(group => group.Key, group => group.Sum(item =>
+                    item.Count));
+            foreach (var pass in frame.ActivePasses.Where(pass =>
+                         pass.SourceFlightId == provider.Flight.FlightId
+                         && IsAntiRadiationOrdnance(
+                             pass.OrdnanceTypeDefinitionId)))
+            {
+                if (inventory.TryGetValue(
+                        pass.OrdnanceTypeDefinitionId,
+                        out var available))
+                {
+                    inventory[pass.OrdnanceTypeDefinitionId] = Math.Max(
+                        0,
+                        available - Math.Max(1, pass.PlannedQuantity));
+                }
+            }
+            return inventory;
+        }
+
+        private bool TryReserveSeadCoverageWeapon(
+            AirCombatFlightView provider,
+            SamSite site,
+            Vector3 sitePosition,
+            IDictionary<Guid, int> inventory)
+        {
+            foreach (var entry in inventory
+                         .Where(item => item.Value > 0)
+                         .OrderBy(item => item.Key)
+                         .ToList())
+            {
+                if (!ordnanceTypes.TryGetValue(entry.Key, out var ordnance)
+                    || !site.Components
+                        .Where(component => component != null
+                                            && !component.IsDamaged)
+                        .Any(component =>
+                            airDefenseComponentDefinitions.TryGetValue(
+                                component.SamComponentDefinitionId,
+                                out var definition)
+                            && CanEmploySeadWeapon(
+                                provider,
+                                ordnance,
+                                definition,
+                                sitePosition)))
+                    continue;
+
+                inventory[entry.Key]--;
+                return true;
+            }
+            return false;
+        }
+
+        private bool CanEmploySeadWeapon(
+            AirCombatFlightView provider,
+            OrdnanceTypeDefinition ordnance,
+            AirDefenseComponentDefinition componentDefinition,
+            Vector3 targetPosition)
+        {
+            if (!IsAntiRadiationOrdnance(ordnance)
+                || !DeadLoadoutPlanner.CanAttackComponent(
+                    ordnance,
+                    componentDefinition))
+                return false;
+
+            var distanceKm = HorizontalDistanceKm(
+                provider.Flight.PositionFeet,
+                targetPosition);
+            return distanceKm >= ordnance.MinimumRangeKm
+                   && distanceKm <= ordnance.MaximumRangeKm;
+        }
+
+        private bool IsAntiRadiationOrdnance(Guid ordnanceId)
+        {
+            return ordnanceTypes.TryGetValue(ordnanceId, out var ordnance)
+                   && IsAntiRadiationOrdnance(ordnance);
+        }
+
+        private static bool IsAntiRadiationOrdnance(
+            OrdnanceTypeDefinition ordnance)
+        {
+            return ordnance != null
+                   && (ordnance.EmploymentCategory
+                       == OrdnanceEmploymentCategory.AntiRadiation
+                       || ordnance.GuidanceMode
+                       == OrdnanceGuidanceMode.AntiRadiation);
+        }
+
+        private bool IsSiteTemporarilySuppressed(
+            SamSite site,
+            DateTime currentTime)
+        {
+            if (site == null)
+                return false;
+            if (site.IsSuppressed)
+                return true;
+
+            var weaponQualityRadars = site.Components
+                .OfType<RadarAirDefenseComponent>()
+                .Where(radar => !radar.IsDamaged
+                                && airDefenseComponentDefinitions.TryGetValue(
+                                    radar.SamComponentDefinitionId,
+                                    out var definition)
+                                && definition
+                                is RadarAirDefenseComponentDefinition
+                                {
+                                    ProvidesWeaponQualityTrack: true
+                                })
+                .ToList();
+            return weaponQualityRadars.Count > 0
+                   && weaponQualityRadars.All(radar =>
+                       radar.EmissionHoldUntil > currentTime);
+        }
+
+        private int GetSeadSiteThreatPriority(
+            Guid siteId,
+            Alliance friendlyAlliance,
+            IEnumerable<Guid> protectedFlightIds,
+            AirCombatFrame frame)
+        {
+            var protectedIds = protectedFlightIds.ToHashSet();
+            if (frame.PendingEffects.Any(effect =>
+                    effect.SourceKind == OrdnanceEmploymentSourceKind.SamLauncher
+                    && effect.SourceSiteId == siteId
+                    && protectedIds.Contains(effect.TargetFlightId)
+                    && effect.ResolveAt > frame.Time))
+                return 0;
+
+            var hostileAlliance = friendlyAlliance == Alliance.Bluefor
+                ? Alliance.Redfor
+                : Alliance.Bluefor;
+            return gameManager.GetAllianceIADS(hostileAlliance)
+                       ?.CurrentEngagementAssignments.Any(assignment =>
+                           assignment.SiteId == siteId
+                           && protectedIds.Contains(
+                               assignment.TargetFlightId)) == true
+                ? 1
+                : 3;
+        }
+
+        private int GetSeadEmitterThreatPriority(
+            Guid siteId,
+            Guid radarComponentId,
+            AirDefenseComponentDefinition definition,
+            Alliance friendlyAlliance,
+            IEnumerable<Guid> protectedFlightIds,
+            AirCombatFrame frame)
+        {
+            var protectedIds = protectedFlightIds.ToHashSet();
+            if (frame.PendingEffects.Any(effect =>
+                    effect.SourceKind == OrdnanceEmploymentSourceKind.SamLauncher
+                    && effect.SourceSiteId == siteId
+                    && effect.SupportSourceComponentId == radarComponentId
+                    && protectedIds.Contains(effect.TargetFlightId)
+                    && effect.ResolveAt > frame.Time))
+                return 0;
+
+            var hostileAlliance = friendlyAlliance == Alliance.Bluefor
+                ? Alliance.Redfor
+                : Alliance.Bluefor;
+            if (gameManager.GetAllianceIADS(hostileAlliance)
+                    ?.CurrentEngagementAssignments.Any(assignment =>
+                        assignment.SiteId == siteId
+                        && assignment.FireControlRadarComponentId
+                        == radarComponentId
+                        && protectedIds.Contains(
+                            assignment.TargetFlightId)) == true)
+                return 1;
+
+            return definition is RadarAirDefenseComponentDefinition
+                   {
+                       ProvidesWeaponQualityTrack: true
+                   }
+                ? 2
+                : 3;
         }
 
         private IReadOnlyList<KnownSamThreatEnvelope> GetKnownSamThreats(
@@ -2429,6 +3139,18 @@ namespace Engine.Models
                    {
                        ProvidesWeaponQualityTrack: true
                    };
+        }
+
+        private bool IsWeaponQualityRadarTarget(
+            Guid siteId,
+            Guid componentId)
+        {
+            return siteId != Guid.Empty
+                   && componentId != Guid.Empty
+                   && gameManager.airDefenseSiteSystem.TryGetSite(
+                       siteId,
+                       out var site)
+                   && IsWeaponQualityRadarComponent(site, componentId);
         }
 
         private bool HasDeadMissionUsefulOrdnance(

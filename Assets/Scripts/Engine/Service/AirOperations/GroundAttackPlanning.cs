@@ -120,6 +120,55 @@ namespace Engine.Service
             return opportunity;
         }
 
+        /// <summary>
+        /// Creates a deterministic attack opportunity from an emitter that the
+        /// SEAD escort has actually detected. Emission itself is the exposure;
+        /// unlike a DEAD component search, this opportunity is not rolled.
+        /// </summary>
+        public GroundAttackOpportunity CreateSeadEmitterOpportunity(
+            DetectedEmitter emitter,
+            SamSite site,
+            RadarAirDefenseComponent radar,
+            UnityEngine.Vector3Int siteTileId,
+            DateTime currentTime)
+        {
+            var opportunity = new GroundAttackOpportunity
+            {
+                GeneratedAt = currentTime,
+                TargetTileId = siteTileId,
+                Description = "The detected emitter was no longer targetable."
+            };
+            if (emitter == null
+                || site == null
+                || radar == null
+                || emitter.SiteId != site.SiteId
+                || emitter.RadarComponentId != radar.ComponentId
+                || radar.IsDamaged
+                || !radar.IsEmitting
+                || !componentDefinitions.TryGetValue(
+                    radar.SamComponentDefinitionId,
+                    out var definition))
+                return opportunity;
+
+            var target = CreateComponentTarget(
+                site,
+                siteTileId,
+                radar,
+                definition);
+            target.MissionPriority = Math.Max(
+                target.MissionPriority,
+                400f - Math.Max(0, emitter.ThreatPriority) * 50f);
+            target.CanReceiveSecondaryEffect = false;
+            target.Description = $"detected emitting {definition.Name}";
+            opportunity.Targets.Add(target);
+            opportunity.MaximumReleases = 1;
+            opportunity.Quality = GroundAttackOpportunityQuality.Fleeting;
+            opportunity.Description =
+                $"{definition.Name} was emitting while threatening "
+                + $"{emitter.ThreatenedFlightIds.Count} protected flight(s).";
+            return opportunity;
+        }
+
         public GroundAttackOpportunity RollDivisionOpportunity(
             Guid sourceFlightId,
             int opportunitySequence,

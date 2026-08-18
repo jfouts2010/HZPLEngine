@@ -13,6 +13,7 @@ namespace Engine.Models
     {
         private const int MaximumEmploymentRecords = 5000;
         private const int RadarLockBreakRollSequence = -1;
+        private const double AntiRadiationReactivationDelaySeconds = 120d;
 
         private readonly GameManager gameManager;
         private readonly AirTaskingSystem airTaskingSystem;
@@ -1937,6 +1938,11 @@ namespace Engine.Models
                             {
                                 effect.LastTargetEmissionAt = resolveAt;
                             }
+                            if (component is RadarAirDefenseComponent radar)
+                            {
+                                radar.HoldEmissionUntil(resolveAt.AddSeconds(
+                                    AntiRadiationReactivationDelaySeconds));
+                            }
                             guidanceQuality =
                                 CalculateAntiRadiationGuidanceQuality(
                                     effect,
@@ -2024,6 +2030,12 @@ namespace Engine.Models
                             })
                         {
                             effect.LastTargetEmissionAt = resolveAt;
+                        }
+                        if (primary.Component
+                            is RadarAirDefenseComponent radar)
+                        {
+                            radar.HoldEmissionUntil(resolveAt.AddSeconds(
+                                AntiRadiationReactivationDelaySeconds));
                         }
                         directProbability = Mathf.Clamp01(
                             directProbability

@@ -1031,7 +1031,19 @@ An attached DEAD escort shares the package rendezvous, protects the named DEAD a
 
 **DEAD mission-useful ordnance** is carried air-to-ground ordnance that can still produce a meaningful effect against at least one surviving component in the flight's current DEAD target set. Exhausting it before the minimum effect causes an unsuccessful recovery, while exhausting it after the minimum effect ends cleanup and permits successful egress.
 
-_Avoid_: using DEAD for temporary suppression or localized escort protection; SEAD escort is a separate future supporting mission.
+**SEAD escort** is an attached supporting flight that temporarily protects its named package flights against hostile SAM sites whose known engagement envelopes intersect their remaining routes. It is not a separate package-level operation and does not lock one SAM site as a target. A SEAD escort dynamically allocates its remaining anti-radiation weapons across relevant sites, maintains a forward screen while protected flights remain on mission, and resumes its assigned route toward safe release when the protected flights begin recovery.
+
+**Detected emitter** is a transient SEAD observation of a currently emitting hostile radar at a relevant SAM site. V1 abstracts RWR/ESM equipment, signal bearings, triangulation, false contacts, and crew-level knowledge: an operational flight carrying compatible anti-radiation ordnance can detect a relevant emitter when the emitter is within valid weapon geometry. The observation retains runtime site and component identity for deterministic employment, but only emitters threatening a named protected flight authorize attack.
+
+**SEAD coverage** is transient authorization for a protected flight to continue its assigned route through one known SAM envelope while its SEAD escort is airborne, tactically available, inside useful anti-radiation geometry, and able to reserve a compatible weapon for that site. A preparing or unresolved anti-radiation effect and a live emission hold also maintain coverage. Coverage consumes projected weapon capacity across simultaneously relevant sites and disappears immediately when the escort, geometry, or inventory no longer supports it. Coverage never adds the site to permanent cleared-threat state and never prevents normal defense against a SAM already in flight.
+
+**SEAD emitter priority** first selects a radar guiding a SAM toward a protected flight, then a radar assigned against a protected flight, then another weapon-quality fire-control radar, and finally another emitting radar at a relevant site. Stable site and component identity break remaining ties. One preparing or unresolved effect normally covers one emitter; later reattack follows reassessment rather than automatic redundant release.
+
+**Temporary radar suppression** is an emission hold caused by an inbound anti-radiation effect plus a short reactivation delay after effect resolution. A radar already supporting an airborne SAM continues emitting until its guidance obligation ends, then observes the remaining hold. A hit permanently damages the component; a miss leaves the radar temporarily silent. The SAM site remains a known threat throughout and may recover when the hold expires.
+
+**SEAD escort result** is protection rather than destruction. The escort completes at its planned safe-release mission action after its protected flights have begun recovery. It may succeed without firing if relevant radars remain silent. Permanent component damage is a useful secondary result, while destroying an unrelated emitter does not compensate for losing required coverage.
+
+_Avoid_: using DEAD for temporary suppression or localized escort protection; SEAD escort is the attached supporting task for that effect.
 _Avoid_: fixed DEAD aircraft-role labels or a mandatory anti-radar-flight plus conventional-attack-flight pairing.
 _Avoid_: treating an offensive counter-air sweep as if it were a dedicated fighter escort.
 

@@ -28,7 +28,8 @@ namespace Models.Gameplay.Campaign
         Dogfight = 11,
         BreakLeft = 12,
         BreakRight = 13,
-        AvoidSurfaceThreat = 14
+        AvoidSurfaceThreat = 14,
+        SeadScreen = 15
     }
 
     public enum AirCombatManeuverSide

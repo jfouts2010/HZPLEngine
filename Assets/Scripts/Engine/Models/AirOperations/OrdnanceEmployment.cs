@@ -56,6 +56,22 @@ namespace Models.Gameplay.Campaign
         Excellent = 3
     }
 
+    /// <summary>
+    /// A transient emitter observation available to one SEAD escort. Runtime
+    /// component identity supports deterministic employment without modeling
+    /// bearings, triangulation, or other detailed electronic warfare state.
+    /// </summary>
+    public sealed class DetectedEmitter
+    {
+        public Guid SiteId;
+        public Guid RadarComponentId;
+        public Vector3 PositionFeet;
+        public DateTime DetectedAt;
+        public int ThreatPriority;
+        public float NearestProtectedFlightDistanceFeet;
+        public List<Guid> ThreatenedFlightIds = new List<Guid>();
+    }
+
     [Serializable]
     public sealed class GroundAttackTargetReference
     {
