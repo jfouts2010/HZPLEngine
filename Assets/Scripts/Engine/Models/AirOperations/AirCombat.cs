@@ -210,4 +210,30 @@ namespace Models.Gameplay.Campaign
         public Guid ObservedThreatCandidateFlightId;
         public AirCombatEmploymentProposal Employment;
     }
+
+    internal readonly struct RouteThreatWindow
+    {
+        public Guid SiteId { get; }
+        public DateTime EntryTime { get; }
+        public DateTime ExitTime { get; }
+        public Vector3 EntryPointFeet { get; }
+        public Vector3 ExitPointFeet { get; }
+        public bool AlreadyInside { get; }
+
+        public RouteThreatWindow(
+            Guid siteId,
+            DateTime entryTime,
+            DateTime exitTime,
+            Vector3 entryPointFeet,
+            Vector3 exitPointFeet,
+            bool alreadyInside)
+        {
+            SiteId = siteId;
+            EntryTime = entryTime;
+            ExitTime = exitTime < entryTime ? entryTime : exitTime;
+            EntryPointFeet = entryPointFeet;
+            ExitPointFeet = exitPointFeet;
+            AlreadyInside = alreadyInside;
+        }
+    }
 }

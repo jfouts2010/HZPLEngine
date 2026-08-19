@@ -31,4 +31,23 @@ namespace Models.Gameplay.Campaign
         Cancelled = 4,
         Aborted = 5
     }
+
+    public enum AirRendezvousState
+    {
+        NotRequired = 0,
+        Enroute = 1,
+        Holding = 2,
+        Released = 3
+    }
+
+    public enum AirPackageExecutionPhase
+    {
+        Forming = 0,
+        Ready = 1,
+        Pushing = 2,
+        Executing = 3,
+        Egressing = 4,
+        Aborted = 5,
+        Completed = 6
+    }
 }

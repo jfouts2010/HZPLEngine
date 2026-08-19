@@ -36,6 +36,8 @@ namespace Engine.Models
         public IReadOnlyList<ActiveOrdnanceEmploymentPass> ActivePasses;
         public IReadOnlyList<PendingOrdnanceEffect> PendingEffects;
         public IReadOnlyDictionary<Guid, Guid> BarcapTargetByFlightId;
+        public IReadOnlyDictionary<Guid, Guid>
+            CounterAirOwnerByProtectedFlightId;
         public IReadOnlyDictionary<Alliance, IReadOnlyList<KnownSamThreatEnvelope>>
             KnownSamThreatsByAlliance;
 
@@ -64,6 +66,18 @@ namespace Engine.Models
                        out var threats)
                 ? threats
                 : Array.Empty<KnownSamThreatEnvelope>();
+        }
+
+        public bool TryGetCounterAirOwner(
+            Guid protectedFlightId,
+            out Guid ownerFlightId)
+        {
+            ownerFlightId = Guid.Empty;
+            return CounterAirOwnerByProtectedFlightId != null
+                   && CounterAirOwnerByProtectedFlightId.TryGetValue(
+                       protectedFlightId,
+                       out ownerFlightId)
+                   && ownerFlightId != Guid.Empty;
         }
     }
 
@@ -530,10 +544,18 @@ namespace Engine.Models
 
             var target = SelectTarget(source, frame, ordnanceTypes, doctrine);
             if (target == null)
+            {
                 return ContinueAssignedMission(
                     source,
                     frame,
-                    "No authorized air target.");
+                    frame.TryGetCounterAirOwner(
+                        source.Flight.FlightId,
+                        out var counterAirOwnerId)
+                        ? "Fighter escort "
+                          + SimLogNames.ShortId(counterAirOwnerId)
+                          + " owns package air threats; continuing the primary task."
+                        : "No authorized air target.");
+            }
 
             if (state.ProactiveEngagementExhausted)
             {
@@ -1505,6 +1527,28 @@ namespace Engine.Models
                     frame))
                 return true;
 
+            if (!IsCounterAirFlight(source.Flight)
+                && frame.TryGetCounterAirOwner(
+                    source.Flight.FlightId,
+                    out var ownerFlightId)
+                && ownerFlightId != source.Flight.FlightId
+                && frame.Flights.TryGetValue(
+                    ownerFlightId,
+                    out var counterAirOwner)
+                && CanCounterAirOwnerProtect(
+                    counterAirOwner,
+                    source,
+                    target,
+                    frame,
+                    ordnanceTypes,
+                    doctrine)
+                && DistanceKm(
+                    source.Flight.PositionFeet,
+                    target.Flight.PositionFeet) > WvrDecisionRangeKm)
+            {
+                return false;
+            }
+
             if (!isSpatialBarcap
                 && IsCommittedAgainstFlights(
                     target,
@@ -1775,6 +1819,51 @@ namespace Engine.Models
             }
 
             return minutesToThreat < float.MaxValue;
+        }
+
+        private static bool CanCounterAirOwnerProtect(
+            AirCombatFlightView owner,
+            AirCombatFlightView protectedFlight,
+            AirCombatFlightView target,
+            AirCombatFrame frame,
+            IReadOnlyDictionary<Guid, OrdnanceTypeDefinition> ordnanceTypes,
+            AllianceAirDoctrine doctrine)
+        {
+            if (IsEscortTargetAuthorized(
+                    owner,
+                    target,
+                    frame,
+                    ordnanceTypes,
+                    doctrine,
+                    out _))
+                return true;
+            if (!frame.TryGetCurrentTrack(
+                    owner.Alliance,
+                    target.Flight.FlightId,
+                    out var track)
+                || !TryResolvePotentialAirThreatCapability(
+                    track,
+                    frame,
+                    ordnanceTypes,
+                    AirThreatAssessmentPurpose.ProtectedAircraft,
+                    out var threatCapability)
+                || !TryCalculateMovingThreatEnvelopeEntry(
+                    track,
+                    protectedFlight.Flight,
+                    threatCapability,
+                    frame,
+                    out var threatMinutes,
+                    out var threatEntryPointFeet)
+                || threatMinutes > EscortThreatLookaheadMinutes)
+                return false;
+
+            var escortMinutes = CalculateAirInterceptMinutes(
+                owner,
+                threatEntryPointFeet,
+                ordnanceTypes,
+                doctrine);
+            return escortMinutes
+                   <= threatMinutes + EscortCommitMarginMinutes;
         }
 
         private static bool TryResolvePotentialAirThreatCapability(

@@ -22,10 +22,13 @@ namespace Models.Gameplay.Campaign
         public StrikeMissionPlan StrikePlan;
         private List<AirFlight> flights = new List<AirFlight>();
         private List<Guid> supportingFlightIds = new List<Guid>();
+        private AirPackageExecutionPhase executionPhase =
+            AirPackageExecutionPhase.Forming;
         public string Rationale = string.Empty;
 
         public List<AirFlight> Flights => flights;
         public List<Guid> SupportingFlightIds => supportingFlightIds;
+        public AirPackageExecutionPhase ExecutionPhase => executionPhase;
 
         private IReadOnlyList<AirFlight> RequiredFlights
         {
@@ -73,7 +76,7 @@ namespace Models.Gameplay.Campaign
                     throw new InvalidOperationException(
                         $"Package {PackageId} contains no flights.");
                 }
-                if (flights.Any(flight => flight.LifecycleState == AirTaskingLifecycleState.Aborted))
+                if (executionPhase == AirPackageExecutionPhase.Aborted)
                     return AirTaskingLifecycleState.Aborted;
                 if (flights.Any(flight => flight.LifecycleState == AirTaskingLifecycleState.Active))
                     return AirTaskingLifecycleState.Active;
@@ -93,6 +96,9 @@ namespace Models.Gameplay.Campaign
                 if (outcomeFlights.Any(flight =>
                         flight.LifecycleState == AirTaskingLifecycleState.Failed))
                     return AirTaskingLifecycleState.Failed;
+                if (outcomeFlights.Any(flight =>
+                        flight.LifecycleState == AirTaskingLifecycleState.Aborted))
+                    return AirTaskingLifecycleState.Aborted;
                 if (outcomeFlights.All(flight =>
                         flight.LifecycleState == AirTaskingLifecycleState.Cancelled))
                     return AirTaskingLifecycleState.Cancelled;
@@ -121,6 +127,16 @@ namespace Models.Gameplay.Campaign
 
                 return Flights.All(flight => flight.HasPhysicallyEnded);
             }
+        }
+
+        internal bool UpdateExecutionPhase(
+            AirPackageExecutionPhase nextPhase)
+        {
+            if (executionPhase == nextPhase)
+                return false;
+
+            executionPhase = nextPhase;
+            return true;
         }
 
         internal bool TryShiftPlannedRoutes(

@@ -25,6 +25,10 @@ namespace Models.Gameplay.Campaign
         private const float BarcapAltitudeFeet = 40000f;
         private const float BarcapResponseRadiusKm = 80f;
         private const int BarcapAircraftPerFlight = 2;
+        private const float OcaStrikeAltitudeFeet = 26000f;
+        private const float OcaSeadAltitudeFeet = 30000f;
+        private const float OcaFighterEscortAltitudeFeet = 36000f;
+        private const float OcaStrikeAreaRadiusKm = 60f;
 
         private static readonly DateTime CampaignStartTime =
             new DateTime(1990, 1, 1, 6, 0, 0);
@@ -154,7 +158,7 @@ namespace Models.Gameplay.Campaign
                     SimulationTickMinutes = 5,
                     OperationalCadenceHours = 6
                 },
-                ContentHash = "advanced-mechanics-test-campaign-v19",
+                ContentHash = "advanced-mechanics-test-campaign-v22",
                 CountryAllianceAssignments = CreateCountryAllianceAssignments(),
                 OrdnanceAllowances = CreateOrdnanceAllowances(),
                 SamSiteTemplateAllowances = CreateSamSiteTemplateAllowances(),
@@ -358,8 +362,207 @@ namespace Models.Gameplay.Campaign
                 "b2bf0000",
                 100,
                 42.9f);
+            plans.Add(CreateBlueOcaStrikePlan());
             ValidateScriptedAirPlans(plans);
             return plans;
+        }
+
+        private static AirPackagePlan CreateBlueOcaStrikePlan()
+        {
+            var runwayStrikeId = Guid.Parse(
+                "c3bf0000-0000-0000-0000-000000000001");
+            var seadEscortId = Guid.Parse(
+                "c3bf0000-0000-0000-0000-000000000003");
+            var fighterEscortId = Guid.Parse(
+                "c3bf0000-0000-0000-0000-000000000004");
+            // Launch after the first Blue BARCAP pair and recover after the
+            // following 08:45 BARCAP departure window.
+            var effectStart = CampaignStartTime
+                .AddHours(2)
+                .AddMinutes(30);
+            var effectEnd = effectStart.AddMinutes(30);
+            var ingress = new List<Vector3>
+            {
+                PositionAtAltitude(new Vector3Int(-1, 2, -1), 30000f),
+                PositionAtAltitude(new Vector3Int(1, 1, -2), 30000f)
+            };
+            var egress = new List<Vector3>
+            {
+                PositionAtAltitude(new Vector3Int(1, 2, -3), 30000f),
+                PositionAtAltitude(new Vector3Int(-1, 3, -2), 30000f)
+            };
+            var strikeWaypoints = new List<Vector3>
+            {
+                PositionAtAltitude(new Vector3Int(3, 0, -3),
+                    OcaStrikeAltitudeFeet),
+                PositionAtAltitude(RedVulnerableAirbaseTileId,
+                    OcaStrikeAltitudeFeet),
+                PositionAtAltitude(new Vector3Int(3, 1, -4),
+                    OcaStrikeAltitudeFeet)
+            };
+            var strikeFlightIds = new List<Guid>
+            {
+                runwayStrikeId
+            };
+
+            return new AirPackagePlan
+            {
+                PlanId = Guid.Parse(
+                    "c3bc0000-0000-0000-0000-000000000001"),
+                Alliance = Alliance.Bluefor,
+                OperationType = AirOperationType.Strike,
+                AvailableAt = CampaignStartTime,
+                EffectStart = effectStart,
+                EffectEnd = effectEnd,
+                OperationArea = new AirMissionArea(
+                    RedVulnerableAirbaseTileId,
+                    OcaStrikeAreaRadiusKm),
+                UseRendezvous = true,
+                RendezvousPositionFeet = PositionAtAltitude(
+                    BlueCapitalTileId,
+                    30000f),
+                StrikePlan = new StrikeMissionPlan
+                {
+                    Purpose = StrikePurpose.OffensiveCounterAir,
+                    TargetAirportBuildingId =
+                        RedVulnerableAirportBuildingId,
+                    DesiredRunwayDamagePerChannel = 2
+                },
+                Rationale = "Blue OCA runway-denial strike closes Red's "
+                            + "vulnerable forward airbase while a HARM element "
+                            + "suppresses the ingress SAM corridor and a "
+                            + "four-ship fighter screen covers the package.",
+                Flights = new List<AirFlightPlan>
+                {
+                    new AirFlightPlan
+                    {
+                        FlightPlanId = runwayStrikeId,
+                        SquadronId = BlueForwardFighterSquadronIds[0],
+                        TaskType = AirFlightTaskType.Strike,
+                        StrikeAssignment = StrikeAssignment.RunwayDenial,
+                        AircraftCount = 3,
+                        IsRequired = true,
+                        Loadout = CreateOcaStrikeLoadout(),
+                        IngressWaypointsFeet = new List<Vector3>(ingress),
+                        MissionWaypointsFeet =
+                            new List<Vector3>(strikeWaypoints),
+                        EgressWaypointsFeet = new List<Vector3>(egress)
+                    },
+                    new AirFlightPlan
+                    {
+                        FlightPlanId = seadEscortId,
+                        SquadronId = BlueRearFighterSquadronIds[2],
+                        TaskType = AirFlightTaskType.SeadEscort,
+                        AircraftCount = 2,
+                        IsRequired = true,
+                        ProtectedFlightPlanIds =
+                            new List<Guid>(strikeFlightIds),
+                        Loadout = CreateOcaSeadLoadout(),
+                        IngressWaypointsFeet = new List<Vector3>(ingress),
+                        MissionWaypointsFeet = new List<Vector3>
+                        {
+                            PositionAtAltitude(RedDeadCorridorSamTileId,
+                                OcaSeadAltitudeFeet),
+                            PositionAtAltitude(new Vector3Int(3, 0, -3),
+                                OcaSeadAltitudeFeet),
+                            PositionAtAltitude(RedVulnerableAirbaseTileId,
+                                OcaSeadAltitudeFeet)
+                        },
+                        EgressWaypointsFeet = new List<Vector3>(egress)
+                    },
+                    new AirFlightPlan
+                    {
+                        FlightPlanId = fighterEscortId,
+                        SquadronId = BlueRearFighterSquadronIds[3],
+                        TaskType = AirFlightTaskType.FighterEscort,
+                        AircraftCount = 4,
+                        IsRequired = true,
+                        ProtectedFlightPlanIds = new List<Guid>
+                        {
+                            runwayStrikeId,
+                            seadEscortId
+                        },
+                        IngressWaypointsFeet = new List<Vector3>(ingress),
+                        MissionWaypointsFeet = new List<Vector3>
+                        {
+                            PositionAtAltitude(new Vector3Int(3, -1, -2),
+                                OcaFighterEscortAltitudeFeet),
+                            PositionAtAltitude(new Vector3Int(5, -1, -4),
+                                OcaFighterEscortAltitudeFeet)
+                        },
+                        // Stagger this recovery behind the SEAD element so the
+                        // two-channel rear base can also recover the BARCAP handoff.
+                        EgressWaypointsFeet = new List<Vector3>(egress)
+                        {
+                            PositionAtAltitude(
+                                new Vector3Int(-1, 5, -4),
+                                30000f)
+                        }
+                    }
+                }
+            };
+        }
+
+        private static List<AircraftLoadoutItem> CreateOcaStrikeLoadout()
+        {
+            return CreateOcaMultiroleLoadout(
+                TestModule.F16Gbu38CarriageId,
+                TestModule.Gbu38OrdnanceTypeId);
+        }
+
+        private static List<AircraftLoadoutItem> CreateOcaSeadLoadout()
+        {
+            return CreateOcaMultiroleLoadout(
+                TestModule.F16Agm88CarriageId,
+                TestModule.Agm88OrdnanceTypeId);
+        }
+
+        private static List<AircraftLoadoutItem> CreateOcaMultiroleLoadout(
+            Guid missionCarriageId,
+            Guid missionOrdnanceId)
+        {
+            return new List<AircraftLoadoutItem>
+            {
+                CreateExternalStore(
+                    TestModule.F16Station1Id,
+                    TestModule.F16Aim120CarriageId,
+                    TestModule.Aim120OrdnanceTypeId),
+                CreateExternalStore(
+                    TestModule.F16Station2Id,
+                    TestModule.F16Aim9CarriageId,
+                    TestModule.Aim9OrdnanceTypeId),
+                CreateExternalStore(
+                    TestModule.F16Station3Id,
+                    missionCarriageId,
+                    missionOrdnanceId),
+                CreateExternalStore(
+                    TestModule.F16Station7Id,
+                    missionCarriageId,
+                    missionOrdnanceId),
+                CreateExternalStore(
+                    TestModule.F16Station8Id,
+                    TestModule.F16Aim9CarriageId,
+                    TestModule.Aim9OrdnanceTypeId),
+                CreateExternalStore(
+                    TestModule.F16Station9Id,
+                    TestModule.F16Aim120CarriageId,
+                    TestModule.Aim120OrdnanceTypeId),
+                new AircraftLoadoutItem(
+                    TestModule.M61GunOrdnanceTypeId,
+                    6)
+            };
+        }
+
+        private static AircraftLoadoutItem CreateExternalStore(
+            Guid stationId,
+            Guid carriageId,
+            Guid ordnanceId)
+        {
+            return new AircraftLoadoutItem(
+                stationId,
+                carriageId,
+                ordnanceId,
+                1);
         }
 
         private static void ValidateScriptedAirPlans(

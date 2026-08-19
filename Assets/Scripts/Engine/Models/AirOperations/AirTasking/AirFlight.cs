@@ -150,7 +150,8 @@ namespace Models.Gameplay.Campaign
         private float headingDegrees;
         private float speedKnots;
         private FlightTacticalState tacticalState = new FlightTacticalState();
-        private bool isWaitingAtRendezvous;
+        private AirRendezvousState rendezvousState =
+            AirRendezvousState.NotRequired;
         private bool missionAchieved;
         private bool authorizedSurfaceThreatPenetrationGranted;
         private DateTime nextGroundAttackOpportunityAt;
@@ -187,7 +188,12 @@ namespace Models.Gameplay.Campaign
         public float SpeedKnots => speedKnots;
         public FlightTacticalState TacticalState =>
             tacticalState ??= new FlightTacticalState();
-        public bool IsWaitingAtRendezvous => isWaitingAtRendezvous;
+        public AirRendezvousState RendezvousState => rendezvousState;
+        public bool IsWaitingAtRendezvous =>
+            rendezvousState == AirRendezvousState.Holding;
+        public bool HasPackageRelease =>
+            rendezvousState == AirRendezvousState.NotRequired
+            || rendezvousState == AirRendezvousState.Released;
         public bool MissionAchieved => missionAchieved;
         public bool IsFighterEscort =>
             TaskType == AirFlightTaskType.FighterEscort;
@@ -373,7 +379,10 @@ namespace Models.Gameplay.Campaign
             routeView = null;
             currentWaypointIndex = 0;
             hasPosition = false;
-            isWaitingAtRendezvous = false;
+            rendezvousState = route.Any(waypoint =>
+                    waypoint.Action == AirWaypointAction.Rendezvous)
+                ? AirRendezvousState.Enroute
+                : AirRendezvousState.NotRequired;
             missionAchieved = false;
         }
 
@@ -487,7 +496,7 @@ namespace Models.Gameplay.Campaign
                         occurredAt,
                         "Flight reached package rendezvous.");
                     currentWaypointIndex++;
-                    isWaitingAtRendezvous = true;
+                    rendezvousState = AirRendezvousState.Holding;
                     return FlightWaypointTransition.HoldingAtRendezvous;
 
                 case AirWaypointAction.StationEntry:
@@ -567,12 +576,24 @@ namespace Models.Gameplay.Campaign
             }
         }
 
-        public bool ReleaseRendezvous()
+        public bool ReleaseRendezvous(
+            DateTime occurredAt,
+            string reason)
         {
-            if (!isWaitingAtRendezvous)
+            if (rendezvousState != AirRendezvousState.Holding)
                 return false;
 
-            isWaitingAtRendezvous = false;
+            rendezvousState = AirRendezvousState.Released;
+            var rendezvous = currentWaypointIndex > 0
+                ? route[currentWaypointIndex - 1]
+                : null;
+            RecordEvent(
+                rendezvous,
+                occurredAt,
+                string.IsNullOrWhiteSpace(reason)
+                    ? "Package released from rendezvous."
+                    : reason,
+                AirWaypointAction.Rendezvous);
             return true;
         }
 
@@ -686,7 +707,7 @@ namespace Models.Gameplay.Campaign
 
             missionAchieved = achieved;
             currentWaypointIndex = returnIndex;
-            isWaitingAtRendezvous = false;
+            rendezvousState = AirRendezvousState.NotRequired;
             authorizedSurfaceThreatPenetrationGranted = false;
             executionPhase = FlightExecutionPhase.Returning;
             RecordEvent(
@@ -721,7 +742,7 @@ namespace Models.Gameplay.Campaign
 
             missionAchieved = achieved;
             currentWaypointIndex = returnIndex;
-            isWaitingAtRendezvous = false;
+            rendezvousState = AirRendezvousState.NotRequired;
             executionPhase = FlightExecutionPhase.Returning;
             RecordEvent(
                 CurrentWaypoint,
@@ -742,7 +763,7 @@ namespace Models.Gameplay.Campaign
                 lifecycleState = AirTaskingLifecycleState.Cancelled;
                 executionPhase = FlightExecutionPhase.Ended;
                 hasPosition = false;
-                isWaitingAtRendezvous = false;
+                rendezvousState = AirRendezvousState.NotRequired;
                 return FlightCancellationResult.Cancelled;
             }
 
@@ -855,7 +876,7 @@ namespace Models.Gameplay.Campaign
             routeView = null;
             currentWaypointIndex = replacementStartIndex;
             executionPhase = FlightExecutionPhase.Outbound;
-            isWaitingAtRendezvous = false;
+            rendezvousState = AirRendezvousState.NotRequired;
             missionAchieved = false;
             RecordEvent(
                 previousWaypoint,
@@ -903,7 +924,7 @@ namespace Models.Gameplay.Campaign
             currentWaypointIndex = recoveryStartIndex;
             lifecycleState = AirTaskingLifecycleState.Aborted;
             executionPhase = FlightExecutionPhase.Returning;
-            isWaitingAtRendezvous = false;
+            rendezvousState = AirRendezvousState.NotRequired;
             authorizedSurfaceThreatPenetrationGranted = false;
             RecordEvent(currentWaypoint, occurredAt, reason, AirWaypointAction.ReturnToBase);
             return FlightCancellationResult.Aborted;
@@ -919,7 +940,7 @@ namespace Models.Gameplay.Campaign
             RecordEvent(waypoint, occurredAt, "Flight landed.");
             currentWaypointIndex++;
             hasPosition = false;
-            isWaitingAtRendezvous = false;
+            rendezvousState = AirRendezvousState.NotRequired;
             authorizedSurfaceThreatPenetrationGranted = false;
             executionPhase = FlightExecutionPhase.Ended;
             if (lifecycleState != AirTaskingLifecycleState.Aborted)
@@ -935,7 +956,7 @@ namespace Models.Gameplay.Campaign
             lifecycleState = AirTaskingLifecycleState.Failed;
             executionPhase = FlightExecutionPhase.Ended;
             hasPosition = false;
-            isWaitingAtRendezvous = false;
+            rendezvousState = AirRendezvousState.NotRequired;
             authorizedSurfaceThreatPenetrationGranted = false;
             RecordEvent(
                 CurrentWaypoint,
@@ -1043,7 +1064,7 @@ namespace Models.Gameplay.Campaign
 
         private void BeginAbortRecovery(DateTime occurredAt, string reason)
         {
-            isWaitingAtRendezvous = false;
+            rendezvousState = AirRendezvousState.NotRequired;
             authorizedSurfaceThreatPenetrationGranted = false;
             if (executionPhase == FlightExecutionPhase.Returning
                 || executionPhase == FlightExecutionPhase.Landing)

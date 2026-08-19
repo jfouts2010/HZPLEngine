@@ -149,6 +149,7 @@ namespace Engine.Service
     public sealed class KnownSamThreatEnvelope
     {
         private const float GeometryToleranceFeet = 1f;
+        private const float ParameterTolerance = 0.00001f;
 
         public Guid SiteId { get; }
         public Vector3 CenterFeet { get; }
@@ -249,6 +250,68 @@ namespace Engine.Service
                    >= protectedMinimumRangeFeet - GeometryToleranceFeet;
         }
 
+        public bool TryGetSegmentIntersectionInterval(
+            Vector3 startFeet,
+            Vector3 endFeet,
+            out float entryParameter,
+            out float exitParameter,
+            float maneuverClearanceFeet = 0f)
+        {
+            entryParameter = 0f;
+            exitParameter = 0f;
+            if (!TryGetAltitudeInterval(
+                    startFeet,
+                    endFeet,
+                    out var altitudeEntry,
+                    out var altitudeExit))
+                return false;
+
+            var protectedMaximumRangeFeet = MaximumSlantRangeFeet
+                                            + Math.Max(
+                                                0f,
+                                                maneuverClearanceFeet);
+            if (!TryGetSphereIntersectionInterval(
+                    startFeet,
+                    endFeet,
+                    protectedMaximumRangeFeet,
+                    out var outerEntry,
+                    out var outerExit))
+                return false;
+
+            entryParameter = Mathf.Max(altitudeEntry, outerEntry);
+            exitParameter = Mathf.Min(altitudeExit, outerExit);
+            if (entryParameter > exitParameter)
+                return false;
+
+            var protectedMinimumRangeFeet = Math.Max(
+                0f,
+                MinimumSlantRangeFeet
+                - Math.Max(0f, maneuverClearanceFeet));
+            if (protectedMinimumRangeFeet <= GeometryToleranceFeet
+                || !TryGetSphereIntersectionInterval(
+                    startFeet,
+                    endFeet,
+                    protectedMinimumRangeFeet,
+                    out var innerEntry,
+                    out var innerExit))
+                return true;
+
+            innerEntry = Mathf.Max(entryParameter, innerEntry);
+            innerExit = Mathf.Min(exitParameter, innerExit);
+            if (innerEntry > innerExit)
+                return true;
+            if (innerEntry <= entryParameter + ParameterTolerance
+                && innerExit >= exitParameter - ParameterTolerance)
+                return false;
+
+            if (innerEntry <= entryParameter + ParameterTolerance)
+                entryParameter = innerExit;
+            else if (innerExit >= exitParameter - ParameterTolerance)
+                exitParameter = innerEntry;
+
+            return entryParameter <= exitParameter;
+        }
+
         public float ClosestSegmentParameterWithinEnvelopeAltitude(
             Vector3 startFeet,
             Vector3 endFeet)
@@ -311,6 +374,43 @@ namespace Engine.Service
 
             first = Mathf.Max(0f, minimumParameter);
             last = Mathf.Min(1f, maximumParameter);
+            return first <= last;
+        }
+
+        private bool TryGetSphereIntersectionInterval(
+            Vector3 startFeet,
+            Vector3 endFeet,
+            float radiusFeet,
+            out float first,
+            out float last)
+        {
+            first = 0f;
+            last = 0f;
+            if (radiusFeet < 0f)
+                return false;
+
+            var direction = endFeet - startFeet;
+            var lengthSquared = direction.sqrMagnitude;
+            if (lengthSquared <= 0.01f)
+            {
+                if (Vector3.Distance(startFeet, CenterFeet)
+                    > radiusFeet + GeometryToleranceFeet)
+                    return false;
+                last = 1f;
+                return true;
+            }
+
+            var offset = startFeet - CenterFeet;
+            var b = 2f * Vector3.Dot(offset, direction);
+            var c = offset.sqrMagnitude - radiusFeet * radiusFeet;
+            var discriminant = b * b - 4f * lengthSquared * c;
+            if (discriminant < 0f)
+                return false;
+
+            var root = Mathf.Sqrt(discriminant);
+            var denominator = 2f * lengthSquared;
+            first = Mathf.Max(0f, (-b - root) / denominator);
+            last = Mathf.Min(1f, (-b + root) / denominator);
             return first <= last;
         }
     }

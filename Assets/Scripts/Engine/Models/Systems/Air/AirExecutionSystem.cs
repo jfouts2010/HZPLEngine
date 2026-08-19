@@ -18,6 +18,7 @@ namespace Engine.Models
         private const float SeadMinimumScreenLeadKm = 15f;
         private const float SeadMaximumScreenLeadKm = 40f;
         private const float SeadScreenLateralOffsetKm = 5f;
+        private const double SeadTimingSafetyMarginSeconds = 90d;
 
         private readonly GameManager gameManager;
         private readonly AirTaskingSystem airTaskingSystem;
@@ -190,7 +191,7 @@ namespace Engine.Models
                         .Select(flight => flight.FlightId),
                     cursor,
                     "Ground-attack preparation was cancelled when the flight began recovery.");
-                ReleaseReadyRendezvousFlights();
+                CoordinateAirPackages(cursor);
 
                 if (cursor >= currentTime)
                     break;
@@ -213,7 +214,6 @@ namespace Engine.Models
 
                 var commands = frame.Flights.Values
                     .Where(view => view.Flight.IsAirborne
-                                   && !view.Flight.IsWaitingAtRendezvous
                                    && !wvrEngagementSystem.IsFlightEngaged(
                                        view.Flight.FlightId))
                     .OrderBy(view => view.Flight.FlightId)
@@ -224,6 +224,7 @@ namespace Engine.Models
                         GetDoctrine(view.Alliance)))
                     .ToList();
                 ApplySeadScreenCommands(commands, frame);
+                ApplyPackageAbortDecisions(commands, frame, cursor);
 
                 foreach (var command in commands)
                 {
@@ -498,20 +499,155 @@ namespace Engine.Models
             }
         }
 
-        private void ReleaseReadyRendezvousFlights()
+        private void CoordinateAirPackages(DateTime currentTime)
         {
             foreach (var package in airTaskingSystem.GetPackages()
-                         .Where(candidate => candidate.RendezvousWaypoint != null)
                          .OrderBy(candidate => candidate.PackageId))
             {
+                if (package.IsTerminal)
+                {
+                    var completed = package.LifecycleState
+                                    == AirTaskingLifecycleState.Completed;
+                    package.UpdateExecutionPhase(completed
+                        ? AirPackageExecutionPhase.Completed
+                        : AirPackageExecutionPhase.Aborted);
+                    if (!completed)
+                    {
+                        AbortPackageFlights(
+                            package,
+                            currentTime,
+                            "Mission commander terminated the package after a required flight could no longer continue.");
+                    }
+                    continue;
+                }
+
                 var required = package.Flights
                     .Where(flight => flight.IsRequired)
                     .ToList();
-                if (required.Count == 0
-                    || required.Any(flight => !flight.IsWaitingAtRendezvous))
+                if (required.Count == 0)
                     continue;
-                foreach (var flight in required)
-                    flight.ReleaseRendezvous();
+
+                var unavailableCriticalFlight = required
+                    .Where(flight => !flight.IsFighterEscort
+                                     && flight.IsTerminal
+                                     && flight.LifecycleState
+                                     != AirTaskingLifecycleState.Completed
+                                     && (!flight.IsSeadEscort
+                                         || !required.Any(other =>
+                                             other.FlightId != flight.FlightId
+                                             && other.IsSeadEscort
+                                             && !other.IsTerminal)))
+                    .OrderBy(flight => flight.FlightId)
+                    .FirstOrDefault();
+                if (unavailableCriticalFlight != null)
+                {
+                    package.UpdateExecutionPhase(
+                        AirPackageExecutionPhase.Aborted);
+                    AbortPackageFlights(
+                        package,
+                        currentTime,
+                        "Mission commander terminated the package because critical flight "
+                        + SimLogNames.ShortId(
+                            unavailableCriticalFlight.FlightId)
+                        + " could no longer perform its assigned role.");
+                    continue;
+                }
+
+                if (required.All(flight =>
+                        flight.ExecutionPhase == FlightExecutionPhase.Returning
+                        || flight.ExecutionPhase == FlightExecutionPhase.Landing
+                        || flight.ExecutionPhase == FlightExecutionPhase.Ended))
+                {
+                    package.UpdateExecutionPhase(
+                        AirPackageExecutionPhase.Egressing);
+                    continue;
+                }
+
+                if (required.Any(flight =>
+                        flight.ExecutionPhase == FlightExecutionPhase.Executing))
+                {
+                    package.UpdateExecutionPhase(
+                        AirPackageExecutionPhase.Executing);
+                    continue;
+                }
+
+                if (package.RendezvousWaypoint == null)
+                {
+                    package.UpdateExecutionPhase(required.Any(flight =>
+                            flight.IsAirborne)
+                        ? AirPackageExecutionPhase.Pushing
+                        : AirPackageExecutionPhase.Forming);
+                    continue;
+                }
+
+                if (required.All(flight =>
+                        flight.RendezvousState == AirRendezvousState.Released))
+                {
+                    ReleaseHoldingPackageFlights(package, currentTime);
+                    package.UpdateExecutionPhase(
+                        AirPackageExecutionPhase.Pushing);
+                    continue;
+                }
+
+                if (required.Any(flight =>
+                        flight.RendezvousState != AirRendezvousState.Holding))
+                {
+                    package.UpdateExecutionPhase(
+                        AirPackageExecutionPhase.Forming);
+                    continue;
+                }
+
+                package.UpdateExecutionPhase(AirPackageExecutionPhase.Ready);
+                ReleaseHoldingPackageFlights(package, currentTime);
+                package.UpdateExecutionPhase(AirPackageExecutionPhase.Pushing);
+            }
+        }
+
+        private static void ReleaseHoldingPackageFlights(
+            AirPackage package,
+            DateTime currentTime)
+        {
+            foreach (var flight in package.Flights
+                         .Where(flight => flight.RendezvousState
+                                          == AirRendezvousState.Holding)
+                         .OrderBy(flight => flight.FlightId))
+            {
+                flight.ReleaseRendezvous(
+                    currentTime,
+                    "The mission commander released the assembled package from rendezvous.");
+            }
+        }
+
+        private void AbortPackageFlights(
+            AirPackage package,
+            DateTime currentTime,
+            string reason)
+        {
+            foreach (var flight in package.Flights
+                         .Where(flight => !flight.IsTerminal)
+                         .OrderBy(flight => flight.FlightId))
+            {
+                if (!flight.IsAirborne)
+                {
+                    flight.Cancel(currentTime, reason);
+                    continue;
+                }
+
+                if (!TryGetFlightContext(
+                        flight,
+                        out var squadron,
+                        out var aircraftType))
+                    continue;
+                if (!TryAbortToImmediateRecovery(
+                        package,
+                        flight,
+                        squadron,
+                        aircraftType,
+                        currentTime,
+                        reason))
+                {
+                    flight.Cancel(currentTime, reason);
+                }
             }
         }
 
@@ -573,6 +709,8 @@ namespace Engine.Models
                     .Where(effect => !effect.IsDefeated)
                     .ToList(),
                 BarcapTargetByFlightId = new Dictionary<Guid, Guid>(),
+                CounterAirOwnerByProtectedFlightId =
+                    new Dictionary<Guid, Guid>(),
                 KnownSamThreatsByAlliance =
                     new Dictionary<Alliance, IReadOnlyList<KnownSamThreatEnvelope>>
                     {
@@ -580,6 +718,8 @@ namespace Engine.Models
                         { Alliance.Redfor, GetKnownSamThreats(Alliance.Redfor) }
                     }
             };
+            frame.CounterAirOwnerByProtectedFlightId =
+                BuildPackageCounterAirOwnership(frame);
             ApplyKnownSamEngagementOverrides(frame);
             ApplySeadCoverage(frame);
             frame.BarcapTargetByFlightId = AirCombatRules.BuildBarcapAssignments(
@@ -587,6 +727,75 @@ namespace Engine.Models
                 ordnanceTypes,
                 GetDoctrine);
             return frame;
+        }
+
+        private IReadOnlyDictionary<Guid, Guid>
+            BuildPackageCounterAirOwnership(AirCombatFrame frame)
+        {
+            var ownership = new Dictionary<Guid, Guid>();
+            foreach (var packageGroup in frame.Flights.Values
+                         .Where(view => view?.Package != null)
+                         .GroupBy(view => view.Package.PackageId)
+                         .OrderBy(group => group.Key))
+            {
+                var packageFlights = packageGroup.ToDictionary(
+                    view => view.Flight.FlightId);
+                var escorts = packageGroup
+                    .Where(IsViableCounterAirOwner)
+                    .OrderBy(view => view.Flight.FlightId)
+                    .ToList();
+                foreach (var protectedFlight in packageGroup
+                             .Where(view => !view.Flight.IsFighterEscort)
+                             .OrderBy(view => view.Flight.FlightId))
+                {
+                    var owner = escorts
+                        .Where(escort => escort.Flight.ProtectedFlightIds.Count == 0
+                                         || escort.Flight.ProtectedFlightIds.Contains(
+                                             protectedFlight.Flight.FlightId))
+                        .OrderBy(escort => Vector3.Distance(
+                            escort.Flight.PositionFeet,
+                            protectedFlight.Flight.PositionFeet))
+                        .ThenBy(escort => escort.Flight.FlightId)
+                        .FirstOrDefault();
+                    if (owner != null
+                        && packageFlights.ContainsKey(owner.Flight.FlightId))
+                    {
+                        ownership[protectedFlight.Flight.FlightId] =
+                            owner.Flight.FlightId;
+                    }
+                }
+            }
+            return ownership;
+        }
+
+        private bool IsViableCounterAirOwner(AirCombatFlightView view)
+        {
+            if (view?.Flight == null
+                || !view.Flight.IsFighterEscort
+                || view.Flight.LifecycleState
+                != AirTaskingLifecycleState.Active
+                || !view.Flight.IsAirborne
+                || view.Flight.ExecutionPhase == FlightExecutionPhase.Returning
+                || view.Flight.ExecutionPhase == FlightExecutionPhase.Landing
+                || view.Flight.ExecutionPhase == FlightExecutionPhase.Ended
+                || view.LiveAircraft == null
+                || view.LiveAircraft.Count == 0)
+                return false;
+
+            return view.LiveAircraft
+                .SelectMany(aircraft => aircraft.Loadout)
+                .Where(item => item != null && item.Count > 0)
+                .Any(item => ordnanceTypes.TryGetValue(
+                                 item.OrdnanceTypeDefinitionId,
+                                 out var ordnance)
+                             && (ordnance.EmploymentCategory
+                                 == OrdnanceEmploymentCategory.AirToAirRadar
+                                 || ordnance.EmploymentCategory
+                                 == OrdnanceEmploymentCategory.AirToAirInfrared
+                                 || ordnance.EmploymentCategory
+                                 == OrdnanceEmploymentCategory.Gun)
+                             && ordnance.GetEffectiveness(
+                                 OrdnanceTargetCategory.Aircraft) > 0f);
         }
 
         internal static void ApplyKnownSamEngagementOverrides(
@@ -676,9 +885,11 @@ namespace Engine.Models
                     .GetKnownSamThreats(provider.Alliance)
                     .Where(threat => threat != null
                                      && protectedFlights.Any(protectedView =>
-                                         ThreatIntersectsRemainingRoute(
+                                         TryGetRouteThreatWindow(
                                              threat,
-                                             protectedView.Flight)))
+                                             protectedView,
+                                             frame.Time,
+                                             out _)))
                     .GroupBy(threat => threat.SiteId)
                     .OrderBy(group => GetSeadSiteThreatPriority(
                         group.Key,
@@ -737,6 +948,13 @@ namespace Engine.Models
                             out var sitePosition))
                         continue;
 
+                    if (!TryGetEarliestRouteThreatWindow(
+                            threatGroup,
+                            protectedFlights,
+                            frame.Time,
+                            out var threatWindow))
+                        continue;
+
                     var covered = alreadyCovered.Contains(siteId)
                                   || IsSiteTemporarilySuppressed(
                                       site,
@@ -745,15 +963,21 @@ namespace Engine.Models
                                       provider,
                                       site,
                                       sitePosition,
-                                      inventory);
+                                      inventory,
+                                      threatWindow,
+                                      frame.Time,
+                                      frame.GetKnownSamThreats(
+                                          provider.Alliance));
                     if (!covered)
                         continue;
 
                     foreach (var protectedView in protectedFlights.Where(view =>
                                  threatGroup.Any(threat =>
-                                     ThreatIntersectsRemainingRoute(
+                                     TryGetRouteThreatWindow(
                                          threat,
-                                         view.Flight))))
+                                         view,
+                                         frame.Time,
+                                         out _))))
                     {
                         coverageByProtectedFlight[protectedView.Flight.FlightId]
                             .Add(siteId);
@@ -878,9 +1102,11 @@ namespace Engine.Models
             var relevantSiteIds = frame.GetKnownSamThreats(provider.Alliance)
                 .Where(threat => threat != null
                                  && protectedFlights.Any(view =>
-                                     ThreatIntersectsRemainingRoute(
+                                     TryGetRouteThreatWindow(
                                          threat,
-                                         view.Flight)))
+                                         view,
+                                         frame.Time,
+                                         out _)))
                 .Select(threat => threat.SiteId)
                 .Distinct()
                 .OrderBy(siteId => siteId);
@@ -923,9 +1149,11 @@ namespace Engine.Models
             var threatGroups = frame.GetKnownSamThreats(provider.Alliance)
                 .Where(threat => threat != null
                                  && protectedFlights.Any(protectedView =>
-                                     ThreatIntersectsRemainingRoute(
+                                     TryGetRouteThreatWindow(
                                          threat,
-                                         protectedView.Flight)))
+                                         protectedView,
+                                         frame.Time,
+                                         out _)))
                 .GroupBy(threat => threat.SiteId)
                 .OrderBy(group => group.Key);
             foreach (var threatGroup in threatGroups)
@@ -943,9 +1171,20 @@ namespace Engine.Models
                         out var sitePosition))
                     continue;
 
+                if (!TryGetEarliestRouteThreatWindow(
+                        threatGroup,
+                        protectedFlights,
+                        frame.Time,
+                        out var earliestThreatWindow))
+                    continue;
+
                 var threatenedFlights = protectedFlights
                     .Where(view => threatGroup.Any(threat =>
-                        ThreatIntersectsRemainingRoute(threat, view.Flight)))
+                        TryGetRouteThreatWindow(
+                            threat,
+                            view,
+                            frame.Time,
+                            out _)))
                     .Select(view => view.Flight.FlightId)
                     .OrderBy(flightId => flightId)
                     .ToList();
@@ -965,7 +1204,13 @@ namespace Engine.Models
                                 provider,
                                 ordnance,
                                 componentDefinition,
-                                sitePosition)))
+                                sitePosition)
+                            || !IsSeadEngagementDue(
+                                provider,
+                                ordnance,
+                                sitePosition,
+                                earliestThreatWindow,
+                                currentTime)))
                         continue;
 
                     contacts.Add(new DetectedEmitter
@@ -990,6 +1235,67 @@ namespace Engine.Models
                 }
             }
             return contacts;
+        }
+
+        private static bool TryGetEarliestRouteThreatWindow(
+            IEnumerable<KnownSamThreatEnvelope> threats,
+            IEnumerable<AirCombatFlightView> protectedFlights,
+            DateTime currentTime,
+            out RouteThreatWindow earliestWindow)
+        {
+            earliestWindow = default;
+            var found = false;
+            foreach (var threat in threats.Where(candidate => candidate != null))
+            {
+                foreach (var protectedFlight in protectedFlights.Where(
+                             candidate => candidate?.Flight != null))
+                {
+                    if (!TryGetRouteThreatWindow(
+                            threat,
+                            protectedFlight,
+                            currentTime,
+                            out var candidateWindow))
+                        continue;
+                    if (found
+                        && candidateWindow.EntryTime
+                        >= earliestWindow.EntryTime)
+                        continue;
+
+                    earliestWindow = candidateWindow;
+                    found = true;
+                }
+            }
+            return found;
+        }
+
+        private static bool IsSeadEngagementDue(
+            AirCombatFlightView provider,
+            OrdnanceTypeDefinition ordnance,
+            Vector3 sitePosition,
+            RouteThreatWindow threatWindow,
+            DateTime currentTime)
+        {
+            if (threatWindow.AlreadyInside)
+                return true;
+
+            var distanceKm = HorizontalDistanceKm(
+                provider.Flight.PositionFeet,
+                sitePosition);
+            var preparationSeconds = ordnance.PreparationSeconds
+                                     / Math.Max(
+                                         0.01f,
+                                         provider.AircraftType
+                                             .OrdnanceEmploymentEfficiency);
+            var effectTravelSeconds = distanceKm
+                                      / Math.Max(
+                                          1f,
+                                          ordnance.EffectSpeedKnots * 1.852f)
+                                      * 3600d;
+            var latestUsefulStart = currentTime.AddSeconds(
+                preparationSeconds
+                + effectTravelSeconds
+                + SeadTimingSafetyMarginSeconds);
+            return threatWindow.EntryTime <= latestUsefulStart;
         }
 
         private void ApplySeadScreenCommands(
@@ -1103,6 +1409,80 @@ namespace Engine.Models
             }
         }
 
+        private void ApplyPackageAbortDecisions(
+            IReadOnlyCollection<AirCombatCommand> commands,
+            AirCombatFrame frame,
+            DateTime currentTime)
+        {
+            if (commands == null || frame?.Flights == null)
+                return;
+
+            var recoveryRequests = commands
+                .Where(command => command.RequestsSurfaceThreatRecovery)
+                .Select(command => frame.Flights.TryGetValue(
+                    command.FlightId,
+                    out var view)
+                    ? view
+                    : null)
+                .Where(view => view?.Package != null)
+                .GroupBy(view => view.Package.PackageId)
+                .OrderBy(group => group.Key);
+            foreach (var requestGroup in recoveryRequests)
+            {
+                var package = requestGroup.First().Package;
+                var primaryBlocked = requestGroup.Any(view =>
+                    view.Flight.IsGroundAttackFlight);
+                var requestedSeadIds = requestGroup
+                    .Where(view => view.Flight.IsSeadEscort)
+                    .Select(view => view.Flight.FlightId)
+                    .ToHashSet();
+                var seadCapabilityLost = requestedSeadIds.Count > 0
+                                         && !frame.Flights.Values.Any(view =>
+                                             view.Package?.PackageId
+                                             == package.PackageId
+                                             && !requestedSeadIds.Contains(
+                                                 view.Flight.FlightId)
+                                             && IsAvailableSeadEscort(view));
+                if (!primaryBlocked && !seadCapabilityLost)
+                    continue;
+
+                var trigger = requestGroup
+                    .OrderBy(view => view.Flight.FlightId)
+                    .First();
+                var triggerCommand = commands.First(command =>
+                    command.FlightId == trigger.Flight.FlightId);
+                var reason = "Mission commander aborted the package because "
+                             + (primaryBlocked
+                                 ? "the primary attack route lost required surface-threat protection. "
+                                 : "no viable SEAD owner remained for the protected route. ")
+                             + triggerCommand.Reason;
+                package.UpdateExecutionPhase(
+                    AirPackageExecutionPhase.Aborted);
+                AbortPackageFlights(package, currentTime, reason);
+
+                foreach (var view in frame.Flights.Values
+                             .Where(view => view.Package?.PackageId
+                                            == package.PackageId)
+                             .OrderBy(view => view.Flight.FlightId))
+                {
+                    var command = commands.FirstOrDefault(candidate =>
+                        candidate.FlightId == view.Flight.FlightId);
+                    if (command != null
+                        && (view.Flight.ExecutionPhase
+                            == FlightExecutionPhase.Returning
+                            || view.Flight.ExecutionPhase
+                            == FlightExecutionPhase.Landing))
+                    {
+                        ContinueRecoveryCommand(
+                            command,
+                            view.Flight,
+                            view.AircraftType,
+                            currentTime);
+                    }
+                }
+            }
+        }
+
         private static bool IsAvailableSeadEscort(AirCombatFlightView view)
         {
             return view?.Flight != null
@@ -1110,7 +1490,7 @@ namespace Engine.Models
                    && view.Flight.LifecycleState
                    == AirTaskingLifecycleState.Active
                    && view.Flight.IsAirborne
-                   && !view.Flight.IsWaitingAtRendezvous
+                   && view.Flight.HasPackageRelease
                    && view.Flight.ExecutionPhase
                    != FlightExecutionPhase.Returning
                    && view.Flight.ExecutionPhase
@@ -1145,28 +1525,92 @@ namespace Engine.Models
                 .ToList();
         }
 
-        private static bool ThreatIntersectsRemainingRoute(
+        private static bool TryGetRouteThreatWindow(
             KnownSamThreatEnvelope threat,
-            AirFlight flight)
+            AirCombatFlightView flightView,
+            DateTime currentTime,
+            out RouteThreatWindow window)
         {
-            if (threat == null || flight == null || !flight.IsAirborne)
+            window = default;
+            var flight = flightView?.Flight;
+            if (threat == null
+                || flight == null
+                || !flight.IsAirborne
+                || !flight.HasPosition)
                 return false;
-            if (threat.Contains(flight.PositionFeet))
-                return true;
 
-            var remaining = new List<Vector3> { flight.PositionFeet };
-            remaining.AddRange(flight.Route
-                .Skip(Math.Max(0, flight.CurrentWaypointIndex))
-                .Where(waypoint => waypoint != null)
-                .Select(waypoint => waypoint.PositionFeet));
-            for (var index = 1; index < remaining.Count; index++)
+            var speedKnots = Math.Max(
+                1f,
+                flight.SpeedKnots > 1f
+                    ? flight.SpeedKnots
+                    : Math.Max(
+                        flightView.AircraftType.CruiseSpeedKnots,
+                        flightView.AircraftType.CombatSpeedKnots));
+            var segmentStart = flight.PositionFeet;
+            var segmentStartTime = currentTime;
+            var found = false;
+            var entryTime = default(DateTime);
+            var exitTime = default(DateTime);
+            var entryPoint = default(Vector3);
+            var exitPoint = default(Vector3);
+            var alreadyInside = threat.Contains(segmentStart);
+
+            foreach (var waypoint in flight.Route
+                         .Skip(Math.Max(0, flight.CurrentWaypointIndex))
+                         .Where(candidate => candidate != null))
             {
-                if (threat.IntersectsSegment(
-                        remaining[index - 1],
-                        remaining[index]))
-                    return true;
+                var segmentEnd = waypoint.PositionFeet;
+                var distanceFeet = Vector3.Distance(segmentStart, segmentEnd);
+                var durationSeconds = distanceFeet
+                                      / AirspaceGeometry.FeetPerNauticalMile
+                                      / speedKnots
+                                      * 3600d;
+                if (threat.TryGetSegmentIntersectionInterval(
+                        segmentStart,
+                        segmentEnd,
+                        out var entryParameter,
+                        out var exitParameter))
+                {
+                    var candidateEntry = segmentStartTime.AddSeconds(
+                        durationSeconds * entryParameter);
+                    var candidateExit = segmentStartTime.AddSeconds(
+                        durationSeconds * exitParameter);
+                    if (!found)
+                    {
+                        found = true;
+                        entryTime = alreadyInside
+                            ? currentTime
+                            : candidateEntry;
+                        entryPoint = Vector3.Lerp(
+                            segmentStart,
+                            segmentEnd,
+                            entryParameter);
+                    }
+
+                    exitTime = candidateExit;
+                    exitPoint = Vector3.Lerp(
+                        segmentStart,
+                        segmentEnd,
+                        exitParameter);
+                }
+
+                segmentStart = segmentEnd;
+                segmentStartTime = segmentStartTime.AddSeconds(durationSeconds);
+                if (waypoint.Action == AirWaypointAction.ReturnToBase)
+                    break;
             }
-            return false;
+
+            if (!found)
+                return false;
+
+            window = new RouteThreatWindow(
+                threat.SiteId,
+                entryTime,
+                exitTime,
+                entryPoint,
+                exitPoint,
+                alreadyInside);
+            return true;
         }
 
         private Dictionary<Guid, int> GetAvailableAntiRadiationInventory(
@@ -1203,7 +1647,10 @@ namespace Engine.Models
             AirCombatFlightView provider,
             SamSite site,
             Vector3 sitePosition,
-            IDictionary<Guid, int> inventory)
+            IDictionary<Guid, int> inventory,
+            RouteThreatWindow threatWindow,
+            DateTime currentTime,
+            IReadOnlyList<KnownSamThreatEnvelope> knownThreats)
         {
             foreach (var entry in inventory
                          .Where(item => item.Value > 0)
@@ -1218,17 +1665,122 @@ namespace Engine.Models
                             airDefenseComponentDefinitions.TryGetValue(
                                 component.SamComponentDefinitionId,
                                 out var definition)
-                            && CanEmploySeadWeapon(
+                            && CanProvideSeadByWindow(
                                 provider,
                                 ordnance,
                                 definition,
-                                sitePosition)))
+                                sitePosition,
+                                threatWindow,
+                                currentTime,
+                                knownThreats)))
                     continue;
 
                 inventory[entry.Key]--;
                 return true;
             }
             return false;
+        }
+
+        private bool CanProvideSeadByWindow(
+            AirCombatFlightView provider,
+            OrdnanceTypeDefinition ordnance,
+            AirDefenseComponentDefinition componentDefinition,
+            Vector3 targetPosition,
+            RouteThreatWindow threatWindow,
+            DateTime currentTime,
+            IReadOnlyList<KnownSamThreatEnvelope> knownThreats)
+        {
+            if (!IsAntiRadiationOrdnance(ordnance)
+                || !DeadLoadoutPlanner.CanAttackComponent(
+                    ordnance,
+                    componentDefinition))
+                return false;
+
+            var distanceKm = HorizontalDistanceKm(
+                provider.Flight.PositionFeet,
+                targetPosition);
+            if (threatWindow.AlreadyInside)
+            {
+                return distanceKm >= ordnance.MinimumRangeKm
+                       && distanceKm <= ordnance.MaximumRangeKm;
+            }
+
+            var repositionKm = distanceKm > ordnance.MaximumRangeKm
+                ? distanceKm - ordnance.MaximumRangeKm
+                : distanceKm < ordnance.MinimumRangeKm
+                    ? ordnance.MinimumRangeKm - distanceKm
+                    : 0f;
+            if (repositionKm > 0f)
+            {
+                var fromTarget = provider.Flight.PositionFeet
+                                 - targetPosition;
+                fromTarget.y = 0f;
+                if (fromTarget.sqrMagnitude <= 1f)
+                {
+                    fromTarget = -AirCombatRules.Direction(
+                        provider.Flight.HeadingDegrees);
+                }
+                fromTarget.Normalize();
+                var desiredReleaseRangeKm = distanceKm
+                                            > ordnance.MaximumRangeKm
+                    ? ordnance.MaximumRangeKm
+                    : ordnance.MinimumRangeKm;
+                var releasePoint = targetPosition
+                                   + fromTarget
+                                   * desiredReleaseRangeKm
+                                   * AirspaceGeometry.FeetPerKilometer;
+                releasePoint.y = provider.Flight.PositionFeet.y;
+                var maneuverClearanceFeet = AirspaceGeometry
+                    .ConservativeSamManeuverClearanceFeet(
+                        provider.AircraftType);
+                var otherThreats = (knownThreats
+                                    ?? Array.Empty<KnownSamThreatEnvelope>())
+                    .Where(threat => threat != null
+                                     && threat.SiteId != threatWindow.SiteId)
+                    .ToList();
+                if (!KnownSamThreatGeometry.IsPathSafe(
+                        new[]
+                        {
+                            provider.Flight.PositionFeet,
+                            releasePoint
+                        },
+                        otherThreats,
+                        maneuverClearanceFeet,
+                        out _)
+                    || (knownThreats
+                        ?? Array.Empty<KnownSamThreatEnvelope>())
+                    .Where(threat => threat?.SiteId == threatWindow.SiteId)
+                    .Any(threat => threat.Contains(
+                        releasePoint,
+                        maneuverClearanceFeet)))
+                    return false;
+            }
+            var repositionSeconds = repositionKm
+                                    / Math.Max(
+                                        1f,
+                                        provider.AircraftType.CombatSpeedKnots
+                                        * 1.852f)
+                                    * 3600d;
+            var releaseDistanceKm = Mathf.Clamp(
+                distanceKm,
+                ordnance.MinimumRangeKm,
+                ordnance.MaximumRangeKm);
+            var effectTravelSeconds = releaseDistanceKm
+                                      / Math.Max(
+                                          1f,
+                                          ordnance.EffectSpeedKnots * 1.852f)
+                                      * 3600d;
+            var preparationSeconds = ordnance.PreparationSeconds
+                                     / Math.Max(
+                                         0.01f,
+                                         provider.AircraftType
+                                             .OrdnanceEmploymentEfficiency);
+            var effectReadyAt = currentTime.AddSeconds(
+                repositionSeconds
+                + preparationSeconds
+                + effectTravelSeconds
+                + SeadTimingSafetyMarginSeconds);
+            return effectReadyAt <= threatWindow.EntryTime;
         }
 
         private bool CanEmploySeadWeapon(
@@ -1656,7 +2208,6 @@ namespace Engine.Models
                 candidate.FlightId == command.FlightId);
             if (flight == null
                 || !flight.IsAirborne
-                || flight.IsWaitingAtRendezvous
                 || command.RequestsWvrEngagement
                 || wvrEngagementSystem.IsFlightEngaged(flight.FlightId)
                 || !TryGetFlightContext(
@@ -1664,11 +2215,17 @@ namespace Engine.Models
                     out var squadron,
                     out var aircraftType))
                 return;
+            if (flight.IsWaitingAtRendezvous
+                && command.Maneuver == AirCombatManeuver.FollowRoute)
+                return;
 
             var remaining = elapsedSeconds;
             var localTime = intervalStart;
             HashSet<Guid> waypointsCrossedWithoutTime = null;
-            while (remaining > 0.0001d && flight.IsAirborne && !flight.IsWaitingAtRendezvous)
+            while (remaining > 0.0001d
+                   && flight.IsAirborne
+                   && (!flight.IsWaitingAtRendezvous
+                       || command.Maneuver != AirCombatManeuver.FollowRoute))
             {
                 var followingRoute = command.Maneuver == AirCombatManeuver.FollowRoute;
                 var target = followingRoute
