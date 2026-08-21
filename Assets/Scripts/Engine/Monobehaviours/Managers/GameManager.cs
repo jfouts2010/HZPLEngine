@@ -434,7 +434,8 @@ namespace Engine.Monobehaviours.Managers
             _airExecutionSystem.GameTurn(previousTime, CurrentTime);
             _IADSSystem.TacticalTurn(
                 (float)(CurrentTime - previousTime).TotalSeconds,
-                CurrentTime);
+                CurrentTime,
+                _ordnanceEmploymentSystem.PendingEffects);
             _ordnanceEmploymentSystem.RefreshTacticalState(CurrentTime);
             if (notifyTacticalStep)
                 AirTacticalStepCompleted?.Invoke();

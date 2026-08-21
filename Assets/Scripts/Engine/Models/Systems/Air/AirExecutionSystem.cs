@@ -870,6 +870,9 @@ namespace Engine.Models
             var coverageByProtectedFlight = frame.Flights.Keys.ToDictionary(
                 flightId => flightId,
                 _ => new HashSet<Guid>());
+            var pendingByProtectedFlight = frame.Flights.Keys.ToDictionary(
+                flightId => flightId,
+                _ => new HashSet<Guid>());
             foreach (var provider in frame.Flights.Values
                          .Where(view => IsAvailableSeadEscort(view))
                          .OrderBy(view => view.Flight.FlightId))
@@ -906,15 +909,12 @@ namespace Engine.Models
                 if (relevantThreats.Count == 0)
                     continue;
 
-                var alreadyCovered = frame.ActivePasses
+                var alreadyCommitted = frame.ActivePasses
                     .Where(pass => pass.SourceFlightId
                                    == provider.Flight.FlightId
                                    && pass.TargetKind
                                    == OrdnanceEmploymentTargetKind
                                        .AirDefenseComponent
-                                   && IsWeaponQualityRadarTarget(
-                                       pass.TargetSiteId,
-                                       pass.TargetComponentId)
                                    && IsAntiRadiationOrdnance(
                                        pass.OrdnanceTypeDefinitionId))
                     .Select(pass => pass.TargetSiteId)
@@ -924,9 +924,6 @@ namespace Engine.Models
                                          && effect.TargetKind
                                          == OrdnanceEmploymentTargetKind
                                              .AirDefenseComponent
-                                         && IsWeaponQualityRadarTarget(
-                                             effect.TargetSiteId,
-                                             effect.TargetComponentId)
                                          && effect.ResolveAt > frame.Time
                                          && IsAntiRadiationOrdnance(
                                              effect.OrdnanceTypeDefinitionId))
@@ -955,21 +952,27 @@ namespace Engine.Models
                             out var threatWindow))
                         continue;
 
-                    var covered = alreadyCovered.Contains(siteId)
-                                  || IsSiteTemporarilySuppressed(
-                                      site,
-                                      frame.Time)
-                                  || TryReserveSeadCoverageWeapon(
-                                      provider,
-                                      site,
-                                      sitePosition,
-                                      inventory,
-                                      threatWindow,
-                                      frame.Time,
-                                      frame.GetKnownSamThreats(
-                                          provider.Alliance));
-                    if (!covered)
+                    var covered = IsSiteTemporarilySuppressed(
+                        site,
+                        frame.Time);
+                    var committed = !covered
+                                    && (alreadyCommitted.Contains(siteId)
+                                        || TryReserveSeadCoverageWeapon(
+                                            provider,
+                                            site,
+                                            sitePosition,
+                                            inventory,
+                                            threatWindow,
+                                            frame.Time,
+                                            frame.GetKnownSamThreats(
+                                                provider.Alliance)));
+                    if (!covered && !committed)
                         continue;
+
+                    var providerSiteIds = covered
+                        ? coverageByProtectedFlight
+                        : pendingByProtectedFlight;
+                    providerSiteIds[provider.Flight.FlightId].Add(siteId);
 
                     foreach (var protectedView in protectedFlights.Where(view =>
                                  threatGroup.Any(threat =>
@@ -979,8 +982,10 @@ namespace Engine.Models
                                          frame.Time,
                                          out _))))
                     {
-                        coverageByProtectedFlight[protectedView.Flight.FlightId]
-                            .Add(siteId);
+                        var siteIds = covered
+                            ? coverageByProtectedFlight
+                            : pendingByProtectedFlight;
+                        siteIds[protectedView.Flight.FlightId].Add(siteId);
                     }
                 }
             }
@@ -998,6 +1003,19 @@ namespace Engine.Models
                 else
                 {
                     view.SeadCoveredThreatSiteIds = Array.Empty<Guid>();
+                }
+
+                if (pendingByProtectedFlight.TryGetValue(
+                        view.Flight.FlightId,
+                        out var pending))
+                {
+                    view.SeadPendingThreatSiteIds = pending
+                        .OrderBy(siteId => siteId)
+                        .ToList();
+                }
+                else
+                {
+                    view.SeadPendingThreatSiteIds = Array.Empty<Guid>();
                 }
             }
         }
@@ -3696,18 +3714,6 @@ namespace Engine.Models
                    {
                        ProvidesWeaponQualityTrack: true
                    };
-        }
-
-        private bool IsWeaponQualityRadarTarget(
-            Guid siteId,
-            Guid componentId)
-        {
-            return siteId != Guid.Empty
-                   && componentId != Guid.Empty
-                   && gameManager.airDefenseSiteSystem.TryGetSite(
-                       siteId,
-                       out var site)
-                   && IsWeaponQualityRadarComponent(site, componentId);
         }
 
         private bool HasDeadMissionUsefulOrdnance(
