@@ -376,6 +376,8 @@ namespace Engine.Models
                     .ToList(),
                 GroundOpportunityDescription =
                     plan.OpportunityDescription ?? string.Empty,
+                GroundUtilityScore = plan.UtilityScore
+                                     ?? new DecisionScore(),
                 OrdnanceTypeDefinitionId = plan.OrdnanceTypeDefinitionId,
                 PlannedQuantity = validTargets.Count,
                 PreparationStartedAt = currentTime,

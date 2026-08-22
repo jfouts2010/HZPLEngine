@@ -160,6 +160,7 @@ namespace Models.Gameplay.Campaign
         public List<GroundAttackOpportunityTarget> OpportunityTargets =
             new List<GroundAttackOpportunityTarget>();
         public string OpportunityDescription = string.Empty;
+        public DecisionScore UtilityScore = new DecisionScore();
     }
 
     public enum OrdnanceDefeatReason
@@ -212,6 +213,7 @@ namespace Models.Gameplay.Campaign
         public List<GroundAttackOpportunityTarget> GroundOpportunityTargets =
             new List<GroundAttackOpportunityTarget>();
         public string GroundOpportunityDescription = string.Empty;
+        public DecisionScore GroundUtilityScore = new DecisionScore();
         public Guid OrdnanceTypeDefinitionId;
         public int PlannedQuantity;
         public DateTime PreparationStartedAt;

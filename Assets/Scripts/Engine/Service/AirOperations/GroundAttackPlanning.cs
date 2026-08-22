@@ -749,9 +749,10 @@ namespace Engine.Service
                     .ThenBy(target => target.Target.EntityId)
                     .Take(quantity)
                     .ToList();
-                var score = primaryTargets.Sum(target => DirectValue(
+                var directScore = primaryTargets.Sum(target => DirectValue(
                     target,
                     ordnance));
+                var secondaryScore = 0f;
                 if (ordnance.MaximumGroundTargetsPerWeapon > 1
                     && ordnance.SecondaryGroundEffectMultiplier > 0f)
                 {
@@ -759,7 +760,7 @@ namespace Engine.Service
                         primaryTargets);
                     var secondaryCapacity = quantity
                                             * (ordnance.MaximumGroundTargetsPerWeapon - 1);
-                    score += eligible
+                    secondaryScore = eligible
                         .Where(target => !primarySet.Contains(target))
                         .Where(target => target.CanReceiveSecondaryEffect)
                         .Where(target => AirToGroundWeaponRules.CanAffect(
@@ -775,7 +776,15 @@ namespace Engine.Service
                 var candidate = new WeaponPlanCandidate(
                     ordnance,
                     primaryTargets,
-                    score);
+                    new DecisionScore(new[]
+                    {
+                        new DecisionScoreFactor(
+                            "primary-target expected effect",
+                            directScore),
+                        new DecisionScoreFactor(
+                            "secondary-target expected effect",
+                            secondaryScore)
+                    }));
                 var scoresAreEqual = best != null
                                      && Math.Abs(candidate.Score - best.Score)
                                      <= 0.0001f;
@@ -809,7 +818,8 @@ namespace Engine.Service
                 OpportunityTargets = opportunity.Targets
                     .Where(target => target != null)
                     .Select(target => target.Clone())
-                    .ToList()
+                    .ToList(),
+                UtilityScore = best.UtilityScore
             };
             return true;
         }
@@ -844,16 +854,17 @@ namespace Engine.Service
         {
             public OrdnanceTypeDefinition Ordnance { get; }
             public List<GroundAttackOpportunityTarget> PrimaryTargets { get; }
-            public float Score { get; }
+            public DecisionScore UtilityScore { get; }
+            public float Score => UtilityScore.Total;
 
             public WeaponPlanCandidate(
                 OrdnanceTypeDefinition ordnance,
                 List<GroundAttackOpportunityTarget> primaryTargets,
-                float score)
+                DecisionScore utilityScore)
             {
                 Ordnance = ordnance;
                 PrimaryTargets = primaryTargets;
-                Score = score;
+                UtilityScore = utilityScore ?? new DecisionScore();
             }
         }
     }

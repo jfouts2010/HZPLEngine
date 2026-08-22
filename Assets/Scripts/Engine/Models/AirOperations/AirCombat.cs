@@ -39,6 +39,16 @@ namespace Models.Gameplay.Campaign
         Right = 2
     }
 
+    public enum AirCombatDecisionStage
+    {
+        None = 0,
+        SafetyOverride = 1,
+        GuidanceCommitment = 2,
+        MissionAndEngagement = 3,
+        CommandConstraint = 4,
+        WvrEngagement = 5
+    }
+
     public enum OrdnanceGuidanceStage
     {
         Midcourse = 0,
@@ -52,6 +62,7 @@ namespace Models.Gameplay.Campaign
     {
         public AirCombatIntent Intent = AirCombatIntent.FollowMission;
         public AirCombatManeuver Maneuver = AirCombatManeuver.FollowRoute;
+        public AirCombatDecisionStage DecisionStage;
         public DateTime IntentStartedAt;
         public DateTime ManeuverStartedAt;
         public DateTime MinimumManeuverEndAt;
@@ -166,6 +177,7 @@ namespace Models.Gameplay.Campaign
         {
             RecommitCount = 0;
             ProactiveEngagementExhausted = false;
+            DecisionStage = AirCombatDecisionStage.None;
             Apply(
                 AirCombatIntent.FollowMission,
                 AirCombatManeuver.FollowRoute,
@@ -192,6 +204,7 @@ namespace Models.Gameplay.Campaign
     public sealed class AirCombatCommand
     {
         public Guid FlightId;
+        public AirCombatDecisionStage DecisionStage;
         public AirCombatIntent Intent;
         public AirCombatManeuver Maneuver;
         public Guid TargetFlightId;

@@ -20,12 +20,20 @@ namespace Engine.Models
         private readonly AllianceAirTaskingCommander blueforCommander;
         private readonly AllianceAirTaskingCommander redforCommander;
         private readonly GameManager gameManager;
+        private readonly IAirPlanProducer planProducer;
         private readonly HashSet<Guid> attemptedPlanIds = new HashSet<Guid>();
 
-        public AirTaskingSystem(GameManager gameManager, ModuleDefinition module)
+        public AirTaskingSystem(
+            GameManager gameManager,
+            ModuleDefinition module,
+            IAirPlanProducer planProducer = null)
         {
             this.gameManager = gameManager
                                ?? throw new ArgumentNullException(nameof(gameManager));
+            this.planProducer = planProducer
+                                ?? new ScriptedAirPlanProducer(() =>
+                                    this.gameManager.CampaignTemplate
+                                        ?.AirPackagePlans);
             airportOperations = new AirportOperationsService(gameManager);
             packageBuilder = new AirPackageBuilder(gameManager, module);
             aircraftReservations = new AircraftReservationService(
@@ -151,11 +159,12 @@ namespace Engine.Models
 
         private void MaterializeDuePlans()
         {
-            var plans = gameManager.CampaignTemplate?.AirPackagePlans
-                        ?? new List<AirPackagePlan>();
+            var plans = planProducer.GetAvailablePlans(
+                            gameManager.CurrentTime)
+                        ?? Enumerable.Empty<AirPackagePlan>();
             foreach (var plan in plans
                          .Where(candidate => candidate != null
-                                             && candidate.AvailableAt
+                                              && candidate.AvailableAt
                                              <= gameManager.CurrentTime
                                              && !attemptedPlanIds.Contains(
                                                  candidate.PlanId))

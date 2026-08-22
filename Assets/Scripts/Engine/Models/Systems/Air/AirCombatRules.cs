@@ -21,10 +21,7 @@ namespace Engine.Models
         public bool AllowKnownSamEngagementOverride;
         public IReadOnlyCollection<Guid> KnownSamEngagementOverrideSiteIds =
             Array.Empty<Guid>();
-        public IReadOnlyCollection<Guid> SeadCoveredThreatSiteIds =
-            Array.Empty<Guid>();
-        public IReadOnlyCollection<Guid> SeadPendingThreatSiteIds =
-            Array.Empty<Guid>();
+        public bool HasPackageSeadProtection;
     }
 
     internal sealed class AirCombatFrame
@@ -184,7 +181,6 @@ namespace Engine.Models
         private const float ThreateningCourseMaximumGapSeconds = 30f;
         private const float EmergencyThreatEntryMinutes = 2f;
         private const float ProtectedFlightEnvelopeBufferKm = 5f;
-        private const float SeadWaitBufferKm = 5f;
         private const float CloseEscortLeadDistanceKm = 5f;
         private const float CloseEscortAltitudeOffsetFeet = 5000f;
         private const double LaunchSupportPredictionStepSeconds = 2d;
@@ -201,8 +197,7 @@ namespace Engine.Models
                 frame,
                 ordnanceTypes,
                 doctrine);
-            command = EnforceBarcapDefensiveBoundary(source, frame, command);
-            command = EnforceKnownSamAvoidance(
+            command = ApplyCommandConstraints(
                 source,
                 frame,
                 command,
@@ -216,14 +211,71 @@ namespace Engine.Models
             return command;
         }
 
+        private static AirCombatCommand ApplyCommandConstraints(
+            AirCombatFlightView source,
+            AirCombatFrame frame,
+            AirCombatCommand command,
+            IReadOnlyDictionary<Guid, OrdnanceTypeDefinition> ordnanceTypes)
+        {
+            command = EnforceBarcapDefensiveBoundary(
+                source,
+                frame,
+                command);
+            command = EnforceKnownSamAvoidance(
+                source,
+                frame,
+                command,
+                ordnanceTypes);
+            if (command != null
+                && command.DecisionStage == AirCombatDecisionStage.None)
+            {
+                command.DecisionStage =
+                    AirCombatDecisionStage.CommandConstraint;
+            }
+            return command;
+        }
+
         private static AirCombatCommand DecideCore(
             AirCombatFlightView source,
             AirCombatFrame frame,
             IReadOnlyDictionary<Guid, OrdnanceTypeDefinition> ordnanceTypes,
             AllianceAirDoctrine doctrine)
         {
+            var command = TryDecideSafetyOverride(
+                source,
+                frame,
+                ordnanceTypes);
+            if (command != null)
+            {
+                command.DecisionStage =
+                    AirCombatDecisionStage.SafetyOverride;
+                return command;
+            }
+
+            command = TryDecideGuidanceCommitment(source, frame);
+            if (command != null)
+            {
+                command.DecisionStage =
+                    AirCombatDecisionStage.GuidanceCommitment;
+                return command;
+            }
+
+            command = DecideMissionAndEngagement(
+                source,
+                frame,
+                ordnanceTypes,
+                doctrine);
+            command.DecisionStage =
+                AirCombatDecisionStage.MissionAndEngagement;
+            return command;
+        }
+
+        private static AirCombatCommand TryDecideSafetyOverride(
+            AirCombatFlightView source,
+            AirCombatFrame frame,
+            IReadOnlyDictionary<Guid, OrdnanceTypeDefinition> ordnanceTypes)
+        {
             var flight = source.Flight;
-            var state = flight.TacticalState;
             if (flight.ExecutionPhase == FlightExecutionPhase.Returning
                 || flight.ExecutionPhase == FlightExecutionPhase.Landing)
             {
@@ -274,6 +326,14 @@ namespace Engine.Models
                 }
             }
 
+            return null;
+        }
+
+        private static AirCombatCommand TryDecideGuidanceCommitment(
+            AirCombatFlightView source,
+            AirCombatFrame frame)
+        {
+            var flight = source.Flight;
             var supported = frame.PendingEffects
                 .Where(effect => effect.SourceKind == OrdnanceEmploymentSourceKind.AircraftFlight
                                  && effect.SourceFlightId == flight.FlightId
@@ -289,6 +349,18 @@ namespace Engine.Models
             {
                 return CrankCommand(source, supportedTarget, supported, frame.Time);
             }
+
+            return null;
+        }
+
+        private static AirCombatCommand DecideMissionAndEngagement(
+            AirCombatFlightView source,
+            AirCombatFrame frame,
+            IReadOnlyDictionary<Guid, OrdnanceTypeDefinition> ordnanceTypes,
+            AllianceAirDoctrine doctrine)
+        {
+            var flight = source.Flight;
+            var state = flight.TacticalState;
 
             var activePass = frame.ActivePasses
                 .Where(pass => pass.SourceFlightId == flight.FlightId)
@@ -3105,31 +3177,6 @@ namespace Engine.Models
             if (desiredInsideThreat
                 && command.Intent != AirCombatIntent.EngageTarget)
             {
-                if (source.SeadPendingThreatSiteIds.Contains(
-                        desiredContainingThreat.SiteId)
-                    && TryCreateSeadWaitAimPoint(
-                        currentPosition,
-                        desiredAimPoint,
-                        desiredContainingThreat,
-                        maneuverClearanceFeet,
-                        out var waitAimPoint))
-                {
-                    return Command(
-                        source,
-                        AirCombatIntent.FollowMission,
-                        AirCombatManeuver.AvoidSurfaceThreat,
-                        Guid.Empty,
-                        Guid.Empty,
-                        frame.Time,
-                        frame.Time.AddSeconds(10),
-                        AirCombatManeuverSide.None,
-                        waitAimPoint,
-                        Math.Max(1f, source.AircraftType.CombatSpeedKnots),
-                        "Holding outside known SAM coverage from site "
-                        + $"{ShortId(desiredContainingThreat.SiteId)} while "
-                        + "the assigned SEAD escort develops suppression.");
-                }
-
                 command.RequestsSurfaceThreatRecovery = true;
                 command.RequestsBarcapStationRelocation =
                     source.Flight.TaskType
@@ -3213,34 +3260,6 @@ namespace Engine.Models
                     out var blockingRouteSiteId))
                 return command;
 
-            var pendingBlockingThreat = threats.FirstOrDefault(threat =>
-                threat.SiteId == blockingRouteSiteId
-                && source.SeadPendingThreatSiteIds.Contains(threat.SiteId));
-            if (!wasEngagementCommand
-                && pendingBlockingThreat != null
-                && TryCreateSeadWaitAimPoint(
-                    currentPosition,
-                    desiredAimPoint,
-                    pendingBlockingThreat,
-                    maneuverClearanceFeet,
-                    out var blockingWaitAimPoint))
-            {
-                return Command(
-                    source,
-                    AirCombatIntent.FollowMission,
-                    AirCombatManeuver.AvoidSurfaceThreat,
-                    Guid.Empty,
-                    Guid.Empty,
-                    frame.Time,
-                    frame.Time.AddSeconds(10),
-                    AirCombatManeuverSide.None,
-                    blockingWaitAimPoint,
-                    Math.Max(1f, source.AircraftType.CombatSpeedKnots),
-                    "Holding outside known SAM coverage from site "
-                    + $"{ShortId(blockingRouteSiteId)} while the assigned "
-                    + "SEAD escort develops suppression.");
-            }
-
             if (wasEngagementCommand)
             {
                 var route = RouteCommand(
@@ -3283,6 +3302,9 @@ namespace Engine.Models
         {
             IEnumerable<KnownSamThreatEnvelope> threats =
                 frame.GetKnownSamThreats(source.Alliance);
+            if (source.HasPackageSeadProtection)
+                return Array.Empty<KnownSamThreatEnvelope>();
+
             if (source.Flight.ClearedSurfaceThreatSiteIds.Count > 0)
             {
                 threats = threats.Where(threat => threat != null
@@ -3300,13 +3322,6 @@ namespace Engine.Models
                     != source.Flight.AuthorizedSurfaceThreatSiteId);
             }
 
-            if (source.SeadCoveredThreatSiteIds.Count > 0)
-            {
-                var coveredSiteIds = source.SeadCoveredThreatSiteIds.ToHashSet();
-                threats = threats.Where(threat =>
-                    !coveredSiteIds.Contains(threat.SiteId));
-            }
-
             if (forEngagement
                 && source.AllowKnownSamEngagementOverride
                 && source.KnownSamEngagementOverrideSiteIds.Count > 0)
@@ -3321,40 +3336,6 @@ namespace Engine.Models
             return threats
                 .OrderBy(threat => threat.SiteId)
                 .ToList();
-        }
-
-        private static bool TryCreateSeadWaitAimPoint(
-            Vector3 currentPosition,
-            Vector3 desiredAimPoint,
-            KnownSamThreatEnvelope threat,
-            float maneuverClearanceFeet,
-            out Vector3 waitAimPoint)
-        {
-            waitAimPoint = currentPosition;
-            if (threat == null
-                || !threat.TryGetSegmentIntersectionInterval(
-                    currentPosition,
-                    desiredAimPoint,
-                    out var entryParameter,
-                    out _,
-                    maneuverClearanceFeet))
-                return false;
-
-            var segment = desiredAimPoint - currentPosition;
-            var segmentLengthFeet = segment.magnitude;
-            if (segmentLengthFeet <= 1f)
-                return false;
-
-            var bufferParameter = SeadWaitBufferKm
-                                  * AirspaceGeometry.FeetPerKilometer
-                                  / segmentLengthFeet;
-            var waitParameter = Mathf.Clamp01(
-                entryParameter - bufferParameter);
-            waitAimPoint = Vector3.Lerp(
-                currentPosition,
-                desiredAimPoint,
-                waitParameter);
-            return !threat.Contains(waitAimPoint, maneuverClearanceFeet);
         }
 
         private static bool ShouldIgnoreAuthorizedSurfaceThreat(

@@ -227,6 +227,10 @@ namespace Engine.Service
             builder.AppendLine();
             AppendEnumLegend(builder, "Intent", typeof(AirCombatIntent));
             AppendEnumLegend(builder, "Maneuver", typeof(AirCombatManeuver));
+            AppendEnumLegend(
+                builder,
+                "Decision stage",
+                typeof(AirCombatDecisionStage));
             AppendEnumLegend(builder, "Phase", typeof(FlightExecutionPhase));
             AppendEnumLegend(builder, "Lifecycle", typeof(AirTaskingLifecycleState));
             AppendEnumLegend(builder, "Waypoint", typeof(AirWaypointAction));

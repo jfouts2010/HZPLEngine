@@ -3021,6 +3021,7 @@ namespace Engine.Monobehaviours.Managers
                 tactical.TargetFlightId == Guid.Empty
                     ? "Target: None"
                     : $"Target: FLT {ShortId(tactical.TargetFlightId)}",
+                $"Decision stage: {tactical.DecisionStage}",
                 $"Decision: {tactical.DecisionReason}",
                 $"Intent since: {tactical.IntentStartedAt:HH:mm:ss}",
                 $"Committed through: {tactical.MinimumManeuverEndAt:HH:mm:ss}",

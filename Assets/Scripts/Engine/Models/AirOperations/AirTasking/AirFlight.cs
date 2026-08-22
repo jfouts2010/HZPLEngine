@@ -429,8 +429,8 @@ namespace Models.Gameplay.Campaign
             positionFeet = takeoff.PositionFeet;
             hasPosition = true;
             currentWaypointIndex = 1;
-            lifecycleState = AirTaskingLifecycleState.Active;
-            executionPhase = FlightExecutionPhase.Outbound;
+            if (!TryTransitionState(FlightStateEvent.Takeoff))
+                return false;
             headingDegrees = HeadingTo(positionFeet, route[1].PositionFeet);
             TacticalState.FuelFraction = 1f;
             TacticalState.ClearCombat(occurredAt, "Flight began route execution.");
@@ -502,7 +502,7 @@ namespace Models.Gameplay.Campaign
                 case AirWaypointAction.StationEntry:
                     if (executionPhase != FlightExecutionPhase.Executing)
                     {
-                        executionPhase = FlightExecutionPhase.Executing;
+                        RequireTransitionState(FlightStateEvent.EnterMission);
                         RecordEvent(waypoint, occurredAt, "Flight entered station.");
                     }
                     currentWaypointIndex++;
@@ -542,7 +542,7 @@ namespace Models.Gameplay.Campaign
                     return FlightWaypointTransition.Advanced;
 
                 case AirWaypointAction.MissionAction:
-                    executionPhase = FlightExecutionPhase.Executing;
+                    RequireTransitionState(FlightStateEvent.EnterMission);
                     var isGroundAttackStandoff = IsGroundAttackFlight;
                     if (!isGroundAttackStandoff)
                         missionAchieved = true;
@@ -556,13 +556,13 @@ namespace Models.Gameplay.Campaign
                     return FlightWaypointTransition.Advanced;
 
                 case AirWaypointAction.ReturnToBase:
-                    executionPhase = FlightExecutionPhase.Returning;
+                    RequireTransitionState(FlightStateEvent.BeginRecovery);
                     RecordEvent(waypoint, occurredAt, "Flight began recovery.");
                     currentWaypointIndex++;
                     return FlightWaypointTransition.RecoveryStarted;
 
                 case AirWaypointAction.Approach:
-                    executionPhase = FlightExecutionPhase.Landing;
+                    RequireTransitionState(FlightStateEvent.BeginApproach);
                     RecordEvent(waypoint, occurredAt, "Flight reached approach.");
                     currentWaypointIndex++;
                     return FlightWaypointTransition.Advanced;
@@ -709,7 +709,7 @@ namespace Models.Gameplay.Campaign
             currentWaypointIndex = returnIndex;
             rendezvousState = AirRendezvousState.NotRequired;
             authorizedSurfaceThreatPenetrationGranted = false;
-            executionPhase = FlightExecutionPhase.Returning;
+            RequireTransitionState(FlightStateEvent.BeginRecovery);
             RecordEvent(
                 CurrentWaypoint,
                 occurredAt,
@@ -743,7 +743,7 @@ namespace Models.Gameplay.Campaign
             missionAchieved = achieved;
             currentWaypointIndex = returnIndex;
             rendezvousState = AirRendezvousState.NotRequired;
-            executionPhase = FlightExecutionPhase.Returning;
+            RequireTransitionState(FlightStateEvent.BeginRecovery);
             RecordEvent(
                 CurrentWaypoint,
                 occurredAt,
@@ -760,15 +760,14 @@ namespace Models.Gameplay.Campaign
             authorizedSurfaceThreatPenetrationGranted = false;
             if (!IsAirborne)
             {
-                lifecycleState = AirTaskingLifecycleState.Cancelled;
-                executionPhase = FlightExecutionPhase.Ended;
+                RequireTransitionState(FlightStateEvent.CancelBeforeTakeoff);
                 hasPosition = false;
                 rendezvousState = AirRendezvousState.NotRequired;
                 return FlightCancellationResult.Cancelled;
             }
 
-            lifecycleState = AirTaskingLifecycleState.Aborted;
             BeginAbortRecovery(occurredAt, reason);
+            RequireTransitionState(FlightStateEvent.AbortAirborne);
 
             return FlightCancellationResult.Aborted;
         }
@@ -814,7 +813,7 @@ namespace Models.Gameplay.Campaign
 
             route = amendedRoute;
             routeView = null;
-            executionPhase = FlightExecutionPhase.Returning;
+            RequireTransitionState(FlightStateEvent.BeginRecovery);
         }
 
         public bool TryReplaceUnflownBarcapStationRoute(
@@ -875,7 +874,7 @@ namespace Models.Gameplay.Campaign
             route = amendedRoute;
             routeView = null;
             currentWaypointIndex = replacementStartIndex;
-            executionPhase = FlightExecutionPhase.Outbound;
+            RequireTransitionState(FlightStateEvent.RelocateMission);
             rendezvousState = AirRendezvousState.NotRequired;
             missionAchieved = false;
             RecordEvent(
@@ -922,8 +921,7 @@ namespace Models.Gameplay.Campaign
             route = amendedRoute;
             routeView = null;
             currentWaypointIndex = recoveryStartIndex;
-            lifecycleState = AirTaskingLifecycleState.Aborted;
-            executionPhase = FlightExecutionPhase.Returning;
+            RequireTransitionState(FlightStateEvent.AbortAirborne);
             rendezvousState = AirRendezvousState.NotRequired;
             authorizedSurfaceThreatPenetrationGranted = false;
             RecordEvent(currentWaypoint, occurredAt, reason, AirWaypointAction.ReturnToBase);
@@ -942,19 +940,14 @@ namespace Models.Gameplay.Campaign
             hasPosition = false;
             rendezvousState = AirRendezvousState.NotRequired;
             authorizedSurfaceThreatPenetrationGranted = false;
-            executionPhase = FlightExecutionPhase.Ended;
-            if (lifecycleState != AirTaskingLifecycleState.Aborted)
-            {
-                lifecycleState = missionAchieved
-                    ? AirTaskingLifecycleState.Completed
-                    : AirTaskingLifecycleState.Failed;
-            }
+            RequireTransitionState(
+                FlightStateEvent.Land,
+                missionAchieved);
         }
 
         public void Fail(DateTime occurredAt, string reason)
         {
-            lifecycleState = AirTaskingLifecycleState.Failed;
-            executionPhase = FlightExecutionPhase.Ended;
+            RequireTransitionState(FlightStateEvent.Fail);
             hasPosition = false;
             rendezvousState = AirRendezvousState.NotRequired;
             authorizedSurfaceThreatPenetrationGranted = false;
@@ -1083,8 +1076,37 @@ namespace Models.Gameplay.Campaign
                 return;
             }
 
-            executionPhase = FlightExecutionPhase.Returning;
+            RequireTransitionState(FlightStateEvent.BeginRecovery);
             currentWaypointIndex = returnIndex;
+        }
+
+        private bool TryTransitionState(
+            FlightStateEvent stateEvent,
+            bool achieved = false)
+        {
+            if (!FlightStateMachine.TryResolve(
+                    lifecycleState,
+                    executionPhase,
+                    stateEvent,
+                    achieved,
+                    out var transition))
+                return false;
+
+            lifecycleState = transition.LifecycleState;
+            executionPhase = transition.ExecutionPhase;
+            return true;
+        }
+
+        private void RequireTransitionState(
+            FlightStateEvent stateEvent,
+            bool achieved = false)
+        {
+            if (TryTransitionState(stateEvent, achieved))
+                return;
+
+            throw new InvalidOperationException(
+                $"Flight {FlightId} cannot apply {stateEvent} while "
+                + $"{lifecycleState}/{executionPhase}.");
         }
 
         private static float HeadingTo(Vector3 from, Vector3 to)

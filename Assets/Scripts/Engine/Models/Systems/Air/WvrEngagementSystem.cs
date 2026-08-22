@@ -950,6 +950,8 @@ namespace Engine.Models
                            * 80f
                            * AirspaceGeometry.FeetPerKilometer;
             aimPoint.y = flight.Flight.PositionFeet.y;
+            flight.Flight.TacticalState.DecisionStage =
+                AirCombatDecisionStage.WvrEngagement;
             flight.Flight.TacticalState.Apply(
                 AirCombatIntent.Disengage,
                 AirCombatManeuver.Extend,
@@ -968,6 +970,8 @@ namespace Engine.Models
             Guid targetFlightId,
             DateTime currentTime)
         {
+            flight.TacticalState.DecisionStage =
+                AirCombatDecisionStage.WvrEngagement;
             flight.TacticalState.Apply(
                 AirCombatIntent.EngageTarget,
                 AirCombatManeuver.Dogfight,
